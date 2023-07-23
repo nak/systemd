@@ -1,5 +1,8 @@
+[Unit]
+BindsTo=netns-configure@%i.service
+
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/bash -c "/usr/sbin ip netns | grep %I || /usr/sbin/ip netns add %I"
+ExecStart=/bin/bash -c "/usr/sbin/ip netns | grep %I || /usr/sbin/ip netns add %I"
 ExecStop=/usr/sbin/ip netns del %I

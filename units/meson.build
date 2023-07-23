@@ -401,7 +401,15 @@ units = [
           'conditions' : ['ENABLE_NETWORKD'],
         },
         {
-          'file' : 'systemd-networkd-wait-online@.service.in',
+          'file' : 'netns@.service.in',
+          'conditions' : ['ENABLE_NETWORKD'],
+        },
+        {
+          'file' : 'netns-configure@.service.in',
+          'conditions' : ['ENABLE_NETWORKD'],
+        },
+        {
+          'file' : 'systemd-networkd-wait-online-netns@.service.in',
           'conditions' : ['ENABLE_NETWORKD'],
         },
         {
@@ -409,7 +417,15 @@ units = [
           'conditions' : ['ENABLE_NETWORKD'],
         },
         {
+          'file' : 'systemd-networkd@.service.in',
+          'conditions' : ['ENABLE_NETWORKD'],
+        },
+        {
           'file' : 'systemd-networkd.socket',
+          'conditions' : ['ENABLE_NETWORKD'],
+        },
+        {
+          'file' : 'systemd-networkd@.socket',
           'conditions' : ['ENABLE_NETWORKD'],
         },
         { 'file' : 'systemd-nspawn@.service.in' },
