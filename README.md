@@ -18,6 +18,8 @@ System and Service Manager
 
 ## Details
 
+This is an extension to systemd that contains true network namespace support for network services
+
 Most documentation is available on [systemd's web site](https://systemd.io/).
 
 Assorted, older, general information about systemd can be found in the [systemd Wiki](https://www.freedesktop.org/wiki/Software/systemd).

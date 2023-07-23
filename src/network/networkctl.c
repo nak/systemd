@@ -730,7 +730,7 @@ static int link_get_property(
         if (r < 0)
                 return r;
 
-        return sd_bus_get_property(bus, "org.freedesktop.network1", path, iface, propname, error, reply, type);
+        return sd_bus_get_property(bus, bus_network_mgr->destination, path, iface, propname, error, reply, type);
 }
 
 static int acquire_link_bitrates(sd_bus *bus, LinkInfo *link) {
@@ -741,7 +741,7 @@ static int acquire_link_bitrates(sd_bus *bus, LinkInfo *link) {
         assert(bus);
         assert(link);
 
-        r = link_get_property(bus, link, &error, &reply, "org.freedesktop.network1.Link", "BitRates", "(tt)");
+        r = link_get_property(bus, link, &error, &reply, bus_network_cmpnt("Link"), "BitRates", "(tt)");
         if (r < 0) {
                 bool quiet = sd_bus_error_has_names(&error, SD_BUS_ERROR_UNKNOWN_PROPERTY,
                                                             BUS_ERROR_SPEED_METER_INACTIVE);
@@ -1400,7 +1400,7 @@ static int dump_dhcp_leases(Table *table, const char *prefix, sd_bus *bus, const
         assert(bus);
         assert(link);
 
-        r = link_get_property(bus, link, &error, &reply, "org.freedesktop.network1.DHCPServer", "Leases", "a(uayayayayt)");
+        r = link_get_property(bus, link, &error, &reply, bus_network_cmpnt("DHCPServer"), "Leases", "a(uayayayayt)");
         if (r < 0) {
                 bool quiet = sd_bus_error_has_name(&error, SD_BUS_ERROR_UNKNOWN_PROPERTY);
 

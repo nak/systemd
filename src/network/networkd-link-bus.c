@@ -7,6 +7,7 @@
 #include "alloc-util.h"
 #include "bus-common-errors.h"
 #include "bus-get-properties.h"
+#include "bus-locator.h"
 #include "bus-message-util.h"
 #include "bus-polkit.h"
 #include "dns-domain.h"
@@ -100,7 +101,7 @@ int bus_link_method_set_ntp_servers(sd_bus_message *message, void *userdata, sd_
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-ntp-servers",
+                                    bus_network_cmpnt("set-ntp-servers"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -135,7 +136,7 @@ static int bus_link_method_set_dns_servers_internal(sd_bus_message *message, voi
                 return r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-dns-servers",
+                                    bus_network_cmpnt("set-dns-servers"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -233,7 +234,7 @@ int bus_link_method_set_domains(sd_bus_message *message, void *userdata, sd_bus_
                 return r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-domains",
+                                    bus_network_cmpnt("set-domains"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -269,7 +270,7 @@ int bus_link_method_set_default_route(sd_bus_message *message, void *userdata, s
                 return r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-default-route",
+                                    bus_network_cmpnt("set-default-route"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -314,7 +315,7 @@ int bus_link_method_set_llmnr(sd_bus_message *message, void *userdata, sd_bus_er
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-llmnr",
+                                    bus_network_cmpnt("set-llmnr"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -359,7 +360,7 @@ int bus_link_method_set_mdns(sd_bus_message *message, void *userdata, sd_bus_err
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-mdns",
+                                    bus_network_cmpnt("set-mdns"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -404,7 +405,7 @@ int bus_link_method_set_dns_over_tls(sd_bus_message *message, void *userdata, sd
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-dns-over-tls",
+                                    bus_network_cmpnt("set-dns-over-tls"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -449,7 +450,7 @@ int bus_link_method_set_dnssec(sd_bus_message *message, void *userdata, sd_bus_e
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-dnssec",
+                                    bus_network_cmpnt("set-dnssec"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -504,7 +505,7 @@ int bus_link_method_set_dnssec_negative_trust_anchors(sd_bus_message *message, v
         }
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.set-dnssec-negative-trust-anchors",
+                                    bus_network_cmpnt("set-dnssec-negative-trust-anchors"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -534,7 +535,7 @@ int bus_link_method_revert_ntp(sd_bus_message *message, void *userdata, sd_bus_e
                 return r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.revert-ntp",
+                                    bus_network_cmpnt("revert-ntp"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -563,7 +564,7 @@ int bus_link_method_revert_dns(sd_bus_message *message, void *userdata, sd_bus_e
                 return r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.revert-dns",
+                                    bus_network_cmpnt("revert-dns"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -591,7 +592,7 @@ int bus_link_method_force_renew(sd_bus_message *message, void *userdata, sd_bus_
                                          l->ifname);
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.forcerenew",
+                                    bus_network_cmpnt("forcerenew"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -618,7 +619,7 @@ int bus_link_method_renew(sd_bus_message *message, void *userdata, sd_bus_error 
                                          l->ifname);
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.renew",
+                                    bus_network_cmpnt("renew"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -642,7 +643,7 @@ int bus_link_method_reconfigure(sd_bus_message *message, void *userdata, sd_bus_
         assert(message);
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.reconfigure",
+                                    bus_network_cmpnt("reconfigure"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
         if (r < 0)
@@ -858,7 +859,7 @@ int link_object_find(sd_bus *bus, const char *path, const char *interface, void 
         if (r < 0)
                 return 0;
 
-        if (streq(interface, "org.freedesktop.network1.DHCPServer") &&
+        if (streq(interface, bus_network_cmpnt("DHCPServer")) &&
             (!link->dhcp_server || sd_dhcp_server_is_in_relay_mode(link->dhcp_server)))
                 return 0;
 
@@ -884,7 +885,7 @@ int link_send_changed_strv(Link *link, char **properties) {
         return sd_bus_emit_properties_changed_strv(
                         link->manager->bus,
                         p,
-                        "org.freedesktop.network1.Link",
+                        bus_network_cmpnt("Link"),
                         properties);
 }
 
@@ -896,9 +897,17 @@ int link_send_changed(Link *link, const char *property, ...) {
         return link_send_changed_strv(link, properties);
 }
 
+static char _bus_obj_network_if[128] = "org.freedesktop.network1.Link";
+
 const BusObjectImplementation link_object = {
         "/org/freedesktop/network1/link",
-        "org.freedesktop.network1.Link",
+        _bus_obj_network_if,
         .fallback_vtables = BUS_FALLBACK_VTABLES({link_vtable, link_object_find}),
         .node_enumerator = link_node_enumerator,
 };
+
+__attribute__((constructor))
+static void _init_bus_obj(void){
+        const char* const link = bus_network_cmpnt("Link");
+        strcpy((char*)_bus_obj_network_if, link);
+}

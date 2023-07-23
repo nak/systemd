@@ -16,6 +16,7 @@ extern const BusLocator* const bus_locale;
 extern const BusLocator* const bus_login_mgr;
 extern const BusLocator* const bus_machine_mgr;
 extern const BusLocator* const bus_network_mgr;
+const char* bus_network_cmpnt(const char* const name);
 extern const BusLocator* const bus_oom_mgr;
 extern const BusLocator* const bus_portable_mgr;
 extern const BusLocator* const bus_resolve_mgr;
@@ -35,3 +36,9 @@ int bus_set_property(sd_bus *bus, const BusLocator *locator, const char *member,
 int bus_match_signal(sd_bus *bus, sd_bus_slot **ret, const BusLocator *locator, const char *member, sd_bus_message_handler_t callback, void *userdata);
 int bus_match_signal_async(sd_bus *bus, sd_bus_slot **ret, const BusLocator *locator, const char *member, sd_bus_message_handler_t callback, sd_bus_message_handler_t install_callback, void *userdata);
 int bus_message_new_method_call(sd_bus *bus, sd_bus_message **m, const BusLocator *locator, const char *member);
+
+typedef struct NetNs{
+        const char* const netns;
+} NetNs;
+
+extern const NetNs network_netns;

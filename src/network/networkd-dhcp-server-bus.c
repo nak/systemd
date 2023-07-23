@@ -2,6 +2,7 @@
 
 #include "alloc-util.h"
 #include "bus-common-errors.h"
+#include "bus-locator.h"
 #include "bus-util.h"
 #include "dhcp-server-internal.h"
 #include "networkd-dhcp-server-bus.h"
@@ -90,7 +91,7 @@ static int dhcp_server_emit_changed(Link *link, const char *property, ...) {
         return sd_bus_emit_properties_changed_strv(
                         link->manager->bus,
                         path,
-                        "org.freedesktop.network1.DHCPServer",
+                        bus_network_cmpnt("DHCPServer"),
                         l);
 }
 
@@ -109,9 +110,16 @@ static const sd_bus_vtable dhcp_server_vtable[] = {
         SD_BUS_VTABLE_END
 };
 
+static char _network_dhcp_server[128];
+
 const BusObjectImplementation dhcp_server_object = {
         "/org/freedesktop/network1/link",
-        "org.freedesktop.network1.DHCPServer",
+        _network_dhcp_server,
         .fallback_vtables = BUS_FALLBACK_VTABLES({dhcp_server_vtable, link_object_find}),
         .node_enumerator = link_node_enumerator,
 };
+
+__attribute__((constructor))
+static void _init_network_dhcp(void){
+        strcpy(_network_dhcp_server, bus_network_cmpnt("DHCPServer"));
+}

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include "alloc-util.h"
+#include "bus-locator.h"
 #include "ether-addr-util.h"
 #include "networkd-manager.h"
 #include "networkd-network-bus.h"
@@ -136,9 +137,16 @@ int network_object_find(sd_bus *bus, const char *path, const char *interface, vo
         return 1;
 }
 
+static char _network_bus_network[128];
+
 const BusObjectImplementation network_object = {
         "/org/freedesktop/network1/network",
-        "org.freedesktop.network1.Network",
+        _network_bus_network,
         .fallback_vtables = BUS_FALLBACK_VTABLES({network_vtable, network_object_find}),
         .node_enumerator = network_node_enumerator,
 };
+
+__attribute__((constructor))
+static void _init_network_bus_(void){
+        strcpy(_network_bus_network, bus_network_cmpnt("Network"));
+}

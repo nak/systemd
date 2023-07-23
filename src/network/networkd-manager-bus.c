@@ -6,6 +6,7 @@
 
 #include "alloc-util.h"
 #include "bus-common-errors.h"
+#include "bus-locator.h"
 #include "bus-message-util.h"
 #include "bus-polkit.h"
 #include "networkd-dhcp-server-bus.h"
@@ -200,7 +201,7 @@ static int bus_method_reload(sd_bus_message *message, void *userdata, sd_bus_err
         int r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.reload",
+                                    bus_network_cmpnt("reload"),
                                     NULL, true, UID_INVALID,
                                     &manager->polkit_registry, error);
         if (r < 0)
@@ -405,13 +406,20 @@ int manager_send_changed_strv(Manager *manager, char **properties) {
         return sd_bus_emit_properties_changed_strv(
                         manager->bus,
                         "/org/freedesktop/network1",
-                        "org.freedesktop.network1.Manager",
+                        bus_network_cmpnt("Manager"),
                         properties);
 }
 
+static char _bus_network_if[128];
+
 const BusObjectImplementation manager_object = {
         "/org/freedesktop/network1",
-        "org.freedesktop.network1.Manager",
+        _bus_network_if,
         .vtables = BUS_VTABLES(manager_vtable),
         .children = BUS_IMPLEMENTATIONS(&dhcp_server_object, &link_object, &network_object),
 };
+
+__attribute__((constructor))
+static void _init_networkd_mgr_bus(void){
+        strcpy(_bus_network_if, bus_network_mgr->interface);
+}
