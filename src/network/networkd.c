@@ -8,6 +8,7 @@
 #include "sd-event.h"
 
 #include "bus-log-control-api.h"
+#include "bus-locator.h"
 #include "capability-util.h"
 #include "daemon-util.h"
 #include "firewall-util.h"
@@ -26,6 +27,10 @@ static int run(int argc, char *argv[]) {
         int r;
 
         log_setup();
+        char service_name[256] = "systemd-networkd.service";
+        if (network_netns.netns && strlen(network_netns.netns)){
+                sprintf(service_name, "systemd-networkd@%s.service", network_netns.netns);
+        }
 
         r = service_parse_argv("systemd-networkd.service",
                                "Manage and configure network devices, create virtual network devices",

@@ -98,14 +98,16 @@ static int check_netns_match(sd_bus *bus) {
 
         assert(bus);
 
+
         r = bus_get_property_trivial(bus, bus_network_mgr, "NamespaceId", &error, 't', &id);
         if (r < 0) {
-                log_debug_errno(r, "Failed to query network namespace of networkd, ignoring: %s", bus_error_message(&error, r));
+                log_debug_errno(r, "Failed to query network namespace of networkd, ignoring: %s (perhaps netns-specific systemd-networkd not started?)", bus_error_message(&error, r));
                 return 0;
         }
-        if (id == 0) {
-                log_debug("systemd-networkd.service not running in a network namespace (?), skipping netns check.");
-                return 0;
+        if (id == 0 && network_netns.netns) {
+                return log_error_errno(errno, "systemd-networkd%s%s.service not running in expected network namespace (?)",
+                                       network_netns.netns?"@":"",
+                                       network_netns.netns?network_netns.netns:"");
         }
 
         if (stat("/proc/self/ns/net", &st) < 0)
@@ -113,7 +115,10 @@ static int check_netns_match(sd_bus *bus) {
 
         if (id != st.st_ino)
                 return log_error_errno(SYNTHETIC_ERRNO(EREMOTE),
-                                       "networkctl must be invoked in same network namespace as systemd-networkd.service.");
+                                       "network namespace networkctl was invoked under is unexpectedly inconsistent with that of systemd-networkd%s%s.service.",
+                                       network_netns.netns?"@":"",
+                                       network_netns.netns?network_netns.netns:""
+                                       );
 
         return 0;
 }
@@ -152,7 +157,9 @@ static int acquire_bus(sd_bus **ret) {
                 if (r < 0)
                         return r;
         } else
-                log_warning("systemd-networkd is not running, output might be incomplete.");
+                log_warning("systemd-networkd%s%s is not running, output might be incomplete.",
+                            network_netns.netns?"@":"",
+                            network_netns.netns?network_netns.netns:"");
 
         *ret = TAKE_PTR(bus);
         return 0;
@@ -1610,11 +1617,19 @@ static int show_logs(const LinkInfo *info) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to add link matches: %m");
         } else {
-                r = add_matches_for_unit(j, "systemd-networkd.service");
+                char service_name[256] = "systemd-networkd.service";
+                sprintf(service_name, "systemd-networkd%s%s.service",
+                        network_netns.netns?"@":"",
+                        network_netns.netns?network_netns.netns:"");
+                char wait_service_name[256] = "systemd-networkd-wait-online.service";
+                sprintf(wait_service_name, "systemd-networkd-wait-online%s%s.service",
+                        network_netns.netns?"@":"",
+                        network_netns.netns?network_netns.netns:"");
+                r = add_matches_for_unit(j, service_name);
                 if (r < 0)
                         return log_error_errno(r, "Failed to add unit matches: %m");
 
-                r = add_matches_for_unit(j, "systemd-networkd-wait-online.service");
+                r = add_matches_for_unit(j, wait_service_name);
                 if (r < 0)
                         return log_error_errno(r, "Failed to add unit matches: %m");
         }

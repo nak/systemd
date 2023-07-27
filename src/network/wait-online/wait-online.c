@@ -5,6 +5,7 @@
 #include <sys/types.h>
 
 #include "sd-daemon.h"
+#include "bus-locator.h"
 
 #include "build.h"
 #include "daemon-util.h"
@@ -29,8 +30,11 @@ STATIC_DESTRUCTOR_REGISTER(arg_ignore, strv_freep);
 static int help(void) {
         _cleanup_free_ char *link = NULL;
         int r;
-
-        r = terminal_urlify_man("systemd-networkd-wait-online.service", "8", &link);
+        char service_name[256] = "systemd-networkd-wait-online.service";
+        if (network_netns.netns && strlen(network_netns.netns)){
+                sprintf(service_name, "systemd-networkd-wait-online@%s.service", network_netns.netns);
+        }
+        r = terminal_urlify_man(service_name, "8", &link);
         if (r < 0)
                 return log_oom();
 
