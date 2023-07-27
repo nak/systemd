@@ -405,7 +405,7 @@ units = [
           'conditions' : ['ENABLE_NETWORKD'],
         },
         {
-          'file' : 'netns-configure@.service.in',
+          'file' : 'netns-core@.service.in',
           'conditions' : ['ENABLE_NETWORKD'],
         },
         {

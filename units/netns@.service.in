@@ -1,5 +1,5 @@
 [Unit]
-BindsTo=netns-configure@%i.service
+BindsTo=netns-core@%i.service
 
 [Service]
 Type=oneshot
