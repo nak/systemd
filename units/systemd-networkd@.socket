@@ -8,7 +8,8 @@
 #  (at your option) any later version.
 
 [Unit]
-BindsTo=netns@.service
+BindsTo=netns@%i.service
+After=netns@%i.service
 Description=Network Service Netlink Socket
 Documentation=man:systemd-networkd.service(8) man:rtnetlink(7)
 ConditionCapability=CAP_NET_ADMIN
