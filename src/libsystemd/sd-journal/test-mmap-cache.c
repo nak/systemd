@@ -9,6 +9,7 @@
 #include "macro.h"
 #include "mmap-cache.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
 int main(int argc, char *argv[]) {
         MMapFileDescriptor *fx;
@@ -21,40 +22,40 @@ int main(int argc, char *argv[]) {
 
         x = mkostemp_safe(px);
         assert_se(x >= 0);
-        (void) unlink(px);
+        unlink(px);
 
         assert_se(fx = mmap_cache_add_fd(m, x, PROT_READ));
 
         y = mkostemp_safe(py);
         assert_se(y >= 0);
-        (void) unlink(py);
+        unlink(py);
 
         z = mkostemp_safe(pz);
         assert_se(z >= 0);
-        (void) unlink(pz);
+        unlink(pz);
 
-        r = mmap_cache_fd_get(fx, 0, false, 1, 2, NULL, &p);
+        r = mmap_cache_get(m, fx, 0, false, 1, 2, NULL, &p);
         assert_se(r >= 0);
 
-        r = mmap_cache_fd_get(fx, 0, false, 2, 2, NULL, &q);
+        r = mmap_cache_get(m, fx, 0, false, 2, 2, NULL, &q);
         assert_se(r >= 0);
 
         assert_se((uint8_t*) p + 1 == (uint8_t*) q);
 
-        r = mmap_cache_fd_get(fx, 1, false, 3, 2, NULL, &q);
+        r = mmap_cache_get(m, fx, 1, false, 3, 2, NULL, &q);
         assert_se(r >= 0);
 
         assert_se((uint8_t*) p + 2 == (uint8_t*) q);
 
-        r = mmap_cache_fd_get(fx, 0, false, 16ULL*1024ULL*1024ULL, 2, NULL, &p);
+        r = mmap_cache_get(m, fx, 0, false, 16ULL*1024ULL*1024ULL, 2, NULL, &p);
         assert_se(r >= 0);
 
-        r = mmap_cache_fd_get(fx, 1, false, 16ULL*1024ULL*1024ULL+1, 2, NULL, &q);
+        r = mmap_cache_get(m, fx, 1, false, 16ULL*1024ULL*1024ULL+1, 2, NULL, &q);
         assert_se(r >= 0);
 
         assert_se((uint8_t*) p + 1 == (uint8_t*) q);
 
-        mmap_cache_fd_free(fx);
+        mmap_cache_free_fd(m, fx);
         mmap_cache_unref(m);
 
         safe_close(x);

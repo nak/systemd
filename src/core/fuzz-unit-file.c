@@ -2,17 +2,19 @@
 
 #include "conf-parser.h"
 #include "fd-util.h"
+#include "fileio.h"
 #include "fuzz.h"
 #include "install.h"
 #include "load-fragment.h"
 #include "manager-dump.h"
-#include "memstream-util.h"
 #include "string-util.h"
 #include "unit-serialize.h"
 #include "utf8.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-        _cleanup_fclose_ FILE *f = NULL;
+        _cleanup_free_ char *out = NULL; /* out should be freed after g */
+        size_t out_size;
+        _cleanup_fclose_ FILE *f = NULL, *g = NULL;
         _cleanup_free_ char *p = NULL;
         UnitType t;
         _cleanup_(manager_freep) Manager *m = NULL;
@@ -20,11 +22,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         const char *name;
         long offset;
 
-        if (outside_size_range(size, 0, 65536))
+        if (size == 0)
                 return 0;
 
-        f = data_to_file(data, size);
-
+        f = fmemopen_unlocked((char*) data, size, "re");
         assert_se(f);
 
         if (read_line(f, LINE_MAX, &p) < 0)
@@ -65,7 +66,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (!getenv("SYSTEMD_LOG_LEVEL"))
                 log_set_max_level(LOG_CRIT);
 
-        assert_se(manager_new(RUNTIME_SCOPE_SYSTEM, MANAGER_TEST_RUN_MINIMAL, &m) >= 0);
+        assert_se(manager_new(UNIT_FILE_SYSTEM, MANAGER_TEST_RUN_MINIMAL, &m) >= 0);
 
         name = strjoina("a.", unit_type_to_string(t));
         assert_se(unit_new_for_name(m, unit_vtable[t]->object_size, name, &u) >= 0);
@@ -78,12 +79,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                         u,
                         NULL);
 
-        _cleanup_(memstream_done) MemStream ms = {};
-        FILE *g;
+        g = open_memstream_unlocked(&out, &out_size);
+        assert_se(g);
 
-        assert_se(g = memstream_init(&ms));
         unit_dump(u, g, "");
-        manager_dump(m, g, /* patterns= */ NULL, ">>>");
+        manager_dump(m, g, ">>>");
 
         return 0;
 }

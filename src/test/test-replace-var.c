@@ -5,28 +5,23 @@
 #include "macro.h"
 #include "replace-var.h"
 #include "string-util.h"
-#include "tests.h"
 
 static char *lookup(const char *variable, void *userdata) {
         return strjoin("<<<", variable, ">>>");
 }
 
-TEST(replace_var) {
+int main(int argc, char *argv[]) {
         char *r;
 
         assert_se(r = replace_var("@@@foobar@xyz@HALLO@foobar@test@@testtest@TEST@...@@@", lookup, NULL));
         puts(r);
         assert_se(streq(r, "@@@foobar@xyz<<<HALLO>>>foobar@test@@testtest<<<TEST>>>...@@@"));
         free(r);
-}
-
-TEST(strreplace) {
-        char *r;
 
         assert_se(r = strreplace("XYZFFFFXYZFFFFXYZ", "XYZ", "ABC"));
         puts(r);
         assert_se(streq(r, "ABCFFFFABCFFFFABC"));
         free(r);
-}
 
-DEFINE_TEST_MAIN(LOG_INFO);
+        return 0;
+}

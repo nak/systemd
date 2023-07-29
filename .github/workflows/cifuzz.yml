@@ -1,13 +1,8 @@
 ---
 # vi: ts=2 sw=2 et:
-# SPDX-License-Identifier: LGPL-2.1-or-later
 # See: https://google.github.io/oss-fuzz/getting-started/continuous-integration/
 
 name: CIFuzz
-
-permissions:
-  contents: read
-
 on:
   pull_request:
     paths:
@@ -25,19 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'systemd/systemd'
     concurrency:
-      group: ${{ github.workflow }}-${{ matrix.sanitizer }}-${{ matrix.architecture }}-${{ github.ref }}
+      group: ${{ github.workflow }}-${{ matrix.sanitizer }}-${{ github.ref }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
         sanitizer: [address, undefined, memory]
-        architecture: [x86_64]
-        include:
-          - sanitizer: address
-            architecture: i386
-    permissions:
-      security-events: write
-
     steps:
       - name: Build Fuzzers (${{ matrix.sanitizer }})
         id: build
@@ -46,11 +34,7 @@ jobs:
           oss-fuzz-project-name: 'systemd'
           dry-run: false
           allowed-broken-targets-percentage: 0
-          # keep-unaffected-fuzz-targets should be removed once https://github.com/google/oss-fuzz/issues/7011 is fixed
-          keep-unaffected-fuzz-targets: true
           sanitizer: ${{ matrix.sanitizer }}
-          architecture: ${{ matrix.architecture }}
-          output-sarif: true
       - name: Run Fuzzers (${{ matrix.sanitizer }})
         uses: google/oss-fuzz/infra/cifuzz/actions/run_fuzzers@master
         with:
@@ -58,17 +42,9 @@ jobs:
           fuzz-seconds: 600
           dry-run: false
           sanitizer: ${{ matrix.sanitizer }}
-          output-sarif: true
       - name: Upload Crash
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+        uses: actions/upload-artifact@v1
         if: failure() && steps.build.outcome == 'success'
         with:
-          name: ${{ matrix.sanitizer }}-${{ matrix.architecture }}-artifacts
+          name: ${{ matrix.sanitizer }}-artifacts
           path: ./out/artifacts
-      - name: Upload Sarif
-        if: always() && steps.build.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@f6e388ebf0efc915c6c5b165b019ee61a6746a38
-        with:
-          # Path to SARIF file relative to the root of the repository
-          sarif_file: cifuzz-sarif/results.sarif
-          checkout_path: cifuzz-sarif

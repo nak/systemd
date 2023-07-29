@@ -16,6 +16,7 @@
 #include "string-util.h"
 #include "strv.h"
 #include "user-util.h"
+#include "util.h"
 
 Settings *settings_new(void) {
         Settings *s;
@@ -26,7 +27,6 @@ Settings *settings_new(void) {
 
         *s = (Settings) {
                 .start_mode = _START_MODE_INVALID,
-                .ephemeral = -1,
                 .personality = PERSONALITY_INVALID,
 
                 .resolv_conf = _RESOLV_CONF_MODE_INVALID,
@@ -57,9 +57,6 @@ Settings *settings_new(void) {
 
                 .clone_ns_flags = ULONG_MAX,
                 .use_cgns = -1,
-
-                .notify_ready = -1,
-                .suppress_sync = -1,
         };
 
         return s;
@@ -97,25 +94,27 @@ int settings_load(FILE *f, const char *path, Settings **ret) {
         return 0;
 }
 
-static void free_oci_hooks(OciHook *hooks, size_t n) {
-        assert(hooks || n == 0);
+static void free_oci_hooks(OciHook *h, size_t n) {
+        size_t i;
 
-        FOREACH_ARRAY(hook, hooks, n) {
-                free(hook->path);
-                strv_free(hook->args);
-                strv_free(hook->env);
+        assert(h || n == 0);
+
+        for (i = 0; i < n; i++) {
+                free(h[i].path);
+                strv_free(h[i].args);
+                strv_free(h[i].env);
         }
 
-        free(hooks);
+        free(h);
 }
 
-void device_node_array_free(DeviceNode *nodes, size_t n) {
-        assert(nodes || n == 0);
+void device_node_array_free(DeviceNode *node, size_t n) {
+        size_t i;
 
-        FOREACH_ARRAY(node, nodes, n)
-                free(node->path);
+        for (i = 0; i < n; i++)
+                free(node[i].path);
 
-        free(nodes);
+        free(node);
 }
 
 Settings* settings_free(Settings *s) {
@@ -171,8 +170,6 @@ Settings* settings_free(Settings *s) {
 bool settings_private_network(Settings *s) {
         assert(s);
 
-        /* Determines whether we shall open up our own private network */
-
         return
                 s->private_network > 0 ||
                 s->network_veth > 0 ||
@@ -191,25 +188,6 @@ bool settings_network_veth(Settings *s) {
                 s->network_veth > 0 ||
                 s->network_bridge ||
                 s->network_zone;
-}
-
-bool settings_network_configured(Settings *s) {
-        assert(s);
-
-        /* Determines whether any network configuration setting was used. (i.e. in contrast to
-         * settings_private_network() above this might also indicate if private networking was explicitly
-         * turned off.) */
-
-        return
-                s->private_network >= 0 ||
-                s->network_veth >= 0 ||
-                s->network_bridge ||
-                s->network_zone ||
-                s->network_interfaces ||
-                s->network_macvlan ||
-                s->network_ipvlan ||
-                s->network_veth_extra ||
-                s->network_namespace_path;
 }
 
 int settings_allocate_properties(Settings *s) {
@@ -306,6 +284,9 @@ int config_parse_capability(
                         u |= UINT64_C(1) << r;
                 }
         }
+
+        if (u == 0)
+                return 0;
 
         *result |= u;
         return 0;
@@ -467,69 +448,6 @@ int config_parse_veth_extra(
         return 0;
 }
 
-int config_parse_network_iface_pair(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        char*** l = data;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        return interface_pair_parse(l, rvalue);
-}
-
-int config_parse_macvlan_iface_pair(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        char*** l = data;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        return macvlan_pair_parse(l, rvalue);
-}
-
-int config_parse_ipvlan_iface_pair(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        char*** l = data;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        return ipvlan_pair_parse(l, rvalue);
-}
-
 int config_parse_network_zone(
                 const char *unit,
                 const char *filename,
@@ -683,11 +601,6 @@ int config_parse_private_users(
                 settings->userns_mode = USER_NAMESPACE_PICK;
                 settings->uid_shift = UID_INVALID;
                 settings->uid_range = UINT32_C(0x10000);
-        } else if (streq(rvalue, "identity")) {
-                /* identity: User namespacing on, UID range is 0:65536 */
-                settings->userns_mode = USER_NAMESPACE_FIXED;
-                settings->uid_shift = 0;
-                settings->uid_range = UINT32_C(0x10000);
         } else {
                 const char *range, *shift;
                 uid_t sh, rn;
@@ -696,7 +609,7 @@ int config_parse_private_users(
 
                 range = strchr(rvalue, ':');
                 if (range) {
-                        shift = strndupa_safe(rvalue, range - rvalue);
+                        shift = strndupa(rvalue, range - rvalue);
                         range++;
 
                         r = safe_atou32(range, &rn);
@@ -775,6 +688,31 @@ int config_parse_syscall_filter(
         }
 }
 
+int config_parse_hostname(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+
+        char **s = data;
+
+        assert(rvalue);
+        assert(s);
+
+        if (!hostname_is_valid(rvalue, 0)) {
+                log_syntax(unit, LOG_WARNING, filename, line, 0, "Invalid hostname, ignoring: %s", rvalue);
+                return 0;
+        }
+
+        return free_and_strdup_warn(s, empty_to_null(rvalue));
+}
+
 int config_parse_oom_score_adjust(
                 const char *unit,
                 const char *filename,
@@ -787,10 +725,11 @@ int config_parse_oom_score_adjust(
                 void *data,
                 void *userdata) {
 
-        Settings *settings = ASSERT_PTR(data);
+        Settings *settings = data;
         int oa, r;
 
         assert(rvalue);
+        assert(settings);
 
         if (isempty(rvalue)) {
                 settings->oom_score_adjust_set = false;
@@ -825,9 +764,10 @@ int config_parse_cpu_affinity(
                 void *data,
                 void *userdata) {
 
-        Settings *settings = ASSERT_PTR(data);
+        Settings *settings = data;
 
         assert(rvalue);
+        assert(settings);
 
         return parse_cpu_set_extend(rvalue, &settings->cpu_set, true, unit, filename, line, lvalue);
 }
@@ -902,10 +842,11 @@ int config_parse_link_journal(
                 void *data,
                 void *userdata) {
 
-        Settings *settings = ASSERT_PTR(data);
+        Settings *settings = data;
         int r;
 
         assert(rvalue);
+        assert(settings);
 
         r = parse_link_journal(rvalue, &settings->link_journal, &settings->link_journal_try);
         if (r < 0)
@@ -950,10 +891,11 @@ int config_parse_userns_chown(
                 void *data,
                 void *userdata) {
 
-        UserNamespaceOwnership *ownership = ASSERT_PTR(data);
+        UserNamespaceOwnership *ownership = data;
         int r;
 
         assert(rvalue);
+        assert(ownership);
 
         /* Compatibility support for UserNamespaceChown=, whose job has been taken over by UserNamespaceOwnership= */
 
@@ -979,10 +921,11 @@ int config_parse_bind_user(
                 void *data,
                 void *userdata) {
 
-        char ***bind_user = ASSERT_PTR(data);
+        char ***bind_user = data;
         int r;
 
         assert(rvalue);
+        assert(bind_user);
 
         if (isempty(rvalue)) {
                 *bind_user = strv_free(*bind_user);

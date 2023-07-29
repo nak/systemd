@@ -11,9 +11,10 @@
 #include "string-util.h"
 #include "tests.h"
 #include "user-util.h"
+#include "util.h"
 #include "virt.h"
 
-TEST(namespace_cleanup_tmpdir) {
+static void test_namespace_cleanup_tmpdir(void) {
         {
                 _cleanup_(namespace_cleanup_tmpdirp) char *dir;
                 assert_se(dir = strdup(RUN_SYSTEMD_EMPTY));
@@ -26,7 +27,7 @@ TEST(namespace_cleanup_tmpdir) {
         }
 }
 
-static void test_tmpdir_one(const char *id, const char *A, const char *B) {
+static void test_tmpdir(const char *id, const char *A, const char *B) {
         _cleanup_free_ char *a, *b;
         struct stat x, y;
         char *c, *d;
@@ -62,28 +63,8 @@ static void test_tmpdir_one(const char *id, const char *A, const char *B) {
         }
 }
 
-TEST(tmpdir) {
-        _cleanup_free_ char *x = NULL, *y = NULL, *z = NULL, *zz = NULL;
-        sd_id128_t bid;
-
-        assert_se(sd_id128_get_boot(&bid) >= 0);
-
-        x = strjoin("/tmp/systemd-private-", SD_ID128_TO_STRING(bid), "-abcd.service-");
-        y = strjoin("/var/tmp/systemd-private-", SD_ID128_TO_STRING(bid), "-abcd.service-");
-        assert_se(x && y);
-
-        test_tmpdir_one("abcd.service", x, y);
-
-        z = strjoin("/tmp/systemd-private-", SD_ID128_TO_STRING(bid), "-sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device-");
-        zz = strjoin("/var/tmp/systemd-private-", SD_ID128_TO_STRING(bid), "-sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device-");
-
-        assert_se(z && zz);
-
-        test_tmpdir_one("sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device", z, zz);
-}
-
 static void test_shareable_ns(unsigned long nsflag) {
-        _cleanup_close_pair_ int s[2] = PIPE_EBADF;
+        _cleanup_close_pair_ int s[2] = { -1, -1 };
         pid_t pid1, pid2, pid3;
         int r, n = 0;
         siginfo_t si;
@@ -140,15 +121,15 @@ static void test_shareable_ns(unsigned long nsflag) {
         assert_se(n == 1);
 }
 
-TEST(netns) {
+static void test_netns(void) {
         test_shareable_ns(CLONE_NEWNET);
 }
 
-TEST(ipcns) {
+static void test_ipcns(void) {
         test_shareable_ns(CLONE_NEWIPC);
 }
 
-TEST(protect_kernel_logs) {
+static void test_protect_kernel_logs(void) {
         int r;
         pid_t pid;
         static const NamespaceInfo ns_info = {
@@ -170,13 +151,12 @@ TEST(protect_kernel_logs) {
         assert_se(pid >= 0);
 
         if (pid == 0) {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
 
                 fd = open("/dev/kmsg", O_RDONLY | O_CLOEXEC);
                 assert_se(fd > 0);
 
                 r = setup_namespace(NULL,
-                                    NULL,
                                     NULL,
                                     NULL,
                                     &ns_info,
@@ -186,7 +166,6 @@ TEST(protect_kernel_logs) {
                                     NULL,
                                     NULL,
                                     NULL,
-                                    NULL,
                                     NULL, 0,
                                     NULL, 0,
                                     NULL, 0,
@@ -194,6 +173,7 @@ TEST(protect_kernel_logs) {
                                     NULL,
                                     NULL,
                                     NULL,
+                                    0,
                                     NULL,
                                     0,
                                     NULL,
@@ -202,7 +182,7 @@ TEST(protect_kernel_logs) {
                                     NULL,
                                     NULL,
                                     NULL,
-                                    NULL,
+                                    0,
                                     NULL,
                                     NULL,
                                     NULL,
@@ -219,11 +199,39 @@ TEST(protect_kernel_logs) {
         assert_se(wait_for_terminate_and_check("ns-kernellogs", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-static int intro(void) {
-        if (!have_namespaces())
-                return log_tests_skipped("Don't have namespace support");
+int main(int argc, char *argv[]) {
+        sd_id128_t bid;
+        char boot_id[SD_ID128_STRING_MAX];
+        _cleanup_free_ char *x = NULL, *y = NULL, *z = NULL, *zz = NULL;
+
+        test_setup_logging(LOG_INFO);
+
+        test_namespace_cleanup_tmpdir();
+
+        if (!have_namespaces()) {
+                log_tests_skipped("Don't have namespace support");
+                return EXIT_TEST_SKIP;
+        }
+
+        assert_se(sd_id128_get_boot(&bid) >= 0);
+        sd_id128_to_string(bid, boot_id);
+
+        x = strjoin("/tmp/systemd-private-", boot_id, "-abcd.service-");
+        y = strjoin("/var/tmp/systemd-private-", boot_id, "-abcd.service-");
+        assert_se(x && y);
+
+        test_tmpdir("abcd.service", x, y);
+
+        z = strjoin("/tmp/systemd-private-", boot_id, "-sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device-");
+        zz = strjoin("/var/tmp/systemd-private-", boot_id, "-sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device-");
+
+        assert_se(z && zz);
+
+        test_tmpdir("sys-devices-pci0000:00-0000:00:1a.0-usb3-3\\x2d1-3\\x2d1:1.0-bluetooth-hci0.device", z, zz);
+
+        test_netns();
+        test_ipcns();
+        test_protect_kernel_logs();
 
         return EXIT_SUCCESS;
 }
-
-DEFINE_TEST_MAIN_WITH_INTRO(LOG_INFO, intro);

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: LGPL-2.1-or-later
 [NetDev]
 Kind=l2tp
 Name=l2tp99
@@ -8,7 +7,7 @@ TunnelId=10
 PeerTunnelId=11
 UDPSourcePort=3000
 UDPDestinationPort=4000
-Local=static@test1
+Local=static
 Remote=192.168.30.101
 EncapsulationType=udp
 UDPCheckSum=true

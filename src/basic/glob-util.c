@@ -47,28 +47,17 @@ int safe_glob(const char *path, int flags, glob_t *pglob) {
         return 0;
 }
 
-int glob_first(const char *path, char **ret_first) {
+int glob_exists(const char *path) {
         _cleanup_globfree_ glob_t g = {};
         int k;
 
         assert(path);
 
         k = safe_glob(path, GLOB_NOSORT|GLOB_BRACE, &g);
-        if (k == -ENOENT) {
-                if (ret_first)
-                        *ret_first = NULL;
+        if (k == -ENOENT)
                 return false;
-        }
         if (k < 0)
                 return k;
-
-        if (ret_first) {
-                char *first = strdup(g.gl_pathv[0]);
-                if (!first)
-                        return log_oom_debug();
-                *ret_first = first;
-        }
-
         return true;
 }
 

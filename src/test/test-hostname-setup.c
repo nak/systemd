@@ -4,19 +4,18 @@
 
 #include "alloc-util.h"
 #include "fileio.h"
-#include "fs-util.h"
 #include "hostname-setup.h"
 #include "string-util.h"
 #include "tests.h"
 #include "tmpfile-util.h"
 
-TEST(read_etc_hostname) {
-        _cleanup_(unlink_tempfilep) char path[] = "/tmp/hostname.XXXXXX";
+static void test_read_etc_hostname(void) {
+        char path[] = "/tmp/hostname.XXXXXX";
         char *hostname;
         int fd;
 
         fd = mkostemp_safe(path);
-        assert_se(fd > 0);
+        assert(fd > 0);
         close(fd);
 
         /* simple hostname */
@@ -55,10 +54,19 @@ TEST(read_etc_hostname) {
         /* nonexisting file */
         assert_se(read_etc_hostname("/non/existing", &hostname) == -ENOENT);
         assert_se(hostname == (char*) 0x1234);  /* does not touch argument on error */
+
+        unlink(path);
 }
 
-TEST(hostname_setup) {
+static void test_hostname_setup(void) {
         hostname_setup(false);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_read_etc_hostname();
+        test_hostname_setup();
+
+        return 0;
+}

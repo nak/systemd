@@ -5,12 +5,12 @@
 
 #include "bpf-devices.h"
 #include "bpf-program.h"
-#include "devnum-util.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "nulstr-util.h"
 #include "parse-util.h"
 #include "path-util.h"
+#include "stat-util.h"
 #include "stdio-util.h"
 #include "string-util.h"
 
@@ -22,7 +22,7 @@ static int bpf_access_type(const char *acc) {
         assert(acc);
 
         for (; *acc; acc++)
-                switch (*acc) {
+                switch(*acc) {
                 case 'r':
                         r |= BPF_DEVCG_ACC_READ;
                         break;
@@ -184,7 +184,7 @@ int bpf_devices_cgroup_init(
                             offsetof(struct bpf_cgroup_dev_ctx, minor)),
         };
 
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         int r;
 
         assert(ret);
@@ -192,7 +192,7 @@ int bpf_devices_cgroup_init(
         if (policy == CGROUP_DEVICE_POLICY_AUTO && !allow_list)
                 return 0;
 
-        r = bpf_program_new(BPF_PROG_TYPE_CGROUP_DEVICE, "sd_devices", &prog);
+        r = bpf_program_new(BPF_PROG_TYPE_CGROUP_DEVICE, &prog);
         if (r < 0)
                 return log_error_errno(r, "Loading device control BPF program failed: %m");
 
@@ -208,7 +208,7 @@ int bpf_devices_cgroup_init(
 }
 
 int bpf_devices_apply_policy(
-                BPFProgram **prog,
+                BPFProgram *prog,
                 CGroupDevicePolicy policy,
                 bool allow_list,
                 const char *cgroup_path,
@@ -219,8 +219,7 @@ int bpf_devices_apply_policy(
 
         /* This will assign *prog_installed if everything goes well. */
 
-        assert(prog);
-        if (!*prog)
+        if (!prog)
                 goto finish;
 
         const bool deny_everything = policy == CGROUP_DEVICE_POLICY_STRICT && !allow_list;
@@ -238,20 +237,20 @@ int bpf_devices_apply_policy(
         };
 
         if (!deny_everything) {
-                r = bpf_program_add_instructions(*prog, post_insn, ELEMENTSOF(post_insn));
+                r = bpf_program_add_instructions(prog, post_insn, ELEMENTSOF(post_insn));
                 if (r < 0)
                         return log_error_errno(r, "Extending device control BPF program failed: %m");
 
                 /* Fixup PASS_JUMP_OFF jump offsets. */
-                for (size_t off = 0; off < (*prog)->n_instructions; off++) {
-                        struct bpf_insn *ins = &((*prog)->instructions[off]);
+                for (size_t off = 0; off < prog->n_instructions; off++) {
+                        struct bpf_insn *ins = &prog->instructions[off];
 
                         if (ins->code == (BPF_JMP | BPF_JA) && ins->off == PASS_JUMP_OFF)
-                                ins->off = (*prog)->n_instructions - off - 1;
+                                ins->off = prog->n_instructions - off - 1;
                 }
         }
 
-        r = bpf_program_add_instructions(*prog, exit_insn, ELEMENTSOF(exit_insn));
+        r = bpf_program_add_instructions(prog, exit_insn, ELEMENTSOF(exit_insn));
         if (r < 0)
                 return log_error_errno(r, "Extending device control BPF program failed: %m");
 
@@ -259,7 +258,7 @@ int bpf_devices_apply_policy(
         if (r < 0)
                 return log_error_errno(r, "Failed to determine cgroup path: %m");
 
-        r = bpf_program_cgroup_attach(*prog, BPF_CGROUP_DEVICE, controller_path, BPF_F_ALLOW_MULTI);
+        r = bpf_program_cgroup_attach(prog, BPF_CGROUP_DEVICE, controller_path, BPF_F_ALLOW_MULTI);
         if (r < 0)
                 return log_error_errno(r, "Attaching device control BPF program to cgroup %s failed: %m",
                                        empty_to_root(cgroup_path));
@@ -267,8 +266,8 @@ int bpf_devices_apply_policy(
  finish:
         /* Unref the old BPF program (which will implicitly detach it) right before attaching the new program. */
         if (prog_installed) {
-                bpf_program_free(*prog_installed);
-                *prog_installed = TAKE_PTR(*prog);
+                bpf_program_unref(*prog_installed);
+                *prog_installed = bpf_program_ref(prog);
         }
         return 0;
 }
@@ -279,7 +278,7 @@ int bpf_devices_supported(void) {
                 BPF_EXIT_INSN()
         };
 
-        _cleanup_(bpf_program_freep) BPFProgram *program = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *program = NULL;
         static int supported = -1;
         int r;
 
@@ -306,7 +305,7 @@ int bpf_devices_supported(void) {
                 return supported = 0;
         }
 
-        r = bpf_program_new(BPF_PROG_TYPE_CGROUP_DEVICE, "sd_devices", &program);
+        r = bpf_program_new(BPF_PROG_TYPE_CGROUP_DEVICE, &program);
         if (r < 0) {
                 log_debug_errno(r, "Can't allocate CGROUP DEVICE BPF program, BPF device control is not supported: %m");
                 return supported = 0;
@@ -515,6 +514,7 @@ int bpf_devices_allow_list_static(
                 "/run/systemd/inaccessible/blk\0" "rwm\0";
         int r = 0, k;
 
+        const char *node, *acc;
         NULSTR_FOREACH_PAIR(node, acc, auto_devices) {
                 k = bpf_devices_allow_list_device(prog, path, node, acc);
                 if (r >= 0 && k < 0)

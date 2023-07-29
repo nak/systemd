@@ -5,6 +5,7 @@
 #include "alloc-util.h"
 #include "logind-device.h"
 #include "logind-seat-dbus.h"
+#include "util.h"
 
 Device* device_new(Manager *m, const char *sysfs, bool master) {
         Device *d;
@@ -66,6 +67,7 @@ void device_free(Device *d) {
 }
 
 void device_attach(Device *d, Seat *s) {
+        Device *i;
         bool had_master;
 
         assert(d);

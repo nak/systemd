@@ -6,14 +6,13 @@
 #include "sd-bus.h"
 
 #include "bus-error.h"
-#include "bus-locator.h"
 #include "dev-setup.h"
 #include "format-util.h"
 #include "fs-util.h"
-#include "label-util.h"
+#include "label.h"
 #include "limits-util.h"
 #include "main-func.h"
-#include "mkdir-label.h"
+#include "mkdir.h"
 #include "mount-util.h"
 #include "mountpoint-util.h"
 #include "path-util.h"
@@ -34,13 +33,13 @@ static int acquire_runtime_dir_properties(uint64_t *size, uint64_t *inodes) {
         if (r < 0)
                 return log_error_errno(r, "Failed to connect to system bus: %m");
 
-        r = bus_get_property_trivial(bus, bus_login_mgr, "RuntimeDirectorySize", &error, 't', size);
+        r = sd_bus_get_property_trivial(bus, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "RuntimeDirectorySize", &error, 't', size);
         if (r < 0) {
                 log_warning_errno(r, "Failed to acquire runtime directory size, ignoring: %s", bus_error_message(&error, r));
                 *size = physical_memory_scale(10U, 100U); /* 10% */
         }
 
-        r = bus_get_property_trivial(bus, bus_login_mgr, "RuntimeDirectoryInodesMax", &error, 't', inodes);
+        r = sd_bus_get_property_trivial(bus, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "RuntimeDirectoryInodesMax", &error, 't', inodes);
         if (r < 0) {
                 log_warning_errno(r, "Failed to acquire number of inodes for runtime directory, ignoring: %s", bus_error_message(&error, r));
                 *inodes = DIV_ROUND_UP(*size, 4096);
@@ -81,9 +80,7 @@ static int user_mkdir_runtime_path(
                          uid, gid, runtime_dir_size, runtime_dir_inodes,
                          mac_smack_use() ? ",smackfsroot=*" : "");
 
-                r = mkdir_label(runtime_path, 0700);
-                if (r < 0 && r != -EEXIST)
-                        return log_error_errno(r, "Failed to create %s: %m", runtime_path);
+                (void) mkdir_label(runtime_path, 0700);
 
                 r = mount_nofollow_verbose(LOG_DEBUG, "tmpfs", runtime_path, "tmpfs", MS_NODEV|MS_NOSUID, options);
                 if (r < 0) {
@@ -202,7 +199,7 @@ static int run(int argc, char *argv[]) {
 
         umask(0022);
 
-        r = mac_init();
+        r = mac_selinux_init();
         if (r < 0)
                 return r;
 
@@ -210,7 +207,7 @@ static int run(int argc, char *argv[]) {
                 return do_mount(argv[2]);
         if (streq(argv[1], "stop"))
                 return do_umount(argv[2]);
-        assert_not_reached();
+        assert_not_reached("Unknown verb!");
 }
 
 DEFINE_MAIN_FUNCTION(run);

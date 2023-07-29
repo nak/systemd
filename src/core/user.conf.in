@@ -14,7 +14,7 @@
 
 [Manager]
 #LogLevel=info
-#LogTarget=auto
+#LogTarget=console
 #LogColor=yes
 #LogLocation=no
 #LogTime=no
@@ -24,10 +24,9 @@
 #DefaultTimerAccuracySec=1min
 #DefaultStandardOutput=inherit
 #DefaultStandardError=inherit
-#DefaultTimeoutStartSec={{DEFAULT_USER_TIMEOUT_SEC}}s
-#DefaultTimeoutStopSec={{DEFAULT_USER_TIMEOUT_SEC}}s
+#DefaultTimeoutStartSec=90s
+#DefaultTimeoutStopSec=90s
 #DefaultTimeoutAbortSec=
-#DefaultDeviceTimeoutSec={{DEFAULT_USER_TIMEOUT_SEC}}s
 #DefaultRestartSec=100ms
 #DefaultStartLimitIntervalSec=10s
 #DefaultStartLimitBurst=5
@@ -48,8 +47,3 @@
 #DefaultLimitNICE=
 #DefaultLimitRTPRIO=
 #DefaultLimitRTTIME=
-#DefaultMemoryPressureThresholdSec=200ms
-#DefaultMemoryPressureWatch=auto
-#DefaultSmackProcessLabel=
-#ReloadLimitIntervalSec=
-#ReloadLimitBurst

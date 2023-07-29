@@ -14,7 +14,6 @@
 #include "sd-bus.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "bus-common-errors.h"
 #include "bus-error.h"
 #include "bus-locator.h"
@@ -25,9 +24,8 @@
 #include "bus-wait-for-jobs.h"
 #include "cgroup-show.h"
 #include "cgroup-util.h"
-#include "constants.h"
 #include "copy.h"
-#include "edit-util.h"
+#include "def.h"
 #include "env-util.h"
 #include "fd-util.h"
 #include "format-table.h"
@@ -36,7 +34,6 @@
 #include "locale-util.h"
 #include "log.h"
 #include "logs-show.h"
-#include "machine-dbus.h"
 #include "macro.h"
 #include "main-func.h"
 #include "mkdir.h"
@@ -62,13 +59,15 @@
 #include "verbs.h"
 #include "web-util.h"
 
+#define ALL_ADDRESSES -1
+
 static char **arg_property = NULL;
 static bool arg_all = false;
 static BusPrintPropertyFlags arg_print_flags = 0;
 static bool arg_full = false;
 static PagerFlags arg_pager_flags = 0;
 static bool arg_legend = true;
-static const char *arg_kill_whom = NULL;
+static const char *arg_kill_who = NULL;
 static int arg_signal = SIGTERM;
 static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
 static const char *arg_host = NULL;
@@ -78,13 +77,12 @@ static bool arg_quiet = false;
 static bool arg_ask_password = true;
 static unsigned arg_lines = 10;
 static OutputMode arg_output = OUTPUT_SHORT;
-static bool arg_now = false;
 static bool arg_force = false;
 static ImportVerify arg_verify = IMPORT_VERIFY_SIGNATURE;
 static const char* arg_format = NULL;
 static const char *arg_uid = NULL;
 static char **arg_setenv = NULL;
-static unsigned arg_max_addresses = 1;
+static int arg_max_addresses = 1;
 
 STATIC_DESTRUCTOR_REGISTER(arg_property, strv_freep);
 STATIC_DESTRUCTOR_REGISTER(arg_setenv, strv_freep);
@@ -100,7 +98,7 @@ static OutputFlags get_output_flags(void) {
 static int call_get_os_release(sd_bus *bus, const char *method, const char *name, const char *query, ...) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        const char *k, *v, **query_res = NULL;
+        const char *k, *v, *iter, **query_res = NULL;
         size_t count = 0, awaited_args = 0;
         va_list ap;
         int r;
@@ -194,7 +192,7 @@ static int call_get_addresses(
                 int family;
                 const void *a;
                 size_t sz;
-                char buf_ifi[1 + DECIMAL_STR_MAX(int)] = "";
+                char buf_ifi[DECIMAL_STR_MAX(int) + 2], buffer[MAX(INET6_ADDRSTRLEN, INET_ADDRSTRLEN)];
 
                 r = sd_bus_message_read(reply, "i", &family);
                 if (r < 0)
@@ -206,8 +204,13 @@ static int call_get_addresses(
 
                 if (family == AF_INET6 && ifi > 0)
                         xsprintf(buf_ifi, "%%%i", ifi);
+                else
+                        strcpy(buf_ifi, "");
 
-                if (!strextend(&addresses, prefix, IN_ADDR_TO_STRING(family, a), buf_ifi))
+                if (!strextend(&addresses,
+                               prefix,
+                               inet_ntop(family, a, buffer, sizeof(buffer)),
+                               buf_ifi))
                         return log_oom();
 
                 r = sd_bus_message_exit_container(reply);
@@ -261,25 +264,27 @@ static int show_table(Table *table, const char *word) {
 }
 
 static int list_machines(int argc, char *argv[], void *userdata) {
+
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_(table_unrefp) Table *table = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
 
-        pager_open(arg_pager_flags);
+        assert(bus);
+
+        (void) pager_open(arg_pager_flags);
 
         r = bus_call_method(bus, bus_machine_mgr, "ListMachines", &error, &reply, NULL);
         if (r < 0)
                 return log_error_errno(r, "Could not get machines: %s", bus_error_message(&error, r));
 
-        table = table_new("machine", "class", "service", "os", "version",
-                          arg_max_addresses > 0 ? "addresses" : NULL);
+        table = table_new("machine", "class", "service", "os", "version", "addresses");
         if (!table)
                 return log_oom();
 
-        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
-        if (!arg_full && arg_max_addresses > 0 && arg_max_addresses < UINT_MAX)
+        table_set_empty_string(table, "-");
+        if (!arg_full && arg_max_addresses != ALL_ADDRESSES)
                 table_set_cell_height_max(table, arg_max_addresses);
 
         if (arg_full)
@@ -311,23 +316,23 @@ static int list_machines(int argc, char *argv[], void *userdata) {
                                 &os,
                                 &version_id);
 
+                (void) call_get_addresses(
+                                bus,
+                                name,
+                                0,
+                                "",
+                                "\n",
+                                &addresses);
+
                 r = table_add_many(table,
                                    TABLE_STRING, empty_to_null(name),
                                    TABLE_STRING, empty_to_null(class),
                                    TABLE_STRING, empty_to_null(service),
                                    TABLE_STRING, empty_to_null(os),
-                                   TABLE_STRING, empty_to_null(version_id));
+                                   TABLE_STRING, empty_to_null(version_id),
+                                   TABLE_STRING, empty_to_null(addresses));
                 if (r < 0)
                         return table_log_add_error(r);
-
-                if (arg_max_addresses > 0) {
-                        (void) call_get_addresses(bus, name, 0, "", "\n", &addresses);
-
-                        r = table_add_many(table,
-                                           TABLE_STRING, empty_to_null(addresses));
-                        if (r < 0)
-                                return table_log_add_error(r);
-                }
         }
 
         r = sd_bus_message_exit_container(reply);
@@ -342,10 +347,12 @@ static int list_images(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_(table_unrefp) Table *table = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
 
-        pager_open(arg_pager_flags);
+        assert(bus);
+
+        (void) pager_open(arg_pager_flags);
 
         r = bus_call_method(bus, bus_machine_mgr, "ListImages", &error, &reply, NULL);
         if (r < 0)
@@ -500,7 +507,10 @@ static void machine_status_info_clear(MachineStatusInfo *info) {
 }
 
 static void print_machine_status_info(sd_bus *bus, MachineStatusInfo *i) {
-        _cleanup_free_ char *addresses = NULL, *s1 = NULL, *s2 = NULL;
+        char since1[FORMAT_TIMESTAMP_RELATIVE_MAX];
+        char since2[FORMAT_TIMESTAMP_MAX];
+        _cleanup_free_ char *addresses = NULL;
+        const char *s1, *s2;
         int ifi = -1;
 
         assert(bus);
@@ -513,12 +523,12 @@ static void print_machine_status_info(sd_bus *bus, MachineStatusInfo *i) {
         else
                 putchar('\n');
 
-        s1 = strdup(strempty(FORMAT_TIMESTAMP_RELATIVE(i->timestamp.realtime)));
-        s2 = strdup(strempty(FORMAT_TIMESTAMP(i->timestamp.realtime)));
+        s1 = format_timestamp_relative(since1, sizeof(since1), i->timestamp.realtime);
+        s2 = format_timestamp(since2, sizeof(since2), i->timestamp.realtime);
 
-        if (!isempty(s1))
-                printf("\t   Since: %s; %s\n", strna(s2), s1);
-        else if (!isempty(s2))
+        if (s1)
+                printf("\t   Since: %s; %s\n", s2, s1);
+        else if (s2)
                 printf("\t   Since: %s\n", s2);
 
         if (i->leader > 0) {
@@ -526,7 +536,7 @@ static void print_machine_status_info(sd_bus *bus, MachineStatusInfo *i) {
 
                 printf("\t  Leader: %u", (unsigned) i->leader);
 
-                (void) get_process_comm(i->leader, &t);
+                get_process_comm(i->leader, &t);
                 if (t)
                         printf(" (%s)", t);
 
@@ -550,9 +560,9 @@ static void print_machine_status_info(sd_bus *bus, MachineStatusInfo *i) {
                 fputs("\t   Iface:", stdout);
 
                 for (size_t c = 0; c < i->n_netif; c++) {
-                        char name[IF_NAMESIZE];
+                        char name[IF_NAMESIZE+1];
 
-                        if (format_ifname(i->netif[c], name) >= 0) {
+                        if (format_ifname(i->netif[c], name)) {
                                 fputc(' ', stdout);
                                 fputs(name, stdout);
 
@@ -687,14 +697,18 @@ static int show_machine_properties(sd_bus *bus, const char *path, bool *new_line
 }
 
 static int show_machine(int argc, char *argv[], void *userdata) {
+
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         bool properties, new_line = false;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r = 0;
+
+        assert(bus);
 
         properties = !strstr(argv[0], "status");
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         if (properties && argc <= 1) {
 
@@ -706,7 +720,6 @@ static int show_machine(int argc, char *argv[], void *userdata) {
         }
 
         for (int i = 1; i < argc; i++) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
                 const char *path = NULL;
 
                 r = bus_call_method(bus, bus_machine_mgr, "GetMachine", &error, &reply, "s", argv[i]);
@@ -815,6 +828,12 @@ typedef struct ImageStatusInfo {
 } ImageStatusInfo;
 
 static void print_image_status_info(sd_bus *bus, ImageStatusInfo *i) {
+        char ts_relative[FORMAT_TIMESTAMP_RELATIVE_MAX];
+        char ts_absolute[FORMAT_TIMESTAMP_MAX];
+        char bs[FORMAT_BYTES_MAX];
+        char bs_exclusive[FORMAT_BYTES_MAX];
+        const char *s1, *s2, *s3, *s4;
+
         assert(bus);
         assert(i);
 
@@ -840,29 +859,33 @@ static void print_image_status_info(sd_bus *bus, ImageStatusInfo *i) {
                i->read_only ? "read-only" : "writable",
                i->read_only ? ansi_normal() : "");
 
-        if (timestamp_is_set(i->crtime))
-                printf("\t Created: %s; %s\n",
-                       FORMAT_TIMESTAMP(i->crtime), FORMAT_TIMESTAMP_RELATIVE(i->crtime));
+        s1 = format_timestamp_relative(ts_relative, sizeof(ts_relative), i->crtime);
+        s2 = format_timestamp(ts_absolute, sizeof(ts_absolute), i->crtime);
+        if (s1 && s2)
+                printf("\t Created: %s; %s\n", s2, s1);
+        else if (s2)
+                printf("\t Created: %s\n", s2);
 
-        if (timestamp_is_set(i->mtime))
-                printf("\tModified: %s; %s\n",
-                       FORMAT_TIMESTAMP(i->mtime), FORMAT_TIMESTAMP_RELATIVE(i->mtime));
+        s1 = format_timestamp_relative(ts_relative, sizeof(ts_relative), i->mtime);
+        s2 = format_timestamp(ts_absolute, sizeof(ts_absolute), i->mtime);
+        if (s1 && s2)
+                printf("\tModified: %s; %s\n", s2, s1);
+        else if (s2)
+                printf("\tModified: %s\n", s2);
 
-        if (i->usage != UINT64_MAX) {
-                if (i->usage_exclusive != i->usage && i->usage_exclusive != UINT64_MAX)
-                        printf("\t   Usage: %s (exclusive: %s)\n",
-                               FORMAT_BYTES(i->usage), FORMAT_BYTES(i->usage_exclusive));
-                else
-                        printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
-        }
+        s3 = format_bytes(bs, sizeof(bs), i->usage);
+        s4 = i->usage_exclusive != i->usage ? format_bytes(bs_exclusive, sizeof(bs_exclusive), i->usage_exclusive) : NULL;
+        if (s3 && s4)
+                printf("\t   Usage: %s (exclusive: %s)\n", s3, s4);
+        else if (s3)
+                printf("\t   Usage: %s\n", s3);
 
-        if (i->limit != UINT64_MAX) {
-                if (i->limit_exclusive != i->limit && i->limit_exclusive != UINT64_MAX)
-                        printf("\t   Limit: %s (exclusive: %s)\n",
-                               FORMAT_BYTES(i->limit), FORMAT_BYTES(i->limit_exclusive));
-                else
-                        printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
-        }
+        s3 = format_bytes(bs, sizeof(bs), i->limit);
+        s4 = i->limit_exclusive != i->limit ? format_bytes(bs_exclusive, sizeof(bs_exclusive), i->limit_exclusive) : NULL;
+        if (s3 && s4)
+                printf("\t   Limit: %s (exclusive: %s)\n", s3, s4);
+        else if (s3)
+                printf("\t   Limit: %s\n", s3);
 }
 
 static int show_image_info(sd_bus *bus, const char *path, bool *new_line) {
@@ -917,14 +940,18 @@ typedef struct PoolStatusInfo {
 } PoolStatusInfo;
 
 static void print_pool_status_info(sd_bus *bus, PoolStatusInfo *i) {
+        char bs[FORMAT_BYTES_MAX], *s;
+
         if (i->path)
                 printf("\t    Path: %s\n", i->path);
 
-        if (i->usage != UINT64_MAX)
-                printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
+        s = format_bytes(bs, sizeof(bs), i->usage);
+        if (s)
+                printf("\t   Usage: %s\n", s);
 
-        if (i->limit != UINT64_MAX)
-                printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
+        s = format_bytes(bs, sizeof(bs), i->limit);
+        if (s)
+                printf("\t   Limit: %s\n", s);
 }
 
 static int show_pool_info(sd_bus *bus) {
@@ -983,14 +1010,18 @@ static int show_image_properties(sd_bus *bus, const char *path, bool *new_line) 
 }
 
 static int show_image(int argc, char *argv[], void *userdata) {
+
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         bool properties, new_line = false;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r = 0;
+
+        assert(bus);
 
         properties = !strstr(argv[0], "status");
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         if (argc <= 1) {
 
@@ -1006,7 +1037,6 @@ static int show_image(int argc, char *argv[], void *userdata) {
         }
 
         for (int i = 1; i < argc; i++) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
                 const char *path = NULL;
 
                 r = bus_call_method(bus, bus_machine_mgr, "GetImage", &error, &reply, "s", argv[i]);
@@ -1028,13 +1058,15 @@ static int show_image(int argc, char *argv[], void *userdata) {
 
 static int kill_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
-        if (!arg_kill_whom)
-                arg_kill_whom = "all";
+        if (!arg_kill_who)
+                arg_kill_who = "all";
 
         for (int i = 1; i < argc; i++) {
                 r = bus_call_method(
@@ -1043,7 +1075,7 @@ static int kill_machine(int argc, char *argv[], void *userdata) {
                                 "KillMachine",
                                 &error,
                                 NULL,
-                                "ssi", argv[i], arg_kill_whom, arg_signal);
+                                "ssi", argv[i], arg_kill_who, arg_signal);
                 if (r < 0)
                         return log_error_errno(r, "Could not kill machine: %s", bus_error_message(&error, r));
         }
@@ -1052,14 +1084,14 @@ static int kill_machine(int argc, char *argv[], void *userdata) {
 }
 
 static int reboot_machine(int argc, char *argv[], void *userdata) {
-        arg_kill_whom = "leader";
+        arg_kill_who = "leader";
         arg_signal = SIGINT; /* sysvinit + systemd */
 
         return kill_machine(argc, argv, userdata);
 }
 
 static int poweroff_machine(int argc, char *argv[], void *userdata) {
-        arg_kill_whom = "leader";
+        arg_kill_who = "leader";
         arg_signal = SIGRTMIN+4; /* only systemd */
 
         return kill_machine(argc, argv, userdata);
@@ -1067,8 +1099,10 @@ static int poweroff_machine(int argc, char *argv[], void *userdata) {
 
 static int terminate_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1081,21 +1115,16 @@ static int terminate_machine(int argc, char *argv[], void *userdata) {
         return 0;
 }
 
-static const char *select_copy_method(bool copy_from, bool force) {
-        if (force)
-                return copy_from ? "CopyFromMachineWithFlags" : "CopyToMachineWithFlags";
-        else
-                return copy_from ? "CopyFromMachine" : "CopyToMachine";
-}
-
 static int copy_files(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_free_ char *abs_host_path = NULL;
         char *dest, *host_path, *container_path;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         bool copy_from;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1116,7 +1145,7 @@ static int copy_files(int argc, char *argv[], void *userdata) {
                         bus,
                         &m,
                         bus_machine_mgr,
-                        select_copy_method(copy_from, arg_force));
+                        copy_from ? "CopyFromMachine" : "CopyToMachine");
         if (r < 0)
                 return bus_log_create_error(r);
 
@@ -1129,12 +1158,6 @@ static int copy_files(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return bus_log_create_error(r);
 
-        if (arg_force) {
-                r = sd_bus_message_append(m, "t", MACHINE_COPY_REPLACE);
-                if (r < 0)
-                        return bus_log_create_error(r);
-        }
-
         /* This is a slow operation, hence turn off any method call timeouts */
         r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
         if (r < 0)
@@ -1145,8 +1168,10 @@ static int copy_files(int argc, char *argv[], void *userdata) {
 
 static int bind_mount(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1286,8 +1311,10 @@ static int login_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_slot_unrefp) sd_bus_slot *slot = NULL;
         _cleanup_(sd_event_unrefp) sd_event *event = NULL;
         int master = -1, r;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         const char *match, *machine;
+
+        assert(bus);
 
         if (!strv_isempty(arg_setenv) || arg_uid)
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
@@ -1338,9 +1365,11 @@ static int shell_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_slot_unrefp) sd_bus_slot *slot = NULL;
         _cleanup_(sd_event_unrefp) sd_event *event = NULL;
         int master = -1, r;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         const char *match, *machine, *path;
         _cleanup_free_ char *uid = NULL;
+
+        assert(bus);
 
         if (!IN_SET(arg_transport, BUS_TRANSPORT_LOCAL, BUS_TRANSPORT_MACHINE))
                 return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
@@ -1411,164 +1440,11 @@ static int shell_machine(int argc, char *argv[], void *userdata) {
         return process_forward(event, &forward, master, 0, machine);
 }
 
-static int normalize_nspawn_filename(const char *name, char **ret_file) {
-        _cleanup_free_ char *file = NULL;
-
-        assert(name);
-        assert(ret_file);
-
-        if (!endswith(name, ".nspawn"))
-                file = strjoin(name, ".nspawn");
-        else
-                file = strdup(name);
-        if (!file)
-                return log_oom();
-
-        if (!filename_is_valid(file))
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Invalid settings file name '%s'.", file);
-
-        *ret_file = TAKE_PTR(file);
-        return 0;
-}
-
-static int get_settings_path(const char *name, char **ret_path) {
-        assert(name);
-        assert(ret_path);
-
-        FOREACH_STRING(i, "/etc/systemd/nspawn", "/run/systemd/nspawn", "/var/lib/machines") {
-                _cleanup_free_ char *path = NULL;
-
-                path = path_join(i, name);
-                if (!path)
-                        return -ENOMEM;
-
-                if (access(path, F_OK) >= 0) {
-                        *ret_path = TAKE_PTR(path);
-                        return 0;
-                }
-        }
-
-        return -ENOENT;
-}
-
-static int edit_settings(int argc, char *argv[], void *userdata) {
-        _cleanup_(edit_file_context_done) EditFileContext context = {};
-        int r;
-
-        if (!on_tty())
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot edit machine settings if not on a tty.");
-
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
-                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
-                                       "Edit is only supported on the host machine.");
-
-        r = mac_init();
-        if (r < 0)
-                return r;
-
-        STRV_FOREACH(name, strv_skip(argv, 1)) {
-                _cleanup_free_ char *file = NULL, *path = NULL;
-
-                if (path_is_absolute(*name)) {
-                        if (!path_is_safe(*name))
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Invalid settings file path '%s'.",
-                                                       *name);
-
-                        r = edit_files_add(&context, *name, NULL, NULL);
-                        if (r < 0)
-                                return r;
-                        continue;
-                }
-
-                r = normalize_nspawn_filename(*name, &file);
-                if (r < 0)
-                        return r;
-
-                r = get_settings_path(file, &path);
-                if (r == -ENOENT) {
-                        log_debug("No existing settings file for machine '%s' found, creating a new file.", *name);
-
-                        path = path_join("/etc/systemd/nspawn", file);
-                        if (!path)
-                                return log_oom();
-
-                        r = edit_files_add(&context, path, NULL, NULL);
-                        if (r < 0)
-                                return r;
-                        continue;
-                }
-                if (r < 0)
-                        return log_error_errno(r, "Failed to get the path of the settings file: %m");
-
-                if (path_startswith(path, "/var/lib/machines")) {
-                        _cleanup_free_ char *new_path = NULL;
-
-                        new_path = path_join("/etc/systemd/nspawn", file);
-                        if (!new_path)
-                                return log_oom();
-
-                        r = edit_files_add(&context, new_path, path, NULL);
-                } else
-                        r = edit_files_add(&context, path, NULL, NULL);
-                if (r < 0)
-                        return r;
-        }
-
-        return do_edit_files_and_install(&context);
-}
-
-static int cat_settings(int argc, char *argv[], void *userdata) {
-        int r = 0;
-
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
-                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
-                                       "Cat is only supported on the host machine.");
-
-        pager_open(arg_pager_flags);
-
-        STRV_FOREACH(name, strv_skip(argv, 1)) {
-                _cleanup_free_ char *file = NULL, *path = NULL;
-                int q;
-
-                if (path_is_absolute(*name)) {
-                        if (!path_is_safe(*name))
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Invalid settings file path '%s'.",
-                                                       *name);
-
-                        q = cat_files(*name, /* dropins = */ NULL, /* flags = */ 0);
-                        if (q < 0)
-                                return r < 0 ? r : q;
-                        continue;
-                }
-
-                q = normalize_nspawn_filename(*name, &file);
-                if (q < 0)
-                        return r < 0 ? r : q;
-
-                q = get_settings_path(file, &path);
-                if (q == -ENOENT) {
-                        log_error_errno(q, "No settings file found for machine '%s'.", *name);
-                        r = r < 0 ? r : q;
-                        continue;
-                }
-                if (q < 0) {
-                        log_error_errno(q, "Failed to get the path of the settings file: %m");
-                        return r < 0 ? r : q;
-                }
-
-                q = cat_files(path, /* dropins = */ NULL, /* flags = */ 0);
-                if (q < 0)
-                        return r < 0 ? r : q;
-        }
-
-        return r;
-}
-
 static int remove_image(int argc, char *argv[], void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1595,8 +1471,10 @@ static int remove_image(int argc, char *argv[], void *userdata) {
 
 static int rename_image(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1616,8 +1494,10 @@ static int rename_image(int argc, char *argv[], void *userdata) {
 static int clone_image(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -1639,8 +1519,10 @@ static int clone_image(int argc, char *argv[], void *userdata) {
 
 static int read_only_image(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int b = true, r;
+
+        assert(bus);
 
         if (argc > 2) {
                 b = parse_boolean(argv[2]);
@@ -1697,15 +1579,17 @@ static int make_service_name(const char *name, char **ret) {
 static int start_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(bus_wait_for_jobs_freep) BusWaitForJobs *w = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
         ask_password_agent_open_if_enabled(arg_transport, arg_ask_password);
 
         r = bus_wait_for_jobs_new(bus, &w);
         if (r < 0)
-                return log_error_errno(r, "Could not watch jobs: %m");
+                return log_oom();
 
         for (int i = 1; i < argc; i++) {
                 _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
@@ -1724,9 +1608,11 @@ static int start_machine(int argc, char *argv[], void *userdata) {
                                                "Machine image '%s' does not exist.",
                                                argv[i]);
 
-                r = bus_call_method(
+                r = sd_bus_call_method(
                                 bus,
-                                bus_systemd_mgr,
+                                "org.freedesktop.systemd1",
+                                "/org/freedesktop/systemd1",
+                                "org.freedesktop.systemd1.Manager",
                                 "StartUnit",
                                 &error,
                                 &reply,
@@ -1753,29 +1639,31 @@ static int start_machine(int argc, char *argv[], void *userdata) {
 static int enable_machine(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL, *reply = NULL;
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        const char *method;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        UnitFileChange *changes = NULL;
+        size_t n_changes = 0;
+        const char *method = NULL;
+        sd_bus *bus = userdata;
         int r;
-        bool enable;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
-        enable = streq(argv[0], "enable");
-        method = enable ? "EnableUnitFiles" : "DisableUnitFiles";
+        method = streq(argv[0], "enable") ? "EnableUnitFiles" : "DisableUnitFiles";
 
-        r = bus_message_new_method_call(bus, &m, bus_systemd_mgr, method);
+        r = sd_bus_message_new_method_call(
+                        bus,
+                        &m,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
+                        method);
         if (r < 0)
                 return bus_log_create_error(r);
 
         r = sd_bus_message_open_container(m, 'a', "s");
         if (r < 0)
                 return bus_log_create_error(r);
-
-        if (enable) {
-                r = sd_bus_message_append(m, "s", "machines.target");
-                if (r < 0)
-                        return bus_log_create_error(r);
-        }
 
         for (int i = 1; i < argc; i++) {
                 _cleanup_free_ char *unit = NULL;
@@ -1801,7 +1689,7 @@ static int enable_machine(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return bus_log_create_error(r);
 
-        if (enable)
+        if (streq(argv[0], "enable"))
                 r = sd_bus_message_append(m, "bb", false, false);
         else
                 r = sd_bus_message_append(m, "b", false);
@@ -1812,38 +1700,36 @@ static int enable_machine(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return log_error_errno(r, "Failed to enable or disable unit: %s", bus_error_message(&error, r));
 
-        if (enable) {
+        if (streq(argv[0], "enable")) {
                 r = sd_bus_message_read(reply, "b", NULL);
                 if (r < 0)
                         return bus_log_parse_error(r);
         }
 
-        r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet);
+        r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet, &changes, &n_changes);
         if (r < 0)
-                return r;
+                goto finish;
 
-        r = bus_service_manager_reload(bus);
-        if (r < 0)
-                return r;
-
-        if (arg_now) {
-                _cleanup_strv_free_ char **new_args = NULL;
-
-                new_args = strv_new(enable ? "start" : "poweroff");
-                if (!new_args)
-                        return log_oom();
-
-                r = strv_extend_strv(&new_args, argv + 1, /* filter_duplicates = */ false);
-                if (r < 0)
-                        return log_oom();
-
-                if (enable)
-                        return start_machine(strv_length(new_args), new_args, userdata);
-
-                return poweroff_machine(strv_length(new_args), new_args, userdata);
+        r = sd_bus_call_method(
+                        bus,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
+                        "Reload",
+                        &error,
+                        NULL,
+                        NULL);
+        if (r < 0) {
+                log_error("Failed to reload daemon: %s", bus_error_message(&error, r));
+                goto finish;
         }
 
-        return 0;
+        r = 0;
+
+finish:
+        unit_file_changes_free(changes, n_changes);
+
+        return r;
 }
 
 static int match_log_message(sd_bus_message *m, void *userdata, sd_bus_error *error) {
@@ -1971,9 +1857,11 @@ static int import_tar(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_free_ char *ll = NULL, *fn = NULL;
         const char *local = NULL, *path = NULL;
-        _cleanup_close_ int fd = -EBADF;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        _cleanup_close_ int fd = -1;
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         if (argc >= 2)
                 path = empty_or_dash_to_null(argv[1]);
@@ -2032,9 +1920,11 @@ static int import_raw(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_free_ char *ll = NULL, *fn = NULL;
         const char *local = NULL, *path = NULL;
-        _cleanup_close_ int fd = -EBADF;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        _cleanup_close_ int fd = -1;
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         if (argc >= 2)
                 path = empty_or_dash_to_null(argv[1]);
@@ -2093,9 +1983,11 @@ static int import_fs(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         const char *local = NULL, *path = NULL;
         _cleanup_free_ char *fn = NULL;
-        _cleanup_close_ int fd = -EBADF;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        _cleanup_close_ int fd = -1;
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         if (argc >= 2)
                 path = empty_or_dash_to_null(argv[1]);
@@ -2158,10 +2050,12 @@ static void determine_compression_from_filename(const char *p) {
 
 static int export_tar(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *local = NULL, *path = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         local = argv[1];
         if (!hostname_is_valid(local, 0))
@@ -2198,10 +2092,12 @@ static int export_tar(int argc, char *argv[], void *userdata) {
 
 static int export_raw(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *local = NULL, *path = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         local = argv[1];
         if (!hostname_is_valid(local, 0))
@@ -2240,11 +2136,13 @@ static int pull_tar(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_free_ char *l = NULL, *ll = NULL;
         const char *local, *remote;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
 
+        assert(bus);
+
         remote = argv[1];
-        if (!http_url_is_valid(remote) && !file_url_is_valid(remote))
+        if (!http_url_is_valid(remote))
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                        "URL '%s' is not valid.", remote);
 
@@ -2294,11 +2192,13 @@ static int pull_raw(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_free_ char *l = NULL, *ll = NULL;
         const char *local, *remote;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
 
+        assert(bus);
+
         remote = argv[1];
-        if (!http_url_is_valid(remote) && !file_url_is_valid(remote))
+        if (!http_url_is_valid(remote))
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                        "URL '%s' is not valid.", remote);
 
@@ -2368,7 +2268,7 @@ static int list_transfers(int argc, char *argv[], void *userdata) {
         double progress;
         int r;
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         r = bus_call_method(bus, bus_import_mgr, "ListTransfers", &error, &reply, NULL);
         if (r < 0)
@@ -2453,8 +2353,10 @@ static int list_transfers(int argc, char *argv[], void *userdata) {
 
 static int cancel_transfer(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -2507,6 +2409,7 @@ static int clean_images(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL, *reply = NULL;
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         uint64_t usage, total = 0;
+        char fb[FORMAT_BYTES_MAX];
         sd_bus *bus = userdata;
         const char *name;
         unsigned c = 0;
@@ -2537,7 +2440,7 @@ static int clean_images(int argc, char *argv[], void *userdata) {
                         total = UINT64_MAX;
                 } else {
                         log_info("Removed image '%s'. Freed exclusive disk space: %s",
-                                 name, FORMAT_BYTES(usage));
+                                 name, format_bytes(fb, sizeof(fb), usage));
                         if (total != UINT64_MAX)
                                 total += usage;
                 }
@@ -2552,7 +2455,7 @@ static int clean_images(int argc, char *argv[], void *userdata) {
                 log_info("Removed %u images in total.", c);
         else
                 log_info("Removed %u images in total. Total freed exclusive disk space: %s.",
-                         c, FORMAT_BYTES(total));
+                         c, format_bytes(fb, sizeof(fb), total));
 
         return 0;
 }
@@ -2561,16 +2464,16 @@ static int help(int argc, char *argv[], void *userdata) {
         _cleanup_free_ char *link = NULL;
         int r;
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         r = terminal_urlify_man("machinectl", "1", &link);
         if (r < 0)
                 return log_oom();
 
-        printf("%1$s [OPTIONS...] COMMAND ...\n\n"
-               "%5$sSend control commands to or query the virtual machine and container%6$s\n"
-               "%5$sregistration manager.%6$s\n"
-               "\n%3$sMachine Commands:%4$s\n"
+        printf("%s [OPTIONS...] COMMAND ...\n\n"
+               "%sSend control commands to or query the virtual machine and container%s\n"
+               "%sregistration manager.%s\n"
+               "\nMachine Commands:\n"
                "  list                        List running VMs and containers\n"
                "  status NAME...              Show VM/container details\n"
                "  show [NAME...]              Show properties of one or more VMs/containers\n"
@@ -2588,20 +2491,18 @@ static int help(int argc, char *argv[], void *userdata) {
                "  kill NAME...                Send signal to processes of a VM/container\n"
                "  copy-to NAME PATH [PATH]    Copy files from the host to a container\n"
                "  copy-from NAME PATH [PATH]  Copy files from a container to the host\n"
-               "  bind NAME PATH [PATH]       Bind mount a path from the host into a container\n"
-               "\n%3$sImage Commands:%4$s\n"
+               "  bind NAME PATH [PATH]       Bind mount a path from the host into a container\n\n"
+               "Image Commands:\n"
                "  list-images                 Show available container and VM images\n"
                "  image-status [NAME...]      Show image details\n"
                "  show-image [NAME...]        Show properties of image\n"
-               "  edit NAME|FILE...           Edit settings of one or more VMs/containers\n"
-               "  cat NAME|FILE...            Show settings of one or more VMs/containers\n"
                "  clone NAME NAME             Clone an image\n"
                "  rename NAME NAME            Rename an image\n"
                "  read-only NAME [BOOL]       Mark or unmark image read-only\n"
                "  remove NAME...              Remove an image\n"
                "  set-limit [NAME] BYTES      Set image or pool size limit (disk quota)\n"
-               "  clean                       Remove hidden (or all) images\n"
-               "\n%3$sImage Transfer Commands:%4$s\n"
+               "  clean                       Remove hidden (or all) images\n\n"
+               "Image Transfer Commands:\n"
                "  pull-tar URL [NAME]         Download a TAR container image\n"
                "  pull-raw URL [NAME]         Download a RAW container or VM image\n"
                "  import-tar FILE [NAME]      Import a local TAR container image\n"
@@ -2611,7 +2512,7 @@ static int help(int argc, char *argv[], void *userdata) {
                "  export-raw NAME [FILE]      Export a RAW container or VM image locally\n"
                "  list-transfers              Show list of downloads in progress\n"
                "  cancel-transfer             Cancel a download\n"
-               "\n%3$sOptions:%4$s\n"
+               "\nOptions:\n"
                "  -h --help                   Show this help\n"
                "     --version                Show package version\n"
                "     --no-pager               Do not pipe output into a pager\n"
@@ -2624,31 +2525,29 @@ static int help(int argc, char *argv[], void *userdata) {
                "  -a --all                    Show all properties, including empty ones\n"
                "     --value                  When showing properties, only print the value\n"
                "  -l --full                   Do not ellipsize output\n"
-               "     --kill-whom=WHOM         Whom to send signal to\n"
+               "     --kill-who=WHO           Who to send signal to\n"
                "  -s --signal=SIGNAL          Which signal to send\n"
                "     --uid=USER               Specify user ID to invoke shell as\n"
-               "  -E --setenv=VAR[=VALUE]     Add an environment variable for shell\n"
+               "  -E --setenv=VAR=VALUE       Add an environment variable for shell\n"
                "     --read-only              Create read-only bind mount\n"
                "     --mkdir                  Create directory before bind mounting, if missing\n"
                "  -n --lines=INTEGER          Number of journal entries to show\n"
                "     --max-addresses=INTEGER  Number of internet addresses to show at most\n"
                "  -o --output=STRING          Change journal output mode (short, short-precise,\n"
                "                               short-iso, short-iso-precise, short-full,\n"
-               "                               short-monotonic, short-unix, short-delta,\n"
+               "                               short-monotonic, short-unix, verbose, export,\n"
                "                               json, json-pretty, json-sse, json-seq, cat,\n"
-               "                               verbose, export, with-unit)\n"
+               "                               with-unit)\n"
                "     --verify=MODE            Verification mode for downloaded images (no,\n"
-               "                               checksum, signature)\n"
+               "                              checksum, signature)\n"
                "     --force                  Download image even if already exists\n"
-               "     --now                    Start or power off container after enabling or\n"
-               "                              disabling it\n"
-               "\nSee the %2$s for details.\n",
+               "\nSee the %s for details.\n",
                program_invocation_short_name,
-               link,
-               ansi_underline(),
+               ansi_highlight(),
                ansi_normal(),
                ansi_highlight(),
-               ansi_normal());
+               ansi_normal(),
+               link);
 
         return 0;
 }
@@ -2660,12 +2559,11 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_NO_PAGER,
                 ARG_NO_LEGEND,
                 ARG_VALUE,
-                ARG_KILL_WHOM,
+                ARG_KILL_WHO,
                 ARG_READ_ONLY,
                 ARG_MKDIR,
                 ARG_NO_ASK_PASSWORD,
                 ARG_VERIFY,
-                ARG_NOW,
                 ARG_FORCE,
                 ARG_FORMAT,
                 ARG_UID,
@@ -2681,7 +2579,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "full",            no_argument,       NULL, 'l'                 },
                 { "no-pager",        no_argument,       NULL, ARG_NO_PAGER        },
                 { "no-legend",       no_argument,       NULL, ARG_NO_LEGEND       },
-                { "kill-whom",       required_argument, NULL, ARG_KILL_WHOM       },
+                { "kill-who",        required_argument, NULL, ARG_KILL_WHO        },
                 { "signal",          required_argument, NULL, 's'                 },
                 { "host",            required_argument, NULL, 'H'                 },
                 { "machine",         required_argument, NULL, 'M'                 },
@@ -2692,7 +2590,6 @@ static int parse_argv(int argc, char *argv[]) {
                 { "output",          required_argument, NULL, 'o'                 },
                 { "no-ask-password", no_argument,       NULL, ARG_NO_ASK_PASSWORD },
                 { "verify",          required_argument, NULL, ARG_VERIFY          },
-                { "now",             no_argument,       NULL, ARG_NOW             },
                 { "force",           no_argument,       NULL, ARG_FORCE           },
                 { "format",          required_argument, NULL, ARG_FORMAT          },
                 { "uid",             required_argument, NULL, ARG_UID             },
@@ -2706,10 +2603,6 @@ static int parse_argv(int argc, char *argv[]) {
 
         assert(argc >= 0);
         assert(argv);
-
-        /* Resetting to 0 forces the invocation of an internal initialization routine of getopt_long()
-         * that checks for GNU extensions in optstring ('-' or '+' at the beginning). */
-        optind = 0;
 
         for (;;) {
                 static const char option_string[] = "-hp:als:H:M:qn:o:E:";
@@ -2825,8 +2718,8 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_legend = false;
                         break;
 
-                case ARG_KILL_WHOM:
-                        arg_kill_whom = optarg;
+                case ARG_KILL_WHO:
+                        arg_kill_who = optarg;
                         break;
 
                 case 's':
@@ -2873,10 +2766,6 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_verify = r;
                         break;
 
-                case ARG_NOW:
-                        arg_now = true;
-                        break;
-
                 case ARG_FORCE:
                         arg_force = true;
                         break;
@@ -2894,24 +2783,31 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'E':
-                        r = strv_env_replace_strdup_passthrough(&arg_setenv, optarg);
+                        if (!env_assignment_is_valid(optarg))
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Environment assignment invalid: %s", optarg);
+
+                        r = strv_extend(&arg_setenv, optarg);
                         if (r < 0)
-                                return log_error_errno(r, "Cannot assign environment variable %s: %m", optarg);
+                                return log_oom();
                         break;
 
                 case ARG_MAX_ADDRESSES:
                         if (streq(optarg, "all"))
-                                arg_max_addresses = UINT_MAX;
-                        else if (safe_atou(optarg, &arg_max_addresses) < 0)
+                                arg_max_addresses = ALL_ADDRESSES;
+                        else if (safe_atoi(optarg, &arg_max_addresses) < 0)
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                                        "Invalid number of addresses: %s", optarg);
+                        else if (arg_max_addresses <= 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Number of IPs cannot be negative or zero: %s", optarg);
                         break;
 
                 case '?':
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
         }
 
@@ -2951,8 +2847,6 @@ static int machinectl_main(int argc, char *argv[], sd_bus *bus) {
                 { "login",           VERB_ANY, 2,        0,            login_machine     },
                 { "shell",           VERB_ANY, VERB_ANY, 0,            shell_machine     },
                 { "bind",            3,        4,        0,            bind_mount        },
-                { "edit",            2,        VERB_ANY, 0,            edit_settings     },
-                { "cat",             2,        VERB_ANY, 0,            cat_settings      },
                 { "copy-to",         3,        4,        0,            copy_files        },
                 { "copy-from",       3,        4,        0,            copy_files        },
                 { "remove",          2,        VERB_ANY, 0,            remove_image      },
@@ -2995,9 +2889,9 @@ static int run(int argc, char *argv[]) {
         if (r <= 0)
                 return r;
 
-        r = bus_connect_transport(arg_transport, arg_host, RUNTIME_SCOPE_SYSTEM, &bus);
+        r = bus_connect_transport(arg_transport, arg_host, false, &bus);
         if (r < 0)
-                return bus_log_connect_error(r, arg_transport);
+                return bus_log_connect_error(r);
 
         (void) sd_bus_set_allow_interactive_authorization(bus, arg_ask_password);
 

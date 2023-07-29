@@ -39,7 +39,7 @@
 
     <para>If the tool is invoked without the <option>--commit</option>
     switch, <filename>/etc/machine-id</filename> is initialized with a
-    valid, new machine ID if it is missing or empty. The new machine
+    valid, new machined ID if it is missing or empty. The new machine
     ID will be acquired in the following fashion:</para>
 
     <orderedlist>
@@ -94,8 +94,6 @@
         <option>--root=</option> as described above, but operates on a disk image instead of a directory
         tree.</para></listitem>
       </varlistentry>
-
-      <xi:include href="standard-options.xml" xpointer="image-policy-open" />
 
       <varlistentry>
         <term><option>--commit</option></term>

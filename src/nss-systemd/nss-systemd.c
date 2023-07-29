@@ -9,7 +9,6 @@
 #include "fd-util.h"
 #include "log.h"
 #include "macro.h"
-#include "missing_threads.h"
 #include "nss-systemd.h"
 #include "nss-util.h"
 #include "pthread-util.h"
@@ -27,7 +26,7 @@ static const struct passwd root_passwd = {
         .pw_gid = 0,
         .pw_gecos = (char*) "Super User",
         .pw_dir = (char*) "/root",
-        .pw_shell = NULL,
+        .pw_shell = (char*) "/bin/sh",
 };
 
 static const struct spwd root_spwd = {
@@ -47,7 +46,7 @@ static const struct passwd nobody_passwd = {
         .pw_passwd = (char*) PASSWORD_LOCKED_AND_INVALID,
         .pw_uid = UID_NOBODY,
         .pw_gid = GID_NOBODY,
-        .pw_gecos = (char*) "Kernel Overflow User",
+        .pw_gecos = (char*) "User Nobody",
         .pw_dir = (char*) "/",
         .pw_shell = (char*) NOLOGIN,
 };
@@ -143,9 +142,10 @@ NSS_INITGROUPS_PROTOTYPE(systemd);
 static enum nss_status copy_synthesized_passwd(
                 struct passwd *dest,
                 const struct passwd *src,
-                const char *fallback_shell,
                 char *buffer, size_t buflen,
                 int *errnop) {
+
+        size_t required;
 
         assert(dest);
         assert(src);
@@ -153,15 +153,13 @@ static enum nss_status copy_synthesized_passwd(
         assert(src->pw_passwd);
         assert(src->pw_gecos);
         assert(src->pw_dir);
+        assert(src->pw_shell);
 
-        const char *shell = ASSERT_PTR(src->pw_shell ?: fallback_shell);
-
-        size_t required =
-                strlen(src->pw_name) + 1 +
-                strlen(src->pw_passwd) + 1 +
-                strlen(src->pw_gecos) + 1 +
-                strlen(src->pw_dir) + 1 +
-                strlen(shell) + 1;
+        required = strlen(src->pw_name) + 1;
+        required += strlen(src->pw_passwd) + 1;
+        required += strlen(src->pw_gecos) + 1;
+        required += strlen(src->pw_dir) + 1;
+        required += strlen(src->pw_shell) + 1;
 
         if (buflen < required) {
                 *errnop = ERANGE;
@@ -178,7 +176,7 @@ static enum nss_status copy_synthesized_passwd(
         dest->pw_gecos = stpcpy(dest->pw_passwd, src->pw_passwd) + 1;
         dest->pw_dir = stpcpy(dest->pw_gecos, src->pw_gecos) + 1;
         dest->pw_shell = stpcpy(dest->pw_dir, src->pw_dir) + 1;
-        strcpy(dest->pw_shell, shell);
+        strcpy(dest->pw_shell, src->pw_shell);
 
         return NSS_STATUS_SUCCESS;
 }
@@ -189,14 +187,15 @@ static enum nss_status copy_synthesized_spwd(
                 char *buffer, size_t buflen,
                 int *errnop) {
 
+        size_t required;
+
         assert(dest);
         assert(src);
         assert(src->sp_namp);
         assert(src->sp_pwdp);
 
-        size_t required =
-                strlen(src->sp_namp) + 1 +
-                strlen(src->sp_pwdp) + 1;
+        required = strlen(src->sp_namp) + 1;
+        required += strlen(src->sp_pwdp) + 1;
 
         if (buflen < required) {
                 *errnop = ERANGE;
@@ -221,6 +220,8 @@ static enum nss_status copy_synthesized_group(
                 char *buffer, size_t buflen,
                 int *errnop) {
 
+        size_t required;
+
         assert(dest);
         assert(src);
         assert(src->gr_name);
@@ -228,10 +229,9 @@ static enum nss_status copy_synthesized_group(
         assert(src->gr_mem);
         assert(!*src->gr_mem); /* Our synthesized records' gr_mem is always just NULL... */
 
-        size_t required =
-                strlen(src->gr_name) + 1 +
-                strlen(src->gr_passwd) + 1 +
-                sizeof(char*); /* ...but that NULL still needs to be stored into the buffer! */
+        required = strlen(src->gr_name) + 1;
+        required += strlen(src->gr_passwd) + 1;
+        required += sizeof(char*); /* ...but that NULL still needs to be stored into the buffer! */
 
         if (buflen < ALIGN(required)) {
                 *errnop = ERANGE;
@@ -257,14 +257,15 @@ static enum nss_status copy_synthesized_sgrp(
                 char *buffer, size_t buflen,
                 int *errnop) {
 
+        size_t required;
+
         assert(dest);
         assert(src);
         assert(src->sg_namp);
         assert(src->sg_passwd);
 
-        size_t required =
-                strlen(src->sg_namp) + 1 +
-                strlen(src->sg_passwd) + 1;
+        required = strlen(src->sg_namp) + 1;
+        required += strlen(src->sg_passwd) + 1;
 
         if (buflen < required) {
                 *errnop = ERANGE;
@@ -309,17 +310,13 @@ enum nss_status _nss_systemd_getpwnam_r(
         if (getenv_bool_secure("SYSTEMD_NSS_BYPASS_SYNTHETIC") <= 0) {
 
                 if (streq(name, root_passwd.pw_name))
-                        return copy_synthesized_passwd(pwd, &root_passwd,
-                                                       default_root_shell(NULL),
-                                                       buffer, buflen, errnop);
+                        return copy_synthesized_passwd(pwd, &root_passwd, buffer, buflen, errnop);
 
                 if (streq(name, nobody_passwd.pw_name)) {
                         if (!synthesize_nobody())
                                 return NSS_STATUS_NOTFOUND;
 
-                        return copy_synthesized_passwd(pwd, &nobody_passwd,
-                                                       NULL,
-                                                       buffer, buflen, errnop);
+                        return copy_synthesized_passwd(pwd, &nobody_passwd, buffer, buflen, errnop);
                 }
 
         } else if (STR_IN_SET(name, root_passwd.pw_name, nobody_passwd.pw_name))
@@ -357,17 +354,13 @@ enum nss_status _nss_systemd_getpwuid_r(
         if (getenv_bool_secure("SYSTEMD_NSS_BYPASS_SYNTHETIC") <= 0) {
 
                 if (uid == root_passwd.pw_uid)
-                        return copy_synthesized_passwd(pwd, &root_passwd,
-                                                       default_root_shell(NULL),
-                                                       buffer, buflen, errnop);
+                        return copy_synthesized_passwd(pwd, &root_passwd, buffer, buflen, errnop);
 
                 if (uid == nobody_passwd.pw_uid) {
                         if (!synthesize_nobody())
                                 return NSS_STATUS_NOTFOUND;
 
-                        return copy_synthesized_passwd(pwd, &nobody_passwd,
-                                                       NULL,
-                                                       buffer, buflen, errnop);
+                        return copy_synthesized_passwd(pwd, &nobody_passwd, buffer, buflen, errnop);
                 }
 
         } else if (uid == root_passwd.pw_uid || uid == nobody_passwd.pw_uid)

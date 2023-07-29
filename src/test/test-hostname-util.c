@@ -9,7 +9,9 @@
 #include "tests.h"
 #include "tmpfile-util.h"
 
-TEST(hostname_is_valid) {
+static void test_hostname_is_valid(void) {
+        log_info("/* %s */", __func__);
+
         assert_se(hostname_is_valid("foobar", 0));
         assert_se(hostname_is_valid("foobar.com", 0));
         assert_se(!hostname_is_valid("foobar.com.", 0));
@@ -46,53 +48,57 @@ TEST(hostname_is_valid) {
         assert_se(!hostname_is_valid("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", VALID_HOSTNAME_TRAILING_DOT));
 }
 
-TEST(hostname_cleanup) {
+static void test_hostname_cleanup(void) {
         char *s;
 
-        s = strdupa_safe("foobar");
+        log_info("/* %s */", __func__);
+
+        s = strdupa("foobar");
         assert_se(streq(hostname_cleanup(s), "foobar"));
-        s = strdupa_safe("foobar.com");
+        s = strdupa("foobar.com");
         assert_se(streq(hostname_cleanup(s), "foobar.com"));
-        s = strdupa_safe("foobar.com.");
+        s = strdupa("foobar.com.");
         assert_se(streq(hostname_cleanup(s), "foobar.com"));
-        s = strdupa_safe("foo-bar.-com-.");
+        s = strdupa("foo-bar.-com-.");
         assert_se(streq(hostname_cleanup(s), "foo-bar.com"));
-        s = strdupa_safe("foo-bar-.-com-.");
+        s = strdupa("foo-bar-.-com-.");
         assert_se(streq(hostname_cleanup(s), "foo-bar--com"));
-        s = strdupa_safe("--foo-bar.-com");
+        s = strdupa("--foo-bar.-com");
         assert_se(streq(hostname_cleanup(s), "foo-bar.com"));
-        s = strdupa_safe("fooBAR");
+        s = strdupa("fooBAR");
         assert_se(streq(hostname_cleanup(s), "fooBAR"));
-        s = strdupa_safe("fooBAR.com");
+        s = strdupa("fooBAR.com");
         assert_se(streq(hostname_cleanup(s), "fooBAR.com"));
-        s = strdupa_safe("fooBAR.");
+        s = strdupa("fooBAR.");
         assert_se(streq(hostname_cleanup(s), "fooBAR"));
-        s = strdupa_safe("fooBAR.com.");
+        s = strdupa("fooBAR.com.");
         assert_se(streq(hostname_cleanup(s), "fooBAR.com"));
-        s = strdupa_safe("fööbar");
+        s = strdupa("fööbar");
         assert_se(streq(hostname_cleanup(s), "fbar"));
-        s = strdupa_safe("");
+        s = strdupa("");
         assert_se(isempty(hostname_cleanup(s)));
-        s = strdupa_safe(".");
+        s = strdupa(".");
         assert_se(isempty(hostname_cleanup(s)));
-        s = strdupa_safe("..");
+        s = strdupa("..");
         assert_se(isempty(hostname_cleanup(s)));
-        s = strdupa_safe("foobar.");
+        s = strdupa("foobar.");
         assert_se(streq(hostname_cleanup(s), "foobar"));
-        s = strdupa_safe(".foobar");
+        s = strdupa(".foobar");
         assert_se(streq(hostname_cleanup(s), "foobar"));
-        s = strdupa_safe("foo..bar");
+        s = strdupa("foo..bar");
         assert_se(streq(hostname_cleanup(s), "foo.bar"));
-        s = strdupa_safe("foo.bar..");
+        s = strdupa("foo.bar..");
         assert_se(streq(hostname_cleanup(s), "foo.bar"));
-        s = strdupa_safe("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        s = strdupa("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
         assert_se(streq(hostname_cleanup(s), "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
-        s = strdupa_safe("xxxx........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        s = strdupa("xxxx........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
         assert_se(streq(hostname_cleanup(s), "xxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
 }
 
-TEST(hostname_malloc) {
+static void test_hostname_malloc(void) {
         _cleanup_free_ char *h = NULL, *l = NULL;
+
+        log_info("/* %s */", __func__);
 
         assert_se(h = gethostname_malloc());
         log_info("hostname_malloc: \"%s\"", h);
@@ -101,7 +107,9 @@ TEST(hostname_malloc) {
         log_info("hostname_short_malloc: \"%s\"", l);
 }
 
-TEST(default_hostname) {
+static void test_default_hostname(void) {
+        log_info("/* %s */", __func__);
+
         if (!hostname_is_valid(FALLBACK_HOSTNAME, 0)) {
                 log_error("Configured fallback hostname \"%s\" is not valid.", FALLBACK_HOSTNAME);
                 exit(EXIT_FAILURE);
@@ -113,4 +121,13 @@ TEST(default_hostname) {
         assert_se(hostname_is_valid(n, 0));
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_hostname_is_valid();
+        test_hostname_cleanup();
+        test_hostname_malloc();
+        test_default_hostname();
+
+        return 0;
+}

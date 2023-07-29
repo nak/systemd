@@ -6,7 +6,7 @@
 
 #include "alloc-util.h"
 #include "conf-files.h"
-#include "constants.h"
+#include "def.h"
 #include "env-util.h"
 #include "fd-util.h"
 #include "fileio.h"
@@ -16,10 +16,14 @@
 #include "string-util.h"
 #include "strv.h"
 #include "terminal-util.h"
+#include "util.h"
 
 bool urlify_enabled(void) {
-#if ENABLE_URLIFY
         static int cached_urlify_enabled = -1;
+
+        /* Unfortunately 'less' doesn't support links like this yet 😭, hence let's disable this as long as there's a
+         * pager in effect. Let's drop this check as soon as less got fixed a and enough time passed so that it's safe
+         * to assume that a link-enabled 'less' version has hit most installations. */
 
         if (cached_urlify_enabled < 0) {
                 int val;
@@ -28,13 +32,10 @@ bool urlify_enabled(void) {
                 if (val >= 0)
                         cached_urlify_enabled = val;
                 else
-                        cached_urlify_enabled = colors_enabled();
+                        cached_urlify_enabled = colors_enabled() && !pager_have();
         }
 
         return cached_urlify_enabled;
-#else
-        return 0;
-#endif
 }
 
 int terminal_urlify(const char *url, const char *text, char **ret) {
@@ -42,7 +43,7 @@ int terminal_urlify(const char *url, const char *text, char **ret) {
 
         assert(url);
 
-        /* Takes a URL and a pretty string and formats it as clickable link for the terminal. See
+        /* Takes an URL and a pretty string and formats it as clickable link for the terminal. See
          * https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda for details. */
 
         if (isempty(text))
@@ -167,6 +168,7 @@ static int cat_file(const char *filename, bool newline) {
 }
 
 int cat_files(const char *file, char **dropins, CatFlags flags) {
+        char **path;
         int r;
 
         if (file) {
@@ -282,9 +284,10 @@ static int guess_type(const char **name, char ***prefixes, bool *is_collection, 
 int conf_files_cat(const char *root, const char *name) {
         _cleanup_strv_free_ char **dirs = NULL, **files = NULL;
         _cleanup_free_ char *path = NULL;
-        char **prefixes = NULL; /* explicit initialization to appease gcc */
+        char **prefix, **prefixes = NULL; /* explicit initialization to appease gcc */
         bool is_collection;
         const char *extension;
+        char **t;
         int r;
 
         r = guess_type(&name, &prefixes, &is_collection, &extension);

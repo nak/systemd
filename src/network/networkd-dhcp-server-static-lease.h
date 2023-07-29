@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #pragma once
 
@@ -8,11 +8,11 @@
 #include "in-addr-util.h"
 
 typedef struct Network Network;
-typedef struct ConfigSection ConfigSection;
+typedef struct NetworkConfigSection NetworkConfigSection;
 
 typedef struct DHCPStaticLease {
         Network *network;
-        ConfigSection *section;
+        NetworkConfigSection *section;
 
         struct in_addr address;
         uint8_t *client_id;

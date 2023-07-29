@@ -7,10 +7,12 @@
 #include "systemctl-util.h"
 #include "systemctl.h"
 
-int verb_add_dependency(int argc, char *argv[], void *userdata) {
+int add_dependency(int argc, char *argv[], void *userdata) {
         _cleanup_strv_free_ char **names = NULL;
         _cleanup_free_ char *target = NULL;
         const char *verb = argv[0];
+        UnitFileChange *changes = NULL;
+        size_t n_changes = 0;
         UnitDependency dep;
         int r;
 
@@ -32,18 +34,14 @@ int verb_add_dependency(int argc, char *argv[], void *userdata) {
         else if (streq(verb, "add-requires"))
                 dep = UNIT_REQUIRES;
         else
-                assert_not_reached();
+                assert_not_reached("Unknown verb");
 
         if (install_client_side()) {
-                InstallChange *changes = NULL;
-                size_t n_changes = 0;
+                r = unit_file_add_dependency(arg_scope, unit_file_flags_from_args(), arg_root, names, target, dep, &changes, &n_changes);
+                unit_file_dump_changes(r, "add dependency on", changes, n_changes, arg_quiet);
 
-                CLEANUP_ARRAY(changes, n_changes, install_changes_free);
-
-                r = unit_file_add_dependency(arg_runtime_scope, unit_file_flags_from_args(), arg_root, names, target, dep, &changes, &n_changes);
-                install_changes_dump(r, "add dependency on", changes, n_changes, arg_quiet);
-                if (r < 0)
-                        return r;
+                if (r > 0)
+                        r = 0;
         } else {
                 _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL, *m = NULL;
                 _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -71,16 +69,20 @@ int verb_add_dependency(int argc, char *argv[], void *userdata) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to add dependency: %s", bus_error_message(&error, r));
 
-                r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet);
+                r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet, &changes, &n_changes);
                 if (r < 0)
-                        return r;
+                        goto finish;
 
-                if (!arg_no_reload) {
-                        r = daemon_reload(ACTION_RELOAD, /* graceful= */ false);
-                        if (r < 0)
-                                return r;
+                if (arg_no_reload) {
+                        r = 0;
+                        goto finish;
                 }
+
+                r = daemon_reload(argc, argv, userdata);
         }
 
-        return 0;
+finish:
+        unit_file_changes_free(changes, n_changes);
+
+        return r;
 }

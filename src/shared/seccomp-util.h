@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #pragma once
 
-#if HAVE_SECCOMP
-
 #include <seccomp.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -49,7 +47,6 @@ enum {
         SYSCALL_FILTER_SET_RAW_IO,
         SYSCALL_FILTER_SET_REBOOT,
         SYSCALL_FILTER_SET_RESOURCES,
-        SYSCALL_FILTER_SET_SANDBOX,
         SYSCALL_FILTER_SET_SETUID,
         SYSCALL_FILTER_SET_SIGNAL,
         SYSCALL_FILTER_SET_SWAP,
@@ -57,11 +54,8 @@ enum {
         SYSCALL_FILTER_SET_SYSTEM_SERVICE,
         SYSCALL_FILTER_SET_TIMER,
         SYSCALL_FILTER_SET_KNOWN,
-        _SYSCALL_FILTER_SET_MAX,
+        _SYSCALL_FILTER_SET_MAX
 };
-
-assert_cc(SYSCALL_FILTER_SET_DEFAULT == 0);
-assert_cc(SYSCALL_FILTER_SET_KNOWN == _SYSCALL_FILTER_SET_MAX-1);
 
 extern const SyscallFilterSet syscall_filter_sets[];
 
@@ -100,10 +94,7 @@ int seccomp_restrict_namespaces(unsigned long retain);
 int seccomp_protect_sysctl(void);
 int seccomp_protect_syslog(void);
 int seccomp_restrict_address_families(Set *address_families, bool allow_list);
-int seccomp_restrict_realtime_full(int error_code); /* This is mostly for testing code. */
-static inline int seccomp_restrict_realtime(void) {
-        return seccomp_restrict_realtime_full(EPERM);
-}
+int seccomp_restrict_realtime(void);
 int seccomp_memory_deny_write_execute(void);
 int seccomp_lock_personality(unsigned long personality);
 int seccomp_protect_hostname(void);
@@ -159,13 +150,3 @@ static inline const char *seccomp_errno_or_action_to_string(int num) {
 }
 
 int parse_syscall_and_errno(const char *in, char **name, int *error);
-
-int seccomp_suppress_sync(void);
-
-#else
-
-static inline bool is_seccomp_available(void) {
-        return false;
-}
-
-#endif

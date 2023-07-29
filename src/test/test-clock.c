@@ -12,10 +12,9 @@
 #include "fs-util.h"
 #include "log.h"
 #include "macro.h"
-#include "tests.h"
 #include "tmpfile-util.h"
 
-TEST(clock_is_localtime) {
+static void test_clock_is_localtime(void) {
         _cleanup_(unlink_tempfilep) char adjtime[] = "/tmp/test-adjtime.XXXXXX";
         _cleanup_fclose_ FILE* f = NULL;
 
@@ -57,7 +56,7 @@ TEST(clock_is_localtime) {
 }
 
 /* Test with the real /etc/adjtime */
-TEST(clock_is_localtime_system) {
+static void test_clock_is_localtime_system(void) {
         int r;
         r = clock_is_localtime(NULL);
 
@@ -71,4 +70,9 @@ TEST(clock_is_localtime_system) {
                 assert_se(r == 0 || ERRNO_IS_PRIVILEGE(r));
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_clock_is_localtime();
+        test_clock_is_localtime_system();
+
+        return 0;
+}

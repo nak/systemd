@@ -4,7 +4,6 @@
 
 #include "alloc-util.h"
 #include "pretty-print.h"
-#include "reboot-util.h"
 #include "systemctl-compat-shutdown.h"
 #include "systemctl-sysv-compat.h"
 #include "systemctl.h"
@@ -18,11 +17,6 @@ static int shutdown_help(void) {
         if (r < 0)
                 return log_oom();
 
-        /* Note: if you are tempted to add new command line switches here, please do not. Let this
-         * compatibility command rest in peace. Its interface is not even owned by us as much as it is by
-         * sysvinit. If you add something new, add it to "systemctl halt", "systemctl reboot", "systemctl
-         * poweroff" instead. */
-
         printf("%s [OPTIONS...] [TIME] [WALL...]\n"
                "\n%sShut down the system.%s\n"
                "\nOptions:\n"
@@ -34,13 +28,10 @@ static int shutdown_help(void) {
                "  -k             Don't halt/power-off/reboot, just send warnings\n"
                "     --no-wall   Don't send wall message before halt/power-off/reboot\n"
                "  -c             Cancel a pending shutdown\n"
-               "     --show      Show pending shutdown\n"
-               "\n%sThis is a compatibility interface, please use the more powerful 'systemctl reboot',\n"
-               "'systemctl poweroff', 'systemctl reboot' commands instead.%s\n"
                "\nSee the %s for details.\n",
                program_invocation_short_name,
-               ansi_highlight(), ansi_normal(),
-               ansi_highlight_red(), ansi_normal(),
+               ansi_highlight(),
+               ansi_normal(),
                link);
 
         return 0;
@@ -49,8 +40,7 @@ static int shutdown_help(void) {
 int shutdown_parse_argv(int argc, char *argv[]) {
         enum {
                 ARG_HELP = 0x100,
-                ARG_NO_WALL,
-                ARG_SHOW
+                ARG_NO_WALL
         };
 
         static const struct option options[] = {
@@ -60,7 +50,6 @@ int shutdown_parse_argv(int argc, char *argv[]) {
                 { "reboot",    no_argument,       NULL, 'r'         },
                 { "kexec",     no_argument,       NULL, 'K'         }, /* not documented extension */
                 { "no-wall",   no_argument,       NULL, ARG_NO_WALL },
-                { "show",      no_argument,       NULL, ARG_SHOW    },
                 {}
         };
 
@@ -119,15 +108,11 @@ int shutdown_parse_argv(int argc, char *argv[]) {
                         arg_action = ACTION_CANCEL_SHUTDOWN;
                         break;
 
-                case ARG_SHOW:
-                        arg_action = ACTION_SHOW_SHUTDOWN;
-                        break;
-
                 case '?':
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (argc > optind && arg_action != ACTION_CANCEL_SHUTDOWN) {

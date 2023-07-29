@@ -14,12 +14,14 @@ static void destroy_callback(void *userdata) {
         (*n_called) ++;
 }
 
-TEST(destroy_callback) {
+static void test_destroy_callback(void) {
         _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
         sd_bus_slot *slot = NULL;
         sd_bus_destroy_t t;
 
         int r, n_called = 0;
+
+        log_info("/* %s */", __func__);
 
         r = bus_open_system_watch_bind_with_description(&bus, "test-bus");
         if (r < 0) {
@@ -28,7 +30,7 @@ TEST(destroy_callback) {
         }
 
         r = sd_bus_request_name_async(bus, &slot, "org.freedesktop.systemd.test-bus-util", 0, callback, &n_called);
-        assert_se(r == 1);
+        assert(r == 1);
 
         assert_se(sd_bus_slot_get_destroy_callback(slot, NULL) == 0);
         assert_se(sd_bus_slot_get_destroy_callback(slot, &t) == 0);
@@ -39,9 +41,15 @@ TEST(destroy_callback) {
         assert_se(t == destroy_callback);
 
         /* Force cleanup so we can look at n_called */
-        assert_se(n_called == 0);
+        assert(n_called == 0);
         sd_bus_slot_unref(slot);
-        assert_se(n_called == 1);
+        assert(n_called == 1);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_destroy_callback();
+
+        return 0;
+}

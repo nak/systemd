@@ -5,12 +5,12 @@
 #include "sd-hwdb.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "hwdb-util.h"
 #include "main-func.h"
 #include "pretty-print.h"
 #include "selinux-util.h"
 #include "terminal-util.h"
+#include "util.h"
 #include "verbs.h"
 
 static const char *arg_hwdb_bin_dir = NULL;
@@ -73,8 +73,8 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
-        while ((c = getopt_long(argc, argv, "sr:h", options, NULL)) >= 0)
-                switch (c) {
+        while ((c = getopt_long(argc, argv, "ust:r:h", options, NULL)) >= 0)
+                switch(c) {
 
                 case 'h':
                         return help();
@@ -98,7 +98,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option");
                 }
 
         return 1;
@@ -124,7 +124,7 @@ static int run(int argc, char *argv[]) {
         if (r <= 0)
                 return r;
 
-        r = mac_init();
+        r = mac_selinux_init();
         if (r < 0)
                 return r;
 

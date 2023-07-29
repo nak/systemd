@@ -15,7 +15,7 @@
 #include "tests.h"
 
 static void test_policy_closed(const char *cgroup_path, BPFProgram **installed_prog) {
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         unsigned wrong = 0;
         int r;
 
@@ -27,9 +27,10 @@ static void test_policy_closed(const char *cgroup_path, BPFProgram **installed_p
         r = bpf_devices_allow_list_static(prog, cgroup_path);
         assert_se(r >= 0);
 
-        r = bpf_devices_apply_policy(&prog, CGROUP_DEVICE_POLICY_CLOSED, true, cgroup_path, installed_prog);
+        r = bpf_devices_apply_policy(prog, CGROUP_DEVICE_POLICY_CLOSED, true, cgroup_path, installed_prog);
         assert_se(r >= 0);
 
+        const char *s;
         FOREACH_STRING(s, "/dev/null",
                           "/dev/zero",
                           "/dev/full",
@@ -37,7 +38,7 @@ static void test_policy_closed(const char *cgroup_path, BPFProgram **installed_p
                           "/dev/urandom",
                           "/dev/tty",
                           "/dev/ptmx") {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
                 log_debug("open(%s, \"r\") = %d/%s", s, fd, fd < 0 ? errno_to_name(errno) : "-");
@@ -52,7 +53,7 @@ static void test_policy_closed(const char *cgroup_path, BPFProgram **installed_p
 }
 
 static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_prog) {
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         unsigned wrong = 0;
         int r;
 
@@ -70,11 +71,11 @@ static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_p
         r = bpf_devices_allow_list_device(prog, cgroup_path, "/dev/zero", "w");
         assert_se(r >= 0);
 
-        r = bpf_devices_apply_policy(&prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
+        r = bpf_devices_apply_policy(prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
         assert_se(r >= 0);
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/null";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -87,7 +88,7 @@ static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_p
         }
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/random";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -100,7 +101,7 @@ static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_p
         }
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/zero";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -113,7 +114,7 @@ static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_p
         }
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/full";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -129,7 +130,7 @@ static void test_policy_strict(const char *cgroup_path, BPFProgram **installed_p
 }
 
 static void test_policy_allow_list_major(const char *pattern, const char *cgroup_path, BPFProgram **installed_prog) {
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         unsigned wrong = 0;
         int r;
 
@@ -141,12 +142,12 @@ static void test_policy_allow_list_major(const char *pattern, const char *cgroup
         r = bpf_devices_allow_list_major(prog, cgroup_path, pattern, 'c', "rw");
         assert_se(r >= 0);
 
-        r = bpf_devices_apply_policy(&prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
+        r = bpf_devices_apply_policy(prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
         assert_se(r >= 0);
 
         /* /dev/null, /dev/full have major==1, /dev/tty has major==5 */
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/null";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -159,7 +160,7 @@ static void test_policy_allow_list_major(const char *pattern, const char *cgroup
         }
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/full";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -172,7 +173,7 @@ static void test_policy_allow_list_major(const char *pattern, const char *cgroup
         }
 
         {
-                _cleanup_close_ int fd = -EBADF, fd2 = -EBADF;
+                _cleanup_close_ int fd, fd2;
                 const char *s = "/dev/tty";
 
                 fd = open(s, O_CLOEXEC|O_RDONLY|O_NOCTTY);
@@ -188,7 +189,7 @@ static void test_policy_allow_list_major(const char *pattern, const char *cgroup
 }
 
 static void test_policy_allow_list_major_star(char type, const char *cgroup_path, BPFProgram **installed_prog) {
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         unsigned wrong = 0;
         int r;
 
@@ -200,11 +201,11 @@ static void test_policy_allow_list_major_star(char type, const char *cgroup_path
         r = bpf_devices_allow_list_major(prog, cgroup_path, "*", type, "rw");
         assert_se(r >= 0);
 
-        r = bpf_devices_apply_policy(&prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
+        r = bpf_devices_apply_policy(prog, CGROUP_DEVICE_POLICY_STRICT, true, cgroup_path, installed_prog);
         assert_se(r >= 0);
 
         {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd;
                 const char *s = "/dev/null";
 
                 fd = open(s, O_CLOEXEC|O_RDWR|O_NOCTTY);
@@ -219,7 +220,7 @@ static void test_policy_allow_list_major_star(char type, const char *cgroup_path
 }
 
 static void test_policy_empty(bool add_mismatched, const char *cgroup_path, BPFProgram **installed_prog) {
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
         unsigned wrong = 0;
         int r;
 
@@ -233,11 +234,11 @@ static void test_policy_empty(bool add_mismatched, const char *cgroup_path, BPFP
                 assert_se(r < 0);
         }
 
-        r = bpf_devices_apply_policy(&prog, CGROUP_DEVICE_POLICY_STRICT, false, cgroup_path, installed_prog);
+        r = bpf_devices_apply_policy(prog, CGROUP_DEVICE_POLICY_STRICT, false, cgroup_path, installed_prog);
         assert_se(r >= 0);
 
         {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd;
                 const char *s = "/dev/null";
 
                 fd = open(s, O_CLOEXEC|O_RDWR|O_NOCTTY);
@@ -281,7 +282,7 @@ int main(int argc, char *argv[]) {
         r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, cgroup, NULL, &controller_path);
         assert_se(r >= 0);
 
-        _cleanup_(bpf_program_freep) BPFProgram *prog = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *prog = NULL;
 
         test_policy_closed(cgroup, &prog);
         test_policy_strict(cgroup, &prog);
@@ -295,7 +296,7 @@ int main(int argc, char *argv[]) {
         test_policy_empty(false, cgroup, &prog);
         test_policy_empty(true, cgroup, &prog);
 
-        assert_se(path_extract_directory(cgroup, &parent) >= 0);
+        assert_se(parent = dirname_malloc(cgroup));
 
         assert_se(cg_mask_supported(&supported) >= 0);
         r = cg_attach_everywhere(supported, parent, 0, NULL, NULL);

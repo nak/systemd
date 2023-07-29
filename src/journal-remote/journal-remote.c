@@ -10,17 +10,16 @@
 
 #include "af-list.h"
 #include "alloc-util.h"
-#include "constants.h"
+#include "def.h"
 #include "errno-util.h"
 #include "escape.h"
 #include "fd-util.h"
+#include "journal-file.h"
 #include "journal-remote-write.h"
 #include "journal-remote.h"
 #include "journald-native.h"
 #include "macro.h"
-#include "managed-journal-file.h"
 #include "parse-util.h"
-#include "parse-helpers.h"
 #include "process-util.h"
 #include "socket-util.h"
 #include "stdio-util.h"
@@ -31,27 +30,10 @@
 
 #define filename_escape(s) xescape((s), "/ ")
 
-#if HAVE_MICROHTTPD
-MHDDaemonWrapper *MHDDaemonWrapper_free(MHDDaemonWrapper *d) {
-        if (!d)
-                return NULL;
-
-        if (d->daemon)
-                MHD_stop_daemon(d->daemon);
-        sd_event_source_unref(d->io_event);
-        sd_event_source_unref(d->timer_event);
-
-        return mfree(d);
-}
-#endif
-
 static int open_output(RemoteServer *s, Writer *w, const char* host) {
         _cleanup_free_ char *_filename = NULL;
         const char *filename;
         int r;
-
-        assert(s);
-        assert(w);
 
         switch (s->split_mode) {
         case JOURNAL_WRITE_SPLIT_NONE:
@@ -76,24 +58,19 @@ static int open_output(RemoteServer *s, Writer *w, const char* host) {
         }
 
         default:
-                assert_not_reached();
+                assert_not_reached("what?");
         }
 
-        r = managed_journal_file_open_reliably(
-                        filename,
-                        O_RDWR|O_CREAT,
-                        s->file_flags,
-                        0640,
-                        UINT64_MAX,
-                        &w->metrics,
-                        w->mmap,
-                        NULL,
-                        NULL,
-                        &w->journal);
+        r = journal_file_open_reliably(filename,
+                                       O_RDWR|O_CREAT, 0640,
+                                       s->compress, UINT64_MAX, s->seal,
+                                       &w->metrics,
+                                       w->mmap, NULL,
+                                       NULL, &w->journal);
         if (r < 0)
                 return log_error_errno(r, "Failed to open output journal %s: %m", filename);
 
-        log_debug("Opened output file %s", w->journal->file->path);
+        log_debug("Opened output file %s", w->journal->path);
         return 0;
 }
 
@@ -122,10 +99,7 @@ int journal_remote_get_writer(RemoteServer *s, const char *host, Writer **writer
         const void *key;
         int r;
 
-        assert(s);
-        assert(writer);
-
-        switch (s->split_mode) {
+        switch(s->split_mode) {
         case JOURNAL_WRITE_SPLIT_NONE:
                 key = "one and only";
                 break;
@@ -136,21 +110,21 @@ int journal_remote_get_writer(RemoteServer *s, const char *host, Writer **writer
                 break;
 
         default:
-                assert_not_reached();
+                assert_not_reached("what split mode?");
         }
 
         w = hashmap_get(s->writers, key);
         if (w)
                 writer_ref(w);
         else {
-                r = writer_new(s, &w);
-                if (r < 0)
-                        return r;
+                w = writer_new(s);
+                if (!w)
+                        return log_oom();
 
                 if (s->split_mode == JOURNAL_WRITE_SPLIT_HOST) {
                         w->hashmap_key = strdup(key);
                         if (!w->hashmap_key)
-                                return -ENOMEM;
+                                return log_oom();
                 }
 
                 r = open_output(s, w, host);
@@ -163,6 +137,7 @@ int journal_remote_get_writer(RemoteServer *s, const char *host, Writer **writer
         }
 
         *writer = TAKE_PTR(w);
+
         return 0;
 }
 
@@ -170,7 +145,7 @@ int journal_remote_get_writer(RemoteServer *s, const char *host, Writer **writer
  **********************************************************************
  **********************************************************************/
 
-/* This should go away as soon as μhttpd allows state to be passed around. */
+/* This should go away as soon as µhttpd allows state to be passed around. */
 RemoteServer *journal_remote_server_global;
 
 static int dispatch_raw_source_event(sd_event_source *event,
@@ -193,7 +168,6 @@ static int get_source_for_fd(RemoteServer *s,
 
         /* This takes ownership of name, but only on success. */
 
-        assert(s);
         assert(fd >= 0);
         assert(source);
 
@@ -269,13 +243,13 @@ int journal_remote_add_source(RemoteServer *s, int fd, char* name, bool own_name
                 r = sd_event_add_defer(s->events, &source->buffer_event,
                                        dispatch_raw_source_until_block, source);
                 if (r == 0)
-                        r = sd_event_source_set_enabled(source->buffer_event, SD_EVENT_OFF);
+                        sd_event_source_set_enabled(source->buffer_event, SD_EVENT_OFF);
         } else if (r == -EPERM) {
                 log_debug("Falling back to sd_event_add_defer for fd:%d (%s)", fd, name);
                 r = sd_event_add_defer(s->events, &source->event,
                                        dispatch_blocking_source_event, source);
                 if (r == 0)
-                        r = sd_event_source_set_enabled(source->event, SD_EVENT_ON);
+                        sd_event_source_set_enabled(source->event, SD_EVENT_ON);
         }
         if (r < 0) {
                 log_error_errno(r, "Failed to register event source for fd:%d: %m",
@@ -297,11 +271,10 @@ int journal_remote_add_source(RemoteServer *s, int fd, char* name, bool own_name
 }
 
 int journal_remote_add_raw_socket(RemoteServer *s, int fd) {
+        int r;
         _unused_ _cleanup_close_ int fd_ = fd;
         char name[STRLEN("raw-socket-") + DECIMAL_STR_MAX(int) + 1];
-        int r;
 
-        assert(s);
         assert(fd >= 0);
 
         r = sd_event_add_io(s->events, &s->listen_event,
@@ -316,7 +289,7 @@ int journal_remote_add_raw_socket(RemoteServer *s, int fd) {
         if (r < 0)
                 return r;
 
-        TAKE_FD(fd_);
+        fd_ = -1;
         s->active++;
         return 0;
 }
@@ -329,7 +302,8 @@ int journal_remote_server_init(
                 RemoteServer *s,
                 const char *output,
                 JournalWriteSplitMode split_mode,
-                JournalFileFlags file_flags) {
+                bool compress,
+                bool seal) {
 
         int r;
 
@@ -339,7 +313,8 @@ int journal_remote_server_init(
         journal_remote_server_global = s;
 
         s->split_mode = split_mode;
-        s->file_flags = file_flags;
+        s->compress = compress;
+        s->seal = seal;
 
         if (output)
                 s->output = output;
@@ -348,7 +323,7 @@ int journal_remote_server_init(
         else if (split_mode == JOURNAL_WRITE_SPLIT_HOST)
                 s->output = REMOTE_JOURNAL_PATH;
         else
-                assert_not_reached();
+                assert_not_reached("bad split mode");
 
         r = sd_event_default(&s->events);
         if (r < 0)
@@ -361,11 +336,17 @@ int journal_remote_server_init(
         return 0;
 }
 
+#if HAVE_MICROHTTPD
+static void MHDDaemonWrapper_free(MHDDaemonWrapper *d) {
+        MHD_stop_daemon(d->daemon);
+        sd_event_source_unref(d->io_event);
+        sd_event_source_unref(d->timer_event);
+        free(d);
+}
+#endif
+
 void journal_remote_server_destroy(RemoteServer *s) {
         size_t i;
-
-        if (!s)
-                return;
 
 #if HAVE_MICROHTTPD
         hashmap_free_with_destructor(s->daemons, MHDDaemonWrapper_free);
@@ -406,12 +387,11 @@ int journal_remote_handle_raw_source(
          * 0 if data is currently exhausted, negative on error.
          */
 
-        assert(s);
         assert(fd >= 0 && fd < (ssize_t) MALLOC_ELEMENTSOF(s->sources));
         source = s->sources[fd];
         assert(source->importer.fd == fd);
 
-        r = process_source(source, s->file_flags);
+        r = process_source(source, s->compress, s->seal);
         if (journal_importer_eof(&source->importer)) {
                 size_t remaining;
 
@@ -442,23 +422,16 @@ int journal_remote_handle_raw_source(
 
 static int dispatch_raw_source_until_block(sd_event_source *event,
                                            void *userdata) {
-        RemoteSource *source = ASSERT_PTR(userdata);
+        RemoteSource *source = userdata;
         int r;
-
-        assert(event);
 
         /* Make sure event stays around even if source is destroyed */
         sd_event_source_ref(event);
 
         r = journal_remote_handle_raw_source(event, source->importer.fd, EPOLLIN, journal_remote_server_global);
-        if (r != 1) {
-                int k;
-
+        if (r != 1)
                 /* No more data for now */
-                k = sd_event_source_set_enabled(event, SD_EVENT_OFF);
-                if (k < 0)
-                        r = k;
-        }
+                sd_event_source_set_enabled(event, SD_EVENT_OFF);
 
         sd_event_source_unref(event);
 
@@ -469,29 +442,24 @@ static int dispatch_raw_source_event(sd_event_source *event,
                                      int fd,
                                      uint32_t revents,
                                      void *userdata) {
-        RemoteSource *source = ASSERT_PTR(userdata);
+        RemoteSource *source = userdata;
         int r;
 
         assert(source->event);
         assert(source->buffer_event);
 
         r = journal_remote_handle_raw_source(event, fd, EPOLLIN, journal_remote_server_global);
-        if (r == 1) {
-                int k;
-
+        if (r == 1)
                 /* Might have more data. We need to rerun the handler
                  * until we are sure the buffer is exhausted. */
-                k = sd_event_source_set_enabled(source->buffer_event, SD_EVENT_ON);
-                if (k < 0)
-                        r = k;
-        }
+                sd_event_source_set_enabled(source->buffer_event, SD_EVENT_ON);
 
         return r;
 }
 
 static int dispatch_blocking_source_event(sd_event_source *event,
                                           void *userdata) {
-        RemoteSource *source = ASSERT_PTR(userdata);
+        RemoteSource *source = userdata;
 
         return journal_remote_handle_raw_source(event, source->importer.fd, EPOLLIN, journal_remote_server_global);
 }
@@ -502,11 +470,8 @@ static int accept_connection(
                 SocketAddress *addr,
                 char **hostname) {
 
-        _cleanup_close_ int fd2 = -EBADF;
+        _cleanup_close_ int fd2 = -1;
         int r;
-
-        assert(addr);
-        assert(hostname);
 
         log_debug("Accepting new %s connection on fd:%d", type, fd);
         fd2 = accept4(fd, &addr->sockaddr.sa, &addr->size, SOCK_NONBLOCK|SOCK_CLOEXEC);
@@ -517,7 +482,7 @@ static int accept_connection(
                 return log_error_errno(errno, "accept() on fd:%d failed: %m", fd);
         }
 
-        switch (socket_address_family(addr)) {
+        switch(socket_address_family(addr)) {
         case AF_INET:
         case AF_INET6: {
                 _cleanup_free_ char *a = NULL;
@@ -553,7 +518,7 @@ static int dispatch_raw_connection_event(
                 uint32_t revents,
                 void *userdata) {
 
-        RemoteServer *s = ASSERT_PTR(userdata);
+        RemoteServer *s = userdata;
         int fd2;
         SocketAddress addr = {
                 .size = sizeof(union sockaddr_union),

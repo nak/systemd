@@ -9,10 +9,11 @@
 
 typedef struct Link Link;
 typedef struct Network Network;
+typedef struct Request Request;
 
 typedef struct BridgeMDB {
         Network *network;
-        ConfigSection *section;
+        NetworkConfigSection *section;
 
         int family;
         union in_addr_union group_addr;
@@ -24,6 +25,7 @@ BridgeMDB *bridge_mdb_free(BridgeMDB *mdb);
 void network_drop_invalid_bridge_mdb_entries(Network *network);
 
 int link_request_static_bridge_mdb(Link *link);
+int request_process_bridge_mdb(Request *req);
 
 CONFIG_PARSER_PROTOTYPE(config_parse_mdb_group_address);
 CONFIG_PARSER_PROTOTYPE(config_parse_mdb_vlan_id);

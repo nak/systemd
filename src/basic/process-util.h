@@ -38,20 +38,17 @@ typedef enum ProcessCmdlineFlags {
         PROCESS_CMDLINE_QUOTE_POSIX   = 1 << 3,
 } ProcessCmdlineFlags;
 
-int get_process_comm(pid_t pid, char **ret);
-int get_process_cmdline(pid_t pid, size_t max_columns, ProcessCmdlineFlags flags, char **ret);
-int get_process_cmdline_strv(pid_t pid, ProcessCmdlineFlags flags, char ***ret);
-int get_process_exe(pid_t pid, char **ret);
-int get_process_uid(pid_t pid, uid_t *ret);
-int get_process_gid(pid_t pid, gid_t *ret);
-int get_process_capeff(pid_t pid, char **ret);
-int get_process_cwd(pid_t pid, char **ret);
-int get_process_root(pid_t pid, char **ret);
-int get_process_environ(pid_t pid, char **ret);
-int get_process_ppid(pid_t pid, pid_t *ret);
-int get_process_umask(pid_t pid, mode_t *ret);
-
-int container_get_leader(const char *machine, pid_t *pid);
+int get_process_comm(pid_t pid, char **name);
+int get_process_cmdline(pid_t pid, size_t max_columns, ProcessCmdlineFlags flags, char **line);
+int get_process_exe(pid_t pid, char **name);
+int get_process_uid(pid_t pid, uid_t *uid);
+int get_process_gid(pid_t pid, gid_t *gid);
+int get_process_capeff(pid_t pid, char **capeff);
+int get_process_cwd(pid_t pid, char **cwd);
+int get_process_root(pid_t pid, char **root);
+int get_process_environ(pid_t pid, char **environ);
+int get_process_ppid(pid_t pid, pid_t *ppid);
+int get_process_umask(pid_t pid, mode_t *umask);
 
 int wait_for_terminate(pid_t pid, siginfo_t *status);
 
@@ -69,11 +66,10 @@ int wait_for_terminate_with_timeout(pid_t pid, usec_t timeout);
 void sigkill_wait(pid_t pid);
 void sigkill_waitp(pid_t *pid);
 void sigterm_wait(pid_t pid);
-void sigkill_nowait(pid_t pid);
-void sigkill_nowaitp(pid_t *pid);
 
 int kill_and_sigcont(pid_t pid, int sig);
 
+int rename_process(const char name[]);
 int is_kernel_thread(pid_t pid);
 
 int getenv_for_pid(pid_t pid, const char *field, char **_value);
@@ -84,6 +80,8 @@ int pid_is_my_child(pid_t pid);
 int pid_from_same_root_fs(pid_t pid);
 
 bool is_main_thread(void);
+
+_noreturn_ void freeze(void);
 
 bool oom_score_adjust_is_valid(int oa);
 
@@ -139,50 +137,34 @@ void reset_cached_pid(void);
 
 int must_be_root(void);
 
-pid_t clone_with_nested_stack(int (*fn)(void *), int flags, void *userdata);
-
-/* 💣 Note that FORK_NEW_USERNS + FORK_NEW_MOUNTNS should not be called in threaded programs, because they
- * cause us to use raw_clone() which does not synchronize the glibc malloc() locks, and thus will cause
- * deadlocks if the parent uses threads and the child does memory allocations. Hence: if the parent is
- * threaded these flags may not be used. These flags cannot be used if the parent uses threads or the child
- * uses malloc(). 💣 */
 typedef enum ForkFlags {
         FORK_RESET_SIGNALS      = 1 <<  0, /* Reset all signal handlers and signal mask */
         FORK_CLOSE_ALL_FDS      = 1 <<  1, /* Close all open file descriptors in the child, except for 0,1,2 */
         FORK_DEATHSIG           = 1 <<  2, /* Set PR_DEATHSIG in the child to SIGTERM */
         FORK_DEATHSIG_SIGINT    = 1 <<  3, /* Set PR_DEATHSIG in the child to SIGINT */
-        FORK_REARRANGE_STDIO    = 1 <<  4, /* Connect 0,1,2 to specified fds or /dev/null */
+        FORK_NULL_STDIO         = 1 <<  4, /* Connect 0,1,2 to /dev/null */
         FORK_REOPEN_LOG         = 1 <<  5, /* Reopen log connection */
         FORK_LOG                = 1 <<  6, /* Log above LOG_DEBUG log level about failures */
         FORK_WAIT               = 1 <<  7, /* Wait until child exited */
-        FORK_NEW_MOUNTNS        = 1 <<  8, /* Run child in its own mount namespace                               💣 DO NOT USE IN THREADED PROGRAMS! 💣 */
+        FORK_NEW_MOUNTNS        = 1 <<  8, /* Run child in its own mount namespace */
         FORK_MOUNTNS_SLAVE      = 1 <<  9, /* Make child's mount namespace MS_SLAVE */
-        FORK_PRIVATE_TMP        = 1 << 10, /* Mount new /tmp/ in the child (combine with FORK_NEW_MOUNTNS!) */
-        FORK_RLIMIT_NOFILE_SAFE = 1 << 11, /* Set RLIMIT_NOFILE soft limit to 1K for select() compat */
-        FORK_STDOUT_TO_STDERR   = 1 << 12, /* Make stdout a copy of stderr */
-        FORK_FLUSH_STDIO        = 1 << 13, /* fflush() stdout (and stderr) before forking */
-        FORK_NEW_USERNS         = 1 << 14, /* Run child in its own user namespace                                💣 DO NOT USE IN THREADED PROGRAMS! 💣 */
-        FORK_CLOEXEC_OFF        = 1 << 15, /* In the child: turn off O_CLOEXEC on all fds in except_fds[] */
-        FORK_KEEP_NOTIFY_SOCKET = 1 << 16, /* Unless this specified, $NOTIFY_SOCKET will be unset. */
-        FORK_DETACH             = 1 << 17, /* Double fork if needed to ensure PID1/subreaper is parent */
+        FORK_RLIMIT_NOFILE_SAFE = 1 << 10, /* Set RLIMIT_NOFILE soft limit to 1K for select() compat */
+        FORK_STDOUT_TO_STDERR   = 1 << 11, /* Make stdout a copy of stderr */
+        FORK_FLUSH_STDIO        = 1 << 12, /* fflush() stdout (and stderr) before forking */
+        FORK_NEW_USERNS         = 1 << 13, /* Run child in its own user namespace */
 } ForkFlags;
 
-int safe_fork_full(
-                const char *name,
-                const int stdio_fds[3],
-                const int except_fds[],
-                size_t n_except_fds,
-                ForkFlags flags,
-                pid_t *ret_pid);
+int safe_fork_full(const char *name, const int except_fds[], size_t n_except_fds, ForkFlags flags, pid_t *ret_pid);
 
 static inline int safe_fork(const char *name, ForkFlags flags, pid_t *ret_pid) {
-        return safe_fork_full(name, NULL, NULL, 0, flags, ret_pid);
+        return safe_fork_full(name, NULL, 0, flags, ret_pid);
 }
 
 int namespace_fork(const char *outer_name, const char *inner_name, const int except_fds[], size_t n_except_fds, ForkFlags flags, int pidns_fd, int mntns_fd, int netns_fd, int userns_fd, int root_fd, pid_t *ret_pid);
 
+int fork_agent(const char *name, const int except[], size_t n_except, pid_t *pid, const char *path, ...) _sentinel_;
+
 int set_oom_score_adjust(int value);
-int get_oom_score_adjust(int *ret);
 
 /* The highest possibly (theoretic) pid_t value on this architecture. */
 #define PID_T_MAX ((pid_t) INT32_MAX)
@@ -196,17 +178,16 @@ int get_oom_score_adjust(int *ret);
 
 assert_cc(TASKS_MAX <= (unsigned long) PID_T_MAX);
 
-/* Like TAKE_PTR() but for pid_t, resetting them to 0 */
-#define TAKE_PID(pid) TAKE_GENERIC(pid, pid_t, 0)
+/* Like TAKE_PTR() but for child PIDs, resetting them to 0 */
+#define TAKE_PID(pid)                           \
+        ({                                      \
+                pid_t _pid_ = (pid);            \
+                (pid) = 0;                      \
+                _pid_;                          \
+        })
 
 int pidfd_get_pid(int fd, pid_t *ret);
-int pidfd_verify_pid(int pidfd, pid_t pid);
 
 int setpriority_closest(int priority);
 
-_noreturn_ void freeze(void);
-
-int get_process_threads(pid_t pid);
-
-int is_reaper_process(void);
-int make_reaper_process(bool b);
+bool invoked_as(char *argv[], const char *token);

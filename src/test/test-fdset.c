@@ -5,63 +5,28 @@
 
 #include "fd-util.h"
 #include "fdset.h"
-#include "fs-util.h"
 #include "macro.h"
-#include "tests.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
-TEST(fdset_new_fill) {
-        int fd = -EBADF;
+static void test_fdset_new_fill(void) {
+        int fd = -1;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
+        char name[] = "/tmp/test-fdset_new_fill.XXXXXX";
 
-        log_close();
-        log_set_open_when_needed(true);
-
-        fd = open("/dev/null", O_CLOEXEC|O_RDONLY);
+        fd = mkostemp_safe(name);
         assert_se(fd >= 0);
-
-        assert_se(fdset_new_fill(/* filter_cloexec= */ -1, &fdset) >= 0);
+        assert_se(fdset_new_fill(&fdset) >= 0);
         assert_se(fdset_contains(fdset, fd));
-        fdset = fdset_free(fdset);
-        assert_se(fcntl(fd, F_GETFD) < 0);
-        assert_se(errno == EBADF);
 
-        fd = open("/dev/null", O_CLOEXEC|O_RDONLY);
-        assert_se(fd >= 0);
-
-        assert_se(fdset_new_fill(/* filter_cloexec= */ 0, &fdset) >= 0);
-        assert_se(!fdset_contains(fdset, fd));
-        fdset = fdset_free(fdset);
-        assert_se(fcntl(fd, F_GETFD) >= 0);
-
-        assert_se(fdset_new_fill(/* filter_cloexec= */ 1, &fdset) >= 0);
-        assert_se(fdset_contains(fdset, fd));
-        fdset = fdset_free(fdset);
-        assert_se(fcntl(fd, F_GETFD) < 0);
-        assert_se(errno == EBADF);
-
-        fd = open("/dev/null", O_RDONLY);
-        assert_se(fd >= 0);
-
-        assert_se(fdset_new_fill(/* filter_cloexec= */ 1, &fdset) >= 0);
-        assert_se(!fdset_contains(fdset, fd));
-        fdset = fdset_free(fdset);
-        assert_se(fcntl(fd, F_GETFD) >= 0);
-
-        assert_se(fdset_new_fill(/* filter_cloexec= */ 0, &fdset) >= 0);
-        assert_se(fdset_contains(fdset, fd));
-        fdset = fdset_free(fdset);
-        assert_se(fcntl(fd, F_GETFD) < 0);
-        assert_se(errno == EBADF);
-
-        log_open();
+        unlink(name);
 }
 
-TEST(fdset_put_dup) {
-        _cleanup_close_ int fd = -EBADF;
-        int copyfd = -EBADF;
+static void test_fdset_put_dup(void) {
+        _cleanup_close_ int fd = -1;
+        int copyfd = -1;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_put_dup.XXXXXX";
+        char name[] = "/tmp/test-fdset_put_dup.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -72,13 +37,15 @@ TEST(fdset_put_dup) {
         assert_se(copyfd >= 0 && copyfd != fd);
         assert_se(fdset_contains(fdset, copyfd));
         assert_se(!fdset_contains(fdset, fd));
+
+        unlink(name);
 }
 
-TEST(fdset_cloexec) {
-        int fd = -EBADF;
+static void test_fdset_cloexec(void) {
+        int fd = -1;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
         int flags = -1;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_cloexec.XXXXXX";
+        char name[] = "/tmp/test-fdset_cloexec.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -96,14 +63,16 @@ TEST(fdset_cloexec) {
         flags = fcntl(fd, F_GETFD);
         assert_se(flags >= 0);
         assert_se(flags & FD_CLOEXEC);
+
+        unlink(name);
 }
 
-TEST(fdset_close_others) {
-        int fd = -EBADF;
-        int copyfd = -EBADF;
+static void test_fdset_close_others(void) {
+        int fd = -1;
+        int copyfd = -1;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
         int flags = -1;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_close_others.XXXXXX";
+        char name[] = "/tmp/test-fdset_close_others.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -118,12 +87,14 @@ TEST(fdset_close_others) {
         assert_se(flags < 0);
         flags = fcntl(copyfd, F_GETFD);
         assert_se(flags >= 0);
+
+        unlink(name);
 }
 
-TEST(fdset_remove) {
-        _cleanup_close_ int fd = -EBADF;
-        _cleanup_fdset_free_ FDSet *fdset = NULL;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_remove.XXXXXX";
+static void test_fdset_remove(void) {
+        _cleanup_close_ int fd = -1;
+        FDSet *fdset = NULL;
+        char name[] = "/tmp/test-fdset_remove.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -133,14 +104,17 @@ TEST(fdset_remove) {
         assert_se(fdset_put(fdset, fd) >= 0);
         assert_se(fdset_remove(fdset, fd) >= 0);
         assert_se(!fdset_contains(fdset, fd));
+        fdset_free(fdset);
 
         assert_se(fcntl(fd, F_GETFD) >= 0);
+
+        unlink(name);
 }
 
-TEST(fdset_iterate) {
-        int fd = -EBADF;
-        _cleanup_fdset_free_ FDSet *fdset = NULL;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_iterate.XXXXXX";
+static void test_fdset_iterate(void) {
+        int fd = -1;
+        FDSet *fdset = NULL;
+        char name[] = "/tmp/test-fdset_iterate.XXXXXX";
         int c = 0;
         int a;
 
@@ -158,12 +132,16 @@ TEST(fdset_iterate) {
                 assert_se(a == fd);
         }
         assert_se(c == 1);
+
+        fdset_free(fdset);
+
+        unlink(name);
 }
 
-TEST(fdset_isempty) {
+static void test_fdset_isempty(void) {
         int fd;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_isempty.XXXXXX";
+        char name[] = "/tmp/test-fdset_isempty.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -174,12 +152,14 @@ TEST(fdset_isempty) {
         assert_se(fdset_isempty(fdset));
         assert_se(fdset_put(fdset, fd) >= 0);
         assert_se(!fdset_isempty(fdset));
+
+        unlink(name);
 }
 
-TEST(fdset_steal_first) {
+static void test_fdset_steal_first(void) {
         int fd;
         _cleanup_fdset_free_ FDSet *fdset = NULL;
-        _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fdset_steal_first.XXXXXX";
+        char name[] = "/tmp/test-fdset_steal_first.XXXXXX";
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -192,9 +172,11 @@ TEST(fdset_steal_first) {
         assert_se(fdset_steal_first(fdset) == fd);
         assert_se(fdset_steal_first(fdset) < 0);
         assert_se(fdset_put(fdset, fd) >= 0);
+
+        unlink(name);
 }
 
-TEST(fdset_new_array) {
+static void test_fdset_new_array(void) {
         int fds[] = {10, 11, 12, 13};
         _cleanup_fdset_free_ FDSet *fdset = NULL;
 
@@ -206,4 +188,16 @@ TEST(fdset_new_array) {
         assert_se(fdset_contains(fdset, 13));
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_fdset_new_fill();
+        test_fdset_put_dup();
+        test_fdset_cloexec();
+        test_fdset_close_others();
+        test_fdset_remove();
+        test_fdset_iterate();
+        test_fdset_isempty();
+        test_fdset_steal_first();
+        test_fdset_new_array();
+
+        return 0;
+}

@@ -4,7 +4,7 @@
 #include "strv.h"
 #include "tests.h"
 
-TEST(ask_password) {
+static void test_ask_password(void) {
         int r;
         _cleanup_strv_free_ char **ret = NULL;
 
@@ -18,4 +18,9 @@ TEST(ask_password) {
         }
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_ask_password();
+        return EXIT_SUCCESS;
+}

@@ -33,7 +33,8 @@ foreach tuple : in_files
                 file,
                 input : file + '.in',
                 output: file,
-                command : [jinja2_cmdline, '@INPUT@', '@OUTPUT@'],
+                command : [meson_render_jinja2, config_h, '@INPUT@'],
+                capture : true,
                 install : tuple[1],
                 install_dir : sysusersdir)
 endforeach

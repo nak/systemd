@@ -7,18 +7,13 @@
 #include "fd-util.h"
 #include "fileio.h"
 #include "fuzz.h"
-#include "memstream-util.h"
-
-DEFINE_TRIVIAL_DESTRUCTOR(bus_match_donep, struct bus_match_node, bus_match_free);
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-        _cleanup_(memstream_done) MemStream m = {};
+        _cleanup_free_ char *out = NULL; /* out should be freed after g */
+        size_t out_size;
+        _cleanup_fclose_ FILE *g = NULL;
         _cleanup_(sd_bus_unrefp) sd_bus *bus = NULL;
-        FILE *g = NULL;
         int r;
-
-        if (outside_size_range(size, 0, 65536))
-                return 0;
 
         /* We don't want to fill the logs with messages about parse errors.
          * Disable most logging if not running standalone */
@@ -28,7 +23,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         r = sd_bus_new(&bus);
         assert_se(r >= 0);
 
-        _cleanup_(bus_match_donep) struct bus_match_node root = {
+        struct bus_match_node root = {
                 .type = BUS_MATCH_ROOT,
         };
 
@@ -40,7 +35,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         };
 
         if (getenv_bool("SYSTEMD_FUZZ_OUTPUT") <= 0)
-                assert_se(g = memstream_init(&m));
+                assert_se(g = open_memstream_unlocked(&out, &out_size));
 
         for (size_t offset = 0; offset < size; ) {
                 _cleanup_free_ char *line = NULL;
@@ -56,7 +51,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 offset = end ? (size_t) (end - (char*) data + 1) : size;
 
                 struct bus_match_component *components;
-                size_t n_components;
+                unsigned n_components;
                 r = bus_match_parse(line, &components, &n_components);
                 if (IN_SET(r, -EINVAL, -ENOMEM)) {
                         log_debug_errno(r, "Failed to parse line: %m");
@@ -64,12 +59,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 }
                 assert_se(r >= 0); /* We only expect EINVAL and ENOMEM errors, or success. */
 
-                CLEANUP_ARRAY(components, n_components, bus_match_parse_free);
-
-                log_debug("Parsed %zu components.", n_components);
+                log_debug("Parsed %u components.", n_components);
 
                 _cleanup_free_ char *again = bus_match_to_string(components, n_components);
                 if (!again) {
+                        bus_match_parse_free(components, n_components);
                         log_oom();
                         break;
                 }
@@ -78,6 +72,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                         fprintf(g, "%s\n", again);
 
                 r = bus_match_add(&root, components, n_components, &slot.match_callback);
+                bus_match_parse_free(components, n_components);
                 if (r < 0) {
                         log_error_errno(r, "Failed to add match: %m");
                         break;

@@ -5,9 +5,10 @@
 #include "ordered-set.h"
 #include "string-util.h"
 #include "strv.h"
-#include "tests.h"
 
-TEST(set_steal_first) {
+static void test_set_steal_first(void) {
+        log_info("/* %s */", __func__);
+
         _cleanup_ordered_set_free_ OrderedSet *m = NULL;
         int seen[3] = {};
         char *val;
@@ -40,9 +41,11 @@ static void item_seen(Item *item) {
 
 DEFINE_PRIVATE_HASH_OPS_WITH_VALUE_DESTRUCTOR(item_hash_ops, void, trivial_hash_func, trivial_compare_func, Item, item_seen);
 
-TEST(set_free_with_hash_ops) {
+static void test_set_free_with_hash_ops(void) {
         OrderedSet *m;
         struct Item items[4] = {};
+
+        log_info("/* %s */", __func__);
 
         assert_se(m = ordered_set_new(&item_hash_ops));
 
@@ -60,9 +63,11 @@ TEST(set_free_with_hash_ops) {
         assert_se(items[3].seen == 0);
 }
 
-TEST(set_put) {
+static void test_set_put(void) {
         _cleanup_ordered_set_free_ OrderedSet *m = NULL;
         _cleanup_free_ char **t = NULL, *str = NULL;
+
+        log_info("/* %s */", __func__);
 
         m = ordered_set_new(&string_hash_ops);
         assert_se(m);
@@ -89,9 +94,11 @@ TEST(set_put) {
         ordered_set_print(stdout, "FOO=", m);
 }
 
-TEST(set_put_string_set) {
+static void test_set_put_string_set(void) {
         _cleanup_ordered_set_free_ OrderedSet *m = NULL, *q = NULL;
         _cleanup_free_ char **final = NULL; /* "just free" because the strings are in the set */
+
+        log_info("/* %s */", __func__);
 
         assert_se(ordered_set_put_strdup(&m, "1") == 1);
         assert_se(ordered_set_put_strdup(&m, "22") == 1);
@@ -109,4 +116,11 @@ TEST(set_put_string_set) {
         ordered_set_print(stdout, "BAR=", m);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, const char *argv[]) {
+        test_set_steal_first();
+        test_set_free_with_hash_ops();
+        test_set_put();
+        test_set_put_string_set();
+
+        return 0;
+}

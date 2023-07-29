@@ -43,7 +43,7 @@ static void slice_set_state(Slice *t, SliceState state) {
                           slice_state_to_string(old_state),
                           slice_state_to_string(state));
 
-        unit_notify(UNIT(t), state_translation_table[old_state], state_translation_table[state], /* reload_success = */ true);
+        unit_notify(UNIT(t), state_translation_table[old_state], state_translation_table[state], 0);
 }
 
 static int slice_add_parent_slice(Slice *s) {
@@ -64,22 +64,22 @@ static int slice_add_parent_slice(Slice *s) {
 }
 
 static int slice_add_default_dependencies(Slice *s) {
+        int r;
+
         assert(s);
 
         if (!UNIT(s)->default_dependencies)
                 return 0;
 
         /* Make sure slices are unloaded on shutdown */
-        if (!UNIT(s)->ignore_on_soft_reboot)
-                return unit_add_two_dependencies_by_name(
-                                UNIT(s),
-                                UNIT_BEFORE, UNIT_CONFLICTS,
-                                SPECIAL_SHUTDOWN_TARGET, true,
-                                UNIT_DEPENDENCY_DEFAULT);
+        r = unit_add_two_dependencies_by_name(
+                        UNIT(s),
+                        UNIT_BEFORE, UNIT_CONFLICTS,
+                        SPECIAL_SHUTDOWN_TARGET, true, UNIT_DEPENDENCY_DEFAULT);
+        if (r < 0)
+                return r;
 
-        /* Unless we are meant to survive soft reboot, in which case we need to conflict with
-         * non-soft-reboot targets. */
-        return unit_add_dependencies_on_real_shutdown_targets(UNIT(s));
+        return 0;
 }
 
 static int slice_verify(Slice *s) {
@@ -247,8 +247,8 @@ static int slice_stop(Unit *u) {
         return 1;
 }
 
-static int slice_kill(Unit *u, KillWho who, int signo, int code, int value, sd_bus_error *error) {
-        return unit_kill_common(u, who, signo, code, value, -1, -1, error);
+static int slice_kill(Unit *u, KillWho who, int signo, sd_bus_error *error) {
+        return unit_kill_common(u, who, signo, -1, -1, error);
 }
 
 static int slice_serialize(Unit *u, FILE *f, FDSet *fds) {
@@ -349,14 +349,17 @@ static void slice_enumerate_perpetual(Manager *m) {
 
 static bool slice_freezer_action_supported_by_children(Unit *s) {
         Unit *member;
+        int r;
 
         assert(s);
 
         UNIT_FOREACH_DEPENDENCY(member, s, UNIT_ATOM_SLICE_OF) {
 
-                if (member->type == UNIT_SLICE &&
-                    !slice_freezer_action_supported_by_children(member))
-                        return false;
+                if (member->type == UNIT_SLICE) {
+                        r = slice_freezer_action_supported_by_children(member);
+                        if (!r)
+                                return r;
+                }
 
                 if (!UNIT_VTABLE(member)->freeze)
                         return false;
@@ -372,27 +375,25 @@ static int slice_freezer_action(Unit *s, FreezerAction action) {
         assert(s);
         assert(IN_SET(action, FREEZER_FREEZE, FREEZER_THAW));
 
-        if (action == FREEZER_FREEZE && !slice_freezer_action_supported_by_children(s)) {
+        if (!slice_freezer_action_supported_by_children(s)) {
                 log_unit_warning(s, "Requested freezer operation is not supported by all children of the slice");
                 return 0;
         }
 
         UNIT_FOREACH_DEPENDENCY(member, s, UNIT_ATOM_SLICE_OF) {
-                if (!member->cgroup_realized)
-                        continue;
-
                 if (action == FREEZER_FREEZE)
                         r = UNIT_VTABLE(member)->freeze(member);
-                else if (UNIT_VTABLE(member)->thaw)
-                        r = UNIT_VTABLE(member)->thaw(member);
                 else
-                        /* Thawing is requested but no corresponding method is available, ignore. */
-                        r = 0;
+                        r = UNIT_VTABLE(member)->thaw(member);
                 if (r < 0)
                         return r;
         }
 
-        return unit_cgroup_freezer_action(s, action);
+        r = unit_cgroup_freezer_action(s, action);
+        if (r < 0)
+                return r;
+
+        return 1;
 }
 
 static int slice_freeze(Unit *s) {

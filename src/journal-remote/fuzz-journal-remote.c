@@ -13,30 +13,24 @@
 #include "journal-remote.h"
 #include "logs-show.h"
 #include "memfd-util.h"
-#include "path-util.h"
-#include "rm-rf.h"
 #include "strv.h"
-#include "tmpfile-util.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-        _cleanup_close_ int fdin_close = -EBADF, fdout = -EBADF;
-        _cleanup_(rm_rf_physical_and_freep) char *tmp = NULL;
-        _cleanup_(unlink_and_freep) char *name = NULL;
-        _cleanup_(sd_journal_closep) sd_journal *j = NULL;
-        _cleanup_(journal_remote_server_destroy) RemoteServer s = {};
+        int fdin;
         void *mem;
-        int fdin, r;
+        _cleanup_(unlink_tempfilep) char name[] = "/tmp/fuzz-journal-remote.XXXXXX.journal";
+        _cleanup_close_ int fdout = -1;
+        _cleanup_(sd_journal_closep) sd_journal *j = NULL;
+        RemoteServer s = {};
+        int r;
 
-        if (outside_size_range(size, 3, 65536))
+        if (size <= 2)
                 return 0;
 
         if (!getenv("SYSTEMD_LOG_LEVEL"))
                 log_set_max_level(LOG_ERR);
 
-        assert_se(mkdtemp_malloc("/tmp/fuzz-journal-remote-XXXXXX", &tmp) >= 0);
-        assert_se(name = path_join(tmp, "fuzz-journal-remote.XXXXXX.journal"));
-
-        fdin = fdin_close = memfd_new_and_map("fuzz-journal-remote", size, &mem);
+        fdin = memfd_new_and_map("fuzz-journal-remote", size, &mem);
         if (fdin < 0)
                 return log_error_errno(fdin, "memfd_new_and_map() failed: %m");
 
@@ -49,21 +43,23 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
         /* In */
 
-        r = journal_remote_server_init(&s, name, JOURNAL_WRITE_SPLIT_NONE, 0);
+        r = journal_remote_server_init(&s, name, JOURNAL_WRITE_SPLIT_NONE, false, false);
         if (r < 0) {
                 assert_se(IN_SET(r, -ENOMEM, -EMFILE, -ENFILE));
                 return r;
         }
 
         r = journal_remote_add_source(&s, fdin, (char*) "fuzz-data", false);
-        if (r < 0)
+        if (r < 0) {
+                safe_close(fdin);
                 return r;
-        TAKE_FD(fdin_close);
+        }
         assert(r > 0);
 
         while (s.active)
                 assert_se(journal_remote_handle_raw_source(NULL, fdin, 0, &s) >= 0);
 
+        journal_remote_server_destroy(&s);
         assert_se(close(fdin) < 0 && errno == EBADF); /* Check that the fd is closed already */
 
         /* Out */
@@ -71,7 +67,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         r = sd_journal_open_files(&j, (const char**) STRV_MAKE(name), 0);
         if (r < 0) {
                 log_error_errno(r, "sd_journal_open_files([\"%s\"]) failed: %m", name);
-                assert_se(IN_SET(r, -ENOMEM, -EMFILE, -ENFILE, -ENODATA));
+                assert_se(IN_SET(r, -ENOMEM, -EMFILE, -ENFILE));
                 return r;
         }
 

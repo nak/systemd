@@ -7,7 +7,6 @@
 #include "fd-util.h"
 #include "fileio.h"
 #include "hexdecoct.h"
-#include "memstream-util.h"
 #include "sort-util.h"
 #include "string-util.h"
 #include "strv.h"
@@ -140,6 +139,8 @@ static bool value_node_test(
                         return true;
 
                 if (m->creds.mask & SD_BUS_CREDS_WELL_KNOWN_NAMES) {
+                        char **i;
+
                         /* on kdbus we have the well known names list
                          * in the credentials, let's make use of that
                          * for an accurate match */
@@ -173,6 +174,8 @@ static bool value_node_test(
                 return false;
 
         case BUS_MATCH_ARG_HAS ... BUS_MATCH_ARG_HAS_LAST: {
+                char **i;
+
                 STRV_FOREACH(i, value_strv)
                         if (streq_ptr(node->value.str, *i))
                                 return true;
@@ -196,7 +199,7 @@ static bool value_node_test(
                 return false;
 
         default:
-                assert_not_reached();
+                assert_not_reached("Invalid node type");
         }
 }
 
@@ -231,7 +234,7 @@ static bool value_node_same(
                 return streq(node->value.str, value_str);
 
         default:
-                assert_not_reached();
+                assert_not_reached("Invalid node type");
         }
 }
 
@@ -372,7 +375,7 @@ int bus_match_run(
                 break;
 
         default:
-                assert_not_reached();
+                assert_not_reached("Unknown match type.");
         }
 
         if (BUS_MATCH_CAN_HASH(node->type)) {
@@ -383,6 +386,8 @@ int bus_match_run(
                 if (test_str)
                         found = hashmap_get(node->compare.children, test_str);
                 else if (test_strv) {
+                        char **i;
+
                         STRV_FOREACH(i, test_strv) {
                                 found = hashmap_get(node->compare.children, *i);
                                 if (found) {
@@ -693,8 +698,8 @@ static int match_component_compare(const struct bus_match_component *a, const st
         return CMP(a->type, b->type);
 }
 
-void bus_match_parse_free(struct bus_match_component *components, size_t n_components) {
-        for (size_t i = 0; i < n_components; i++)
+void bus_match_parse_free(struct bus_match_component *components, unsigned n_components) {
+        for (unsigned i = 0; i < n_components; i++)
                 free(components[i].value_str);
 
         free(components);
@@ -703,22 +708,20 @@ void bus_match_parse_free(struct bus_match_component *components, size_t n_compo
 int bus_match_parse(
                 const char *match,
                 struct bus_match_component **ret_components,
-                size_t *ret_n_components) {
+                unsigned *ret_n_components) {
 
         struct bus_match_component *components = NULL;
-        size_t n_components = 0;
+        unsigned n_components = 0;
         int r;
 
         assert(match);
         assert(ret_components);
         assert(ret_n_components);
 
-        CLEANUP_ARRAY(components, n_components, bus_match_parse_free);
-
         while (*match != '\0') {
                 const char *eq, *q;
                 enum bus_match_node_type t;
-                size_t j = 0;
+                unsigned j = 0;
                 _cleanup_free_ char *value = NULL;
                 bool escaped = false, quoted;
                 uint8_t u;
@@ -727,12 +730,16 @@ int bus_match_parse(
                 match += strspn(match, " ");
 
                 eq = strchr(match, '=');
-                if (!eq)
-                        return -EINVAL;
+                if (!eq) {
+                        r = -EINVAL;
+                        goto fail;
+                }
 
                 t = bus_match_node_type_from_string(match, eq - match);
-                if (t < 0)
-                        return -EINVAL;
+                if (t < 0) {
+                        r = -EINVAL;
+                        goto fail;
+                }
 
                 quoted = eq[1] == '\'';
 
@@ -740,12 +747,14 @@ int bus_match_parse(
 
                         if (*q == '\0') {
 
-                                if (quoted)
-                                        return -EINVAL;
-
-                                if (value)
-                                        value[j] = '\0';
-                                break;
+                                if (quoted) {
+                                        r = -EINVAL;
+                                        goto fail;
+                                } else {
+                                        if (value)
+                                                value[j] = '\0';
+                                        break;
+                                }
                         }
 
                         if (!escaped) {
@@ -769,8 +778,10 @@ int bus_match_parse(
                                 }
                         }
 
-                        if (!GREEDY_REALLOC(value, j + 2))
-                                return -ENOMEM;
+                        if (!GREEDY_REALLOC(value, j + 2)) {
+                                r = -ENOMEM;
+                                goto fail;
+                        }
 
                         value[j++] = *q;
                         escaped = false;
@@ -778,21 +789,25 @@ int bus_match_parse(
 
                 if (!value) {
                         value = strdup("");
-                        if (!value)
-                                return -ENOMEM;
+                        if (!value) {
+                                r = -ENOMEM;
+                                goto fail;
+                        }
                 }
 
                 if (t == BUS_MATCH_MESSAGE_TYPE) {
                         r = bus_message_type_from_string(value, &u);
                         if (r < 0)
-                                return r;
+                                goto fail;
 
                         value = mfree(value);
                 } else
                         u = 0;
 
-                if (!GREEDY_REALLOC(components, n_components + 1))
-                        return -ENOMEM;
+                if (!GREEDY_REALLOC(components, n_components + 1)) {
+                        r = -ENOMEM;
+                        goto fail;
+                }
 
                 components[n_components++] = (struct bus_match_component) {
                         .type = t,
@@ -803,8 +818,10 @@ int bus_match_parse(
                 if (q[quoted] == 0)
                         break;
 
-                if (q[quoted] != ',')
-                        return -EINVAL;
+                if (q[quoted] != ',') {
+                        r = -EINVAL;
+                        goto fail;
+                }
 
                 match = q + 1 + quoted;
         }
@@ -813,19 +830,25 @@ int bus_match_parse(
         typesafe_qsort(components, n_components, match_component_compare);
 
         /* Check for duplicates */
-        for (size_t i = 0; i+1 < n_components; i++)
-                if (components[i].type == components[i+1].type)
-                        return -EINVAL;
+        for (unsigned i = 0; i+1 < n_components; i++)
+                if (components[i].type == components[i+1].type) {
+                        r = -EINVAL;
+                        goto fail;
+                }
 
-        *ret_components = TAKE_PTR(components);
+        *ret_components = components;
         *ret_n_components = n_components;
 
         return 0;
+
+fail:
+        bus_match_parse_free(components, n_components);
+        return r;
 }
 
-char *bus_match_to_string(struct bus_match_component *components, size_t n_components) {
-        _cleanup_(memstream_done) MemStream m = {};
-        FILE *f;
+char *bus_match_to_string(struct bus_match_component *components, unsigned n_components) {
+        _cleanup_free_ char *buffer = NULL;
+        size_t size = 0;
         int r;
 
         if (n_components <= 0)
@@ -833,11 +856,11 @@ char *bus_match_to_string(struct bus_match_component *components, size_t n_compo
 
         assert(components);
 
-        f = memstream_init(&m);
+        FILE *f = open_memstream_unlocked(&buffer, &size);
         if (!f)
                 return NULL;
 
-        for (size_t i = 0; i < n_components; i++) {
+        for (unsigned i = 0; i < n_components; i++) {
                 char buf[32];
 
                 if (i != 0)
@@ -855,18 +878,17 @@ char *bus_match_to_string(struct bus_match_component *components, size_t n_compo
                 fputc('\'', f);
         }
 
-        char *buffer;
-        r = memstream_finalize(&m, &buffer, NULL);
+        r = fflush_and_check(f);
+        safe_fclose(f);
         if (r < 0)
                 return NULL;
-
-        return buffer;
+        return TAKE_PTR(buffer);
 }
 
 int bus_match_add(
                 struct bus_match_node *root,
                 struct bus_match_component *components,
-                size_t n_components,
+                unsigned n_components,
                 struct match_callback *callback) {
 
         int r;
@@ -874,7 +896,7 @@ int bus_match_add(
         assert(root);
         assert(callback);
 
-        for (size_t i = 0; i < n_components; i++) {
+        for (unsigned i = 0; i < n_components; i++) {
                 r = bus_match_add_compare_value(root,
                                                 components[i].type,
                                                 components[i].value_u8,
@@ -975,16 +997,20 @@ const char* bus_match_node_type_to_string(enum bus_match_node_type t, char buf[]
                 return "path_namespace";
 
         case BUS_MATCH_ARG ... BUS_MATCH_ARG_LAST:
-                return snprintf_ok(buf, l, "arg%i", t - BUS_MATCH_ARG);
+                snprintf(buf, l, "arg%i", t - BUS_MATCH_ARG);
+                return buf;
 
         case BUS_MATCH_ARG_PATH ... BUS_MATCH_ARG_PATH_LAST:
-                return snprintf_ok(buf, l, "arg%ipath", t - BUS_MATCH_ARG_PATH);
+                snprintf(buf, l, "arg%ipath", t - BUS_MATCH_ARG_PATH);
+                return buf;
 
         case BUS_MATCH_ARG_NAMESPACE ... BUS_MATCH_ARG_NAMESPACE_LAST:
-                return snprintf_ok(buf, l, "arg%inamespace", t - BUS_MATCH_ARG_NAMESPACE);
+                snprintf(buf, l, "arg%inamespace", t - BUS_MATCH_ARG_NAMESPACE);
+                return buf;
 
         case BUS_MATCH_ARG_HAS ... BUS_MATCH_ARG_HAS_LAST:
-                return snprintf_ok(buf, l, "arg%ihas", t - BUS_MATCH_ARG_HAS);
+                snprintf(buf, l, "arg%ihas", t - BUS_MATCH_ARG_HAS);
+                return buf;
 
         default:
                 return NULL;
@@ -997,7 +1023,7 @@ void bus_match_dump(FILE *out, struct bus_match_node *node, unsigned level) {
         if (!node)
                 return;
 
-        fprintf(out, "%*s[%s]", 2 * (int) level, "", bus_match_node_type_to_string(node->type, buf, sizeof(buf)));
+        fprintf(out, "%*s[%s]", 2 * level, "", bus_match_node_type_to_string(node->type, buf, sizeof(buf)));
 
         if (node->type == BUS_MATCH_VALUE) {
                 if (node->parent->type == BUS_MATCH_MESSAGE_TYPE)
@@ -1022,7 +1048,7 @@ void bus_match_dump(FILE *out, struct bus_match_node *node, unsigned level) {
                 bus_match_dump(out, c, level + 1);
 }
 
-enum bus_match_scope bus_match_get_scope(const struct bus_match_component *components, size_t n_components) {
+enum bus_match_scope bus_match_get_scope(const struct bus_match_component *components, unsigned n_components) {
         bool found_driver = false;
 
         if (n_components <= 0)
@@ -1036,7 +1062,7 @@ enum bus_match_scope bus_match_get_scope(const struct bus_match_component *compo
          * local messages, then we check if it only matches on the
          * driver. */
 
-        for (size_t i = 0; i < n_components; i++) {
+        for (unsigned i = 0; i < n_components; i++) {
                 const struct bus_match_component *c = components + i;
 
                 if (c->type == BUS_MATCH_SENDER) {

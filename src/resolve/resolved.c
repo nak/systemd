@@ -11,7 +11,7 @@
 #include "capability-util.h"
 #include "daemon-util.h"
 #include "main-func.h"
-#include "mkdir-label.h"
+#include "mkdir.h"
 #include "resolved-bus.h"
 #include "resolved-conf.h"
 #include "resolved-manager.h"
@@ -38,7 +38,7 @@ static int run(int argc, char *argv[]) {
 
         umask(0022);
 
-        r = mac_init();
+        r = mac_selinux_init();
         if (r < 0)
                 return r;
 
@@ -67,7 +67,7 @@ static int run(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to drop privileges: %m");
         }
 
-        assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGTERM, SIGINT, SIGUSR1, SIGUSR2, SIGRTMIN+1, SIGRTMIN+18, -1) >= 0);
+        assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGTERM, SIGINT, SIGUSR1, SIGUSR2, SIGRTMIN+1, -1) >= 0);
 
         r = manager_new(&m);
         if (r < 0)

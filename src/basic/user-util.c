@@ -13,15 +13,13 @@
 #include "sd-messages.h"
 
 #include "alloc-util.h"
-#include "chase.h"
 #include "errno-util.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "format-util.h"
-#include "lock-util.h"
 #include "macro.h"
-#include "mkdir.h"
 #include "parse-util.h"
+#include "path-util.h"
 #include "path-util.h"
 #include "random-util.h"
 #include "string-util.h"
@@ -37,7 +35,7 @@ bool uid_is_valid(uid_t uid) {
         if (uid == (uid_t) UINT32_C(0xFFFFFFFF))
                 return false;
 
-        /* A long time ago UIDs where 16 bit, hence explicitly avoid the 16-bit -1 too */
+        /* A long time ago UIDs where 16bit, hence explicitly avoid the 16bit -1 too */
         if (uid == (uid_t) UINT32_C(0xFFFF))
                 return false;
 
@@ -127,7 +125,7 @@ char* getlogname_malloc(void) {
         return uid_to_name(uid);
 }
 
-char* getusername_malloc(void) {
+char *getusername_malloc(void) {
         const char *e;
 
         e = secure_getenv("USER");
@@ -138,6 +136,7 @@ char* getusername_malloc(void) {
 }
 
 bool is_nologin_shell(const char *shell) {
+
         return PATH_IN_SET(shell,
                            /* 'nologin' is the friendliest way to disable logins for a user account. It prints a nice
                             * message and exits. Different distributions place the binary at different places though,
@@ -153,32 +152,6 @@ bool is_nologin_shell(const char *shell) {
                            "/usr/bin/false",
                            "/bin/true",
                            "/usr/bin/true");
-}
-
-const char* default_root_shell_at(int rfd) {
-        /* We want to use the preferred shell, i.e. DEFAULT_USER_SHELL, which usually
-         * will be /bin/bash. Fall back to /bin/sh if DEFAULT_USER_SHELL is not found,
-         * or any access errors. */
-
-        assert(rfd >= 0 || rfd == AT_FDCWD);
-
-        int r = chaseat(rfd, DEFAULT_USER_SHELL, CHASE_AT_RESOLVE_IN_ROOT, NULL, NULL);
-        if (r < 0 && r != -ENOENT)
-                log_debug_errno(r, "Failed to look up shell '%s': %m", DEFAULT_USER_SHELL);
-        if (r > 0)
-                return DEFAULT_USER_SHELL;
-
-        return "/bin/sh";
-}
-
-const char* default_root_shell(const char *root) {
-        _cleanup_close_ int rfd = -EBADF;
-
-        rfd = open(empty_to_root(root), O_CLOEXEC | O_DIRECTORY | O_PATH);
-        if (rfd < 0)
-                return "/bin/sh";
-
-        return default_root_shell_at(rfd);
 }
 
 static int synthesize_user_creds(
@@ -203,13 +176,13 @@ static int synthesize_user_creds(
                         *home = "/root";
 
                 if (shell)
-                        *shell = default_root_shell(NULL);
+                        *shell = "/bin/sh";
 
                 return 0;
         }
 
-        if (STR_IN_SET(*username, NOBODY_USER_NAME, "65534") &&
-            synthesize_nobody()) {
+        if (synthesize_nobody() &&
+            STR_IN_SET(*username, NOBODY_USER_NAME, "65534")) {
                 *username = NOBODY_USER_NAME;
 
                 if (uid)
@@ -274,7 +247,7 @@ int get_user_creds(
                 else if (FLAGS_SET(flags, USER_CREDS_ALLOW_MISSING) && !gid && !home && !shell) {
 
                         /* If the specified user is a numeric UID and it isn't in the user database, and the caller
-                         * passed USER_CREDS_ALLOW_MISSING and was only interested in the UID, then just return that
+                         * passed USER_CREDS_ALLOW_MISSING and was only interested in the UID, then juts return that
                          * and don't complain. */
 
                         if (uid)
@@ -287,9 +260,7 @@ int get_user_creds(
                 p = getpwnam(*username);
         }
         if (!p) {
-                /* getpwnam() may fail with ENOENT if /etc/passwd is missing.
-                 * For us that is equivalent to the name not being defined. */
-                r = IN_SET(errno, 0, ENOENT) ? -ESRCH : -errno;
+                r = errno_or_else(ESRCH);
 
                 /* If the user requested that we only synthesize as fallback, do so now */
                 if (FLAGS_SET(flags, USER_CREDS_PREFER_NSS)) {
@@ -355,8 +326,8 @@ int get_group_creds(const char **groupname, gid_t *gid, UserCredsFlags flags) {
                 return 0;
         }
 
-        if (STR_IN_SET(*groupname, NOBODY_GROUP_NAME, "65534") &&
-            synthesize_nobody()) {
+        if (synthesize_nobody() &&
+            STR_IN_SET(*groupname, NOBODY_GROUP_NAME, "65534")) {
                 *groupname = NOBODY_GROUP_NAME;
 
                 if (gid)
@@ -383,9 +354,7 @@ int get_group_creds(const char **groupname, gid_t *gid, UserCredsFlags flags) {
         }
 
         if (!g)
-                /* getgrnam() may fail with ENOENT if /etc/group is missing.
-                 * For us that is equivalent to the name not being defined. */
-                return IN_SET(errno, 0, ENOENT) ? -ESRCH : -errno;
+                return errno_or_else(ESRCH);
 
         if (gid) {
                 if (!gid_is_valid(g->gr_gid))
@@ -404,7 +373,8 @@ char* uid_to_name(uid_t uid) {
         /* Shortcut things to avoid NSS lookups */
         if (uid == 0)
                 return strdup("root");
-        if (uid == UID_NOBODY && synthesize_nobody())
+        if (synthesize_nobody() &&
+            uid == UID_NOBODY)
                 return strdup(NOBODY_USER_NAME);
 
         if (uid_is_valid(uid)) {
@@ -447,7 +417,8 @@ char* gid_to_name(gid_t gid) {
 
         if (gid == 0)
                 return strdup("root");
-        if (gid == GID_NOBODY && synthesize_nobody())
+        if (synthesize_nobody() &&
+            gid == GID_NOBODY)
                 return strdup(NOBODY_GROUP_NAME);
 
         if (gid_is_valid(gid)) {
@@ -585,29 +556,43 @@ int getgroups_alloc(gid_t** gids) {
         return ngroups;
 }
 
-int get_home_dir(char **ret) {
+int get_home_dir(char **_h) {
         struct passwd *p;
         const char *e;
         char *h;
         uid_t u;
 
-        assert(ret);
+        assert(_h);
 
         /* Take the user specified one */
         e = secure_getenv("HOME");
-        if (e && path_is_valid(e) && path_is_absolute(e))
-                goto found;
+        if (e && path_is_valid(e) && path_is_absolute(e)) {
+                h = strdup(e);
+                if (!h)
+                        return -ENOMEM;
+
+                *_h = path_simplify(h);
+                return 0;
+        }
 
         /* Hardcode home directory for root and nobody to avoid NSS */
         u = getuid();
         if (u == 0) {
-                e = "/root";
-                goto found;
-        }
+                h = strdup("/root");
+                if (!h)
+                        return -ENOMEM;
 
-        if (u == UID_NOBODY && synthesize_nobody()) {
-                e = "/";
-                goto found;
+                *_h = h;
+                return 0;
+        }
+        if (synthesize_nobody() &&
+            u == UID_NOBODY) {
+                h = strdup("/");
+                if (!h)
+                        return -ENOMEM;
+
+                *_h = h;
+                return 0;
         }
 
         /* Check the database... */
@@ -615,42 +600,56 @@ int get_home_dir(char **ret) {
         p = getpwuid(u);
         if (!p)
                 return errno_or_else(ESRCH);
-        e = p->pw_dir;
 
-        if (!path_is_valid(e) || !path_is_absolute(e))
+        if (!path_is_valid(p->pw_dir) ||
+            !path_is_absolute(p->pw_dir))
                 return -EINVAL;
 
- found:
-        h = strdup(e);
+        h = strdup(p->pw_dir);
         if (!h)
                 return -ENOMEM;
 
-        *ret = path_simplify(h);
+        *_h = path_simplify(h);
         return 0;
 }
 
-int get_shell(char **ret) {
+int get_shell(char **_s) {
         struct passwd *p;
         const char *e;
         char *s;
         uid_t u;
 
-        assert(ret);
+        assert(_s);
 
         /* Take the user specified one */
         e = secure_getenv("SHELL");
-        if (e && path_is_valid(e) && path_is_absolute(e))
-                goto found;
+        if (e && path_is_valid(e) && path_is_absolute(e)) {
+                s = strdup(e);
+                if (!s)
+                        return -ENOMEM;
+
+                *_s = path_simplify(s);
+                return 0;
+        }
 
         /* Hardcode shell for root and nobody to avoid NSS */
         u = getuid();
         if (u == 0) {
-                e = default_root_shell(NULL);
-                goto found;
+                s = strdup("/bin/sh");
+                if (!s)
+                        return -ENOMEM;
+
+                *_s = s;
+                return 0;
         }
-        if (u == UID_NOBODY && synthesize_nobody()) {
-                e = NOLOGIN;
-                goto found;
+        if (synthesize_nobody() &&
+            u == UID_NOBODY) {
+                s = strdup(NOLOGIN);
+                if (!s)
+                        return -ENOMEM;
+
+                *_s = s;
+                return 0;
         }
 
         /* Check the database... */
@@ -658,17 +657,16 @@ int get_shell(char **ret) {
         p = getpwuid(u);
         if (!p)
                 return errno_or_else(ESRCH);
-        e = p->pw_shell;
 
-        if (!path_is_valid(e) || !path_is_absolute(e))
+        if (!path_is_valid(p->pw_shell) ||
+            !path_is_absolute(p->pw_shell))
                 return -EINVAL;
 
- found:
-        s = strdup(e);
+        s = strdup(p->pw_shell);
         if (!s)
                 return -ENOMEM;
 
-        *ret = path_simplify(s);
+        *_s = path_simplify(s);
         return 0;
 }
 
@@ -682,34 +680,50 @@ int reset_uid_gid(void) {
         if (setresgid(0, 0, 0) < 0)
                 return -errno;
 
-        return RET_NERRNO(setresuid(0, 0, 0));
+        if (setresuid(0, 0, 0) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int take_etc_passwd_lock(const char *root) {
-        int r;
 
-        /* This is roughly the same as lckpwdf(), but not as awful. We don't want to use alarm() and signals,
-         * hence we implement our own trivial version of this.
+        struct flock flock = {
+                .l_type = F_WRLCK,
+                .l_whence = SEEK_SET,
+                .l_start = 0,
+                .l_len = 0,
+        };
+
+        const char *path;
+        int fd, r;
+
+        /* This is roughly the same as lckpwdf(), but not as awful. We
+         * don't want to use alarm() and signals, hence we implement
+         * our own trivial version of this.
          *
-         * Note that shadow-utils also takes per-database locks in addition to lckpwdf(). However, we don't,
-         * given that they are redundant: they invoke lckpwdf() first and keep it during everything they do.
-         * The per-database locks are awfully racy, and thus we just won't do them. */
+         * Note that shadow-utils also takes per-database locks in
+         * addition to lckpwdf(). However, we don't given that they
+         * are redundant as they invoke lckpwdf() first and keep
+         * it during everything they do. The per-database locks are
+         * awfully racy, and thus we just won't do them. */
 
-        _cleanup_free_ char *path = path_join(root, ETC_PASSWD_LOCK_PATH);
-        if (!path)
-                return log_oom_debug();
+        if (root)
+                path = prefix_roota(root, ETC_PASSWD_LOCK_PATH);
+        else
+                path = ETC_PASSWD_LOCK_PATH;
 
-        (void) mkdir_parents(path, 0755);
-
-        _cleanup_close_ int fd = open(path, O_WRONLY|O_CREAT|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW, 0600);
+        fd = open(path, O_WRONLY|O_CREAT|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW, 0600);
         if (fd < 0)
                 return log_debug_errno(errno, "Cannot open %s: %m", path);
 
-        r = unposix_lock(fd, LOCK_EX);
-        if (r < 0)
-                return log_debug_errno(r, "Locking %s failed: %m", path);
+        r = fcntl(fd, F_SETLKW, &flock);
+        if (r < 0) {
+                safe_close(fd);
+                return log_debug_errno(errno, "Locking %s failed: %m", path);
+        }
 
-        return TAKE_FD(fd);
+        return fd;
 }
 
 bool valid_user_group_name(const char *u, ValidUserFlags flags) {
@@ -765,14 +779,14 @@ bool valid_user_group_name(const char *u, ValidUserFlags flags) {
                 if (in_charset(u, "0123456789")) /* Don't allow fully numeric strings, they might be confused
                                                   * with UIDs (note that this test is more broad than
                                                   * the parse_uid() test above, as it will cover more than
-                                                  * the 32-bit range, and it will detect 65535 (which is in
+                                                  * the 32bit range, and it will detect 65535 (which is in
                                                   * invalid UID, even though in the unsigned 32 bit range) */
                         return false;
 
                 if (u[0] == '-' && in_charset(u + 1, "0123456789")) /* Don't allow negative fully numeric
                                                                      * strings either. After all some people
                                                                      * write 65535 as -1 (even though that's
-                                                                     * not even true on 32-bit uid_t
+                                                                     * not even true on 32bit uid_t
                                                                      * anyway) */
                         return false;
 
@@ -783,7 +797,7 @@ bool valid_user_group_name(const char *u, ValidUserFlags flags) {
                 /* Compare with strict result and warn if result doesn't match */
                 if (FLAGS_SET(flags, VALID_USER_WARN) && !valid_user_group_name(u, 0))
                         log_struct(LOG_NOTICE,
-                                   LOG_MESSAGE("Accepting user/group name '%s', which does not match strict user/group name rules.", u),
+                                   "MESSAGE=Accepting user/group name '%s', which does not match strict user/group name rules.", u,
                                    "USER_GROUP_NAME=%s", u,
                                    "MESSAGE_ID=" SD_MESSAGE_UNSAFE_USER_NAME_STR);
 
@@ -803,13 +817,15 @@ bool valid_user_group_name(const char *u, ValidUserFlags flags) {
                  * Note that other systems are even more restrictive, and don't permit underscores or uppercase characters.
                  */
 
-                if (!ascii_isalpha(u[0]) &&
+                if (!(u[0] >= 'a' && u[0] <= 'z') &&
+                    !(u[0] >= 'A' && u[0] <= 'Z') &&
                     u[0] != '_')
                         return false;
 
                 for (i = u+1; *i; i++)
-                        if (!ascii_isalpha(*i) &&
-                            !ascii_isdigit(*i) &&
+                        if (!(*i >= 'a' && *i <= 'z') &&
+                            !(*i >= 'A' && *i <= 'Z') &&
+                            !(*i >= '0' && *i <= '9') &&
                             !IN_SET(*i, '_', '-'))
                                 return false;
 
@@ -847,7 +863,7 @@ bool valid_gecos(const char *d) {
         return true;
 }
 
-char* mangle_gecos(const char *d) {
+char *mangle_gecos(const char *d) {
         char *mangled;
 
         /* Makes sure the provided string becomes valid as a GEGOS field, by dropping bad chars. glibc's
@@ -927,7 +943,10 @@ int maybe_setgroups(size_t size, const gid_t *list) {
                 }
         }
 
-        return RET_NERRNO(setgroups(size, list));
+        if (setgroups(size, list) < 0)
+                return -errno;
+
+        return 0;
 }
 
 bool synthesize_nobody(void) {
@@ -993,11 +1012,13 @@ int putsgent_sane(const struct sgrp *sg, FILE *stream) {
 #endif
 
 int fgetpwent_sane(FILE *stream, struct passwd **pw) {
-        assert(stream);
+        struct passwd *p;
+
         assert(pw);
+        assert(stream);
 
         errno = 0;
-        struct passwd *p = fgetpwent(stream);
+        p = fgetpwent(stream);
         if (!p && errno != ENOENT)
                 return errno_or_else(EIO);
 
@@ -1006,11 +1027,13 @@ int fgetpwent_sane(FILE *stream, struct passwd **pw) {
 }
 
 int fgetspent_sane(FILE *stream, struct spwd **sp) {
-        assert(stream);
+        struct spwd *s;
+
         assert(sp);
+        assert(stream);
 
         errno = 0;
-        struct spwd *s = fgetspent(stream);
+        s = fgetspent(stream);
         if (!s && errno != ENOENT)
                 return errno_or_else(EIO);
 
@@ -1019,11 +1042,13 @@ int fgetspent_sane(FILE *stream, struct spwd **sp) {
 }
 
 int fgetgrent_sane(FILE *stream, struct group **gr) {
-        assert(stream);
+        struct group *g;
+
         assert(gr);
+        assert(stream);
 
         errno = 0;
-        struct group *g = fgetgrent(stream);
+        g = fgetgrent(stream);
         if (!g && errno != ENOENT)
                 return errno_or_else(EIO);
 
@@ -1033,11 +1058,13 @@ int fgetgrent_sane(FILE *stream, struct group **gr) {
 
 #if ENABLE_GSHADOW
 int fgetsgent_sane(FILE *stream, struct sgrp **sg) {
-        assert(stream);
+        struct sgrp *s;
+
         assert(sg);
+        assert(stream);
 
         errno = 0;
-        struct sgrp *s = fgetsgent(stream);
+        s = fgetsgent(stream);
         if (!s && errno != ENOENT)
                 return errno_or_else(EIO);
 
@@ -1057,15 +1084,4 @@ int is_this_me(const char *username) {
                 return r;
 
         return uid == getuid();
-}
-
-const char* get_home_root(void) {
-        const char *e;
-
-        /* For debug purposes allow overriding where we look for home dirs */
-        e = secure_getenv("SYSTEMD_HOME_ROOT");
-        if (e && path_is_absolute(e) && path_is_normalized(e))
-                return e;
-
-        return "/home";
 }

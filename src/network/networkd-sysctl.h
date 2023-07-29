@@ -11,8 +11,7 @@ typedef enum IPv6PrivacyExtensions {
         /* The values map to the kernel's /proc/sys/net/ipv6/conf/xxx/use_tempaddr values */
         IPV6_PRIVACY_EXTENSIONS_NO,
         IPV6_PRIVACY_EXTENSIONS_PREFER_PUBLIC,
-        IPV6_PRIVACY_EXTENSIONS_YES,    /* aka prefer-temporary */
-        IPV6_PRIVACY_EXTENSIONS_KERNEL, /* keep the kernel's default value */
+        IPV6_PRIVACY_EXTENSIONS_YES, /* aka prefer-temporary */
         _IPV6_PRIVACY_EXTENSIONS_MAX,
         _IPV6_PRIVACY_EXTENSIONS_INVALID = -EINVAL,
 } IPv6PrivacyExtensions;

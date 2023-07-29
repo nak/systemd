@@ -17,15 +17,17 @@
 #include "proc-cmdline.h"
 #include "string-table.h"
 #include "string-util.h"
+#include "util.h"
 
 static int sethostname_idempotent_full(const char *s, bool really) {
-        struct utsname u;
+        char buf[HOST_NAME_MAX + 1];
 
         assert(s);
 
-        assert_se(uname(&u) >= 0);
+        if (gethostname(buf, sizeof(buf)) < 0)
+                return -errno;
 
-        if (streq_ptr(s, u.nodename))
+        if (streq(buf, s))
                 return 0;
 
         if (really &&
@@ -37,6 +39,26 @@ static int sethostname_idempotent_full(const char *s, bool really) {
 
 int sethostname_idempotent(const char *s) {
         return sethostname_idempotent_full(s, true);
+}
+
+bool get_hostname_filtered(char ret[static HOST_NAME_MAX + 1]) {
+        char buf[HOST_NAME_MAX + 1];
+
+        /* Returns true if we got a good hostname, false otherwise. */
+
+        if (gethostname(buf, sizeof(buf)) < 0)
+                return false;  /* This can realistically only fail with ENAMETOOLONG.
+                                * Let's treat that case the same as an invalid hostname. */
+
+        if (isempty(buf))
+                return false;
+
+        /* This is the built-in kernel default hostname */
+        if (streq(buf, "(none)"))
+                return false;
+
+        memcpy(ret, buf, sizeof buf);
+        return true;
 }
 
 int shorten_overlong(const char *s, char **ret) {
@@ -150,7 +172,7 @@ int hostname_setup(bool really) {
         if (r < 0)
                 log_warning_errno(r, "Failed to retrieve system hostname from kernel command line, ignoring: %m");
         else if (r > 0) {
-                if (hostname_is_valid(b, VALID_HOSTNAME_TRAILING_DOT)) {
+                if (hostname_is_valid(b, true)) {
                         hn = b;
                         source = HOSTNAME_TRANSIENT;
                 } else  {
@@ -173,14 +195,10 @@ int hostname_setup(bool really) {
         }
 
         if (!hn) {
-                _cleanup_free_ char *buf = NULL;
-
                 /* Don't override the hostname if it is already set and not explicitly configured */
 
-                r = gethostname_full(GET_HOSTNAME_ALLOW_LOCALHOST, &buf);
-                if (r == -ENOMEM)
-                        return log_oom();
-                if (r >= 0) {
+                char buf[HOST_NAME_MAX + 1] = {};
+                if (get_hostname_filtered(buf)) {
                         log_debug("No hostname configured, leaving existing hostname <%s> in place.", buf);
                         return 0;
                 }

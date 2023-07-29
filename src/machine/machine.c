@@ -8,7 +8,6 @@
 
 #include "alloc-util.h"
 #include "bus-error.h"
-#include "bus-locator.h"
 #include "bus-util.h"
 #include "env-file.h"
 #include "errno-util.h"
@@ -17,11 +16,10 @@
 #include "fd-util.h"
 #include "fileio.h"
 #include "format-util.h"
-#include "fs-util.h"
 #include "hashmap.h"
 #include "machine-dbus.h"
 #include "machine.h"
-#include "mkdir-label.h"
+#include "mkdir.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "process-util.h"
@@ -33,17 +31,14 @@
 #include "tmpfile-util.h"
 #include "unit-name.h"
 #include "user-util.h"
+#include "util.h"
 
-DEFINE_TRIVIAL_CLEANUP_FUNC(Machine*, machine_free);
-
-int machine_new(Manager *manager, MachineClass class, const char *name, Machine **ret) {
-        _cleanup_(machine_freep) Machine *m = NULL;
-        int r;
+Machine* machine_new(Manager *manager, MachineClass class, const char *name) {
+        Machine *m;
 
         assert(manager);
         assert(class < _MACHINE_CLASS_MAX);
         assert(name);
-        assert(ret);
 
         /* Passing class == _MACHINE_CLASS_INVALID here is fine. It
          * means as much as "we don't know yet", and that we'll figure
@@ -51,28 +46,31 @@ int machine_new(Manager *manager, MachineClass class, const char *name, Machine 
 
         m = new0(Machine, 1);
         if (!m)
-                return -ENOMEM;
+                return NULL;
 
         m->name = strdup(name);
         if (!m->name)
-                return -ENOMEM;
+                goto fail;
 
         if (class != MACHINE_HOST) {
                 m->state_file = path_join("/run/systemd/machines", m->name);
                 if (!m->state_file)
-                        return -ENOMEM;
+                        goto fail;
         }
 
         m->class = class;
 
-        r = hashmap_put(manager->machines, m->name, m);
-        if (r < 0)
-                return r;
+        if (hashmap_put(manager->machines, m->name, m) < 0)
+                goto fail;
 
         m->manager = manager;
 
-        *ret = TAKE_PTR(m);
-        return 0;
+        return m;
+
+fail:
+        free(m->state_file);
+        free(m->name);
+        return mfree(m);
 }
 
 Machine* machine_free(Machine *m) {
@@ -108,7 +106,7 @@ Machine* machine_free(Machine *m) {
 }
 
 int machine_save(Machine *m) {
-        _cleanup_(unlink_and_freep) char *temp_path = NULL;
+        _cleanup_free_ char *temp_path = NULL;
         _cleanup_fclose_ FILE *f = NULL;
         int r;
 
@@ -212,8 +210,6 @@ int machine_save(Machine *m) {
                 goto fail;
         }
 
-        temp_path = mfree(temp_path);
-
         if (m->unit) {
                 char *sl;
 
@@ -228,6 +224,9 @@ int machine_save(Machine *m) {
 
 fail:
         (void) unlink(m->state_file);
+
+        if (temp_path)
+                (void) unlink(temp_path);
 
         return log_error_errno(r, "Failed to save machine data %s: %m", m->state_file);
 }
@@ -266,10 +265,12 @@ int machine_load(Machine *m) {
                            "REALTIME",  &realtime,
                            "MONOTONIC", &monotonic,
                            "NETIF",     &netif);
-        if (r == -ENOENT)
-                return 0;
-        if (r < 0)
+        if (r < 0) {
+                if (r == -ENOENT)
+                        return 0;
+
                 return log_error_errno(r, "Failed to read %s: %m", m->state_file);
+        }
 
         if (id)
                 sd_id128_from_string(id, &m->id);
@@ -348,10 +349,12 @@ static int machine_start_scope(
         if (!unit)
                 return log_oom();
 
-        r = bus_message_new_method_call(
+        r = sd_bus_message_new_method_call(
                         machine->manager->bus,
                         &m,
-                        bus_systemd_mgr,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
                         "StartTransientUnit");
         if (r < 0)
                 return r;
@@ -572,8 +575,14 @@ int machine_kill(Machine *m, KillWho who, int signo) {
         if (!m->unit)
                 return -ESRCH;
 
-        if (who == KILL_LEADER) /* If we shall simply kill the leader, do so directly */
-                return RET_NERRNO(kill(m->leader, signo));
+        if (who == KILL_LEADER) {
+                /* If we shall simply kill the leader, do so directly */
+
+                if (kill(m->leader, signo) < 0)
+                        return -errno;
+
+                return 0;
+        }
 
         /* Otherwise, make PID 1 do it for us, for the entire cgroup */
         return manager_kill_unit(m->manager, m->unit, signo, NULL);

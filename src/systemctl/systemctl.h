@@ -5,7 +5,6 @@
 
 #include "bus-print-properties.h"
 #include "bus-util.h"
-#include "image-policy.h"
 #include "install.h"
 #include "output-mode.h"
 #include "pager.h"
@@ -16,7 +15,6 @@ enum action {
         ACTION_POWEROFF,
         ACTION_REBOOT,
         ACTION_KEXEC,
-        ACTION_SOFT_REBOOT,
         ACTION_EXIT,
         ACTION_SUSPEND,
         ACTION_HIBERNATE,
@@ -34,7 +32,6 @@ enum action {
         ACTION_RUNLEVEL,
         ACTION_TELINIT,
         ACTION_CANCEL_SHUTDOWN,
-        ACTION_SHOW_SHUTDOWN,
         _ACTION_MAX,
         _ACTION_INVALID = -EINVAL,
 };
@@ -53,7 +50,7 @@ extern char **arg_properties;
 extern bool arg_all;
 extern enum dependency arg_dependency;
 extern const char *_arg_job_mode;
-extern RuntimeScope arg_runtime_scope;
+extern UnitFileScope arg_scope;
 extern bool arg_wait;
 extern bool arg_no_block;
 extern int arg_legend;
@@ -67,7 +64,6 @@ extern bool arg_show_types;
 extern int arg_check_inhibitors;
 extern bool arg_dry_run;
 extern bool arg_quiet;
-extern bool arg_no_warn;
 extern bool arg_full;
 extern bool arg_recursive;
 extern bool arg_with_dependencies;
@@ -77,10 +73,8 @@ extern bool arg_ask_password;
 extern bool arg_runtime;
 extern UnitFilePresetMode arg_preset_mode;
 extern char **arg_wall;
-extern const char *arg_kill_whom;
+extern const char *arg_kill_who;
 extern int arg_signal;
-extern int arg_kill_value;
-extern bool arg_kill_value_set;
 extern char *arg_root;
 extern usec_t arg_when;
 extern const char *arg_reboot_argument;
@@ -101,8 +95,6 @@ extern TimestampStyle arg_timestamp_style;
 extern bool arg_read_only;
 extern bool arg_mkdir;
 extern bool arg_marked;
-extern const char *arg_drop_in;
-extern ImagePolicy *arg_image_policy;
 
 static inline const char* arg_job_mode(void) {
         return _arg_job_mode ?: "replace";

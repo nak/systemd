@@ -14,7 +14,7 @@
 #include "log.h"
 #include "macro.h"
 #include "missing_socket.h"
-#include "mkdir-label.h"
+#include "mkdir.h"
 #include "selinux-util.h"
 #include "socket-util.h"
 #include "umask-util.h"
@@ -32,7 +32,7 @@ int socket_address_listen(
                 mode_t socket_mode,
                 const char *label) {
 
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *p;
         int r;
 
@@ -51,13 +51,14 @@ int socket_address_listen(
                         return r;
         }
 
-        fd = RET_NERRNO(socket(socket_address_family(a), a->type | flags, a->protocol));
+        fd = socket(socket_address_family(a), a->type | flags, a->protocol);
+        r = fd < 0 ? -errno : 0;
 
         if (label)
                 mac_selinux_create_socket_clear();
 
-        if (fd < 0)
-                return fd;
+        if (r < 0)
+                return r;
 
         if (socket_address_family(a) == AF_INET6 && only != SOCKET_ADDRESS_DEFAULT) {
                 r = setsockopt_int(fd, IPPROTO_IPV6, IPV6_V6ONLY, only == SOCKET_ADDRESS_IPV6_ONLY);
@@ -101,7 +102,7 @@ int socket_address_listen(
                 (void) mkdir_parents_label(p, directory_mode);
 
                 /* Enforce the right access mode for the socket */
-                WITH_UMASK(~socket_mode) {
+                RUN_WITH_UMASK(~socket_mode) {
                         r = mac_selinux_bind(fd, &a->sockaddr.sa, a->size);
                         if (r == -EADDRINUSE) {
                                 /* Unlink and try again */

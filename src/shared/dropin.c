@@ -6,13 +6,13 @@
 #include <stdlib.h>
 
 #include "alloc-util.h"
-#include "chase.h"
 #include "conf-files.h"
 #include "dirent-util.h"
 #include "dropin.h"
 #include "escape.h"
 #include "fd-util.h"
 #include "fileio-label.h"
+#include "fs-util.h"
 #include "hashmap.h"
 #include "log.h"
 #include "macro.h"
@@ -105,7 +105,7 @@ static int unit_file_add_dir(
 
         /* This adds [original_root]/path to dirs, if it exists. */
 
-        r = chase(path, original_root, 0, &chased, NULL);
+        r = chase_symlinks(path, original_root, 0, &chased, NULL);
         if (r == -ENOENT) /* Ignore -ENOENT, after all most units won't have a drop-in dir. */
                 return 0;
         if (r == -ENAMETOOLONG) {
@@ -232,6 +232,7 @@ int unit_file_find_dropin_paths(
 
         _cleanup_strv_free_ char **dirs = NULL;
         const char *n;
+        char **p;
         int r;
 
         assert(ret);

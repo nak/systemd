@@ -10,24 +10,25 @@
 #include "sd-daemon.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "bus-internal.h"
 #include "bus-util.h"
 #include "errno-util.h"
 #include "io-util.h"
 #include "log.h"
 #include "main-func.h"
+#include "util.h"
 #include "version.h"
 
 #define DEFAULT_BUS_PATH "unix:path=/run/dbus/system_bus_socket"
 
 static const char *arg_bus_path = DEFAULT_BUS_PATH;
 static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static RuntimeScope arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
+static bool arg_user = false;
 
 static int help(void) {
+
         printf("%s [OPTIONS...]\n\n"
-               "Forward messages between a pipe or socket and a D-Bus bus.\n\n"
+               "STDIO or socket-activatable proxy to a given DBus endpoint.\n\n"
                "  -h --help              Show this help\n"
                "     --version           Show package version\n"
                "  -p --bus-path=PATH     Path to the bus address (default: %s)\n"
@@ -40,6 +41,7 @@ static int help(void) {
 }
 
 static int parse_argv(int argc, char *argv[]) {
+
         enum {
                 ARG_VERSION = 0x100,
                 ARG_MACHINE,
@@ -62,7 +64,7 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
-        while ((c = getopt_long(argc, argv, "hp:M:", options, NULL)) >= 0)
+        while ((c = getopt_long(argc, argv, "hp:M:", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -73,11 +75,11 @@ static int parse_argv(int argc, char *argv[]) {
                         return version();
 
                 case ARG_USER:
-                        arg_runtime_scope = RUNTIME_SCOPE_USER;
+                        arg_user = true;
                         break;
 
                 case ARG_SYSTEM:
-                        arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
+                        arg_user = false;
                         break;
 
                 case 'p':
@@ -96,6 +98,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                                "Unknown option code %c", c);
                 }
+        }
 
         return 1;
 }
@@ -122,7 +125,7 @@ static int run(int argc, char *argv[]) {
                 in_fd = SD_LISTEN_FDS_START;
                 out_fd = SD_LISTEN_FDS_START;
         } else
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "More than one file descriptor was passed.");
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Illegal number of file descriptors passed.");
 
         is_unix =
                 sd_is_socket(in_fd, AF_UNIX, 0, 0) > 0 &&
@@ -133,7 +136,7 @@ static int run(int argc, char *argv[]) {
                 return log_error_errno(r, "Failed to allocate bus: %m");
 
         if (arg_transport == BUS_TRANSPORT_MACHINE)
-                r = bus_set_address_machine(a, arg_runtime_scope, arg_bus_path);
+                r = bus_set_address_machine(a, arg_user, arg_bus_path);
         else
                 r = sd_bus_set_address(a, arg_bus_path);
         if (r < 0)
@@ -242,11 +245,8 @@ static int run(int argc, char *argv[]) {
                 };
 
                 r = ppoll_usec(p, ELEMENTSOF(p), t);
-                if (r < 0) {
-                        if (ERRNO_IS_TRANSIENT(r)) /* don't be bothered by signals, i.e. EINTR */
-                                continue;
+                if (r < 0)
                         return log_error_errno(r, "ppoll() failed: %m");
-                }
         }
 
         return 0;

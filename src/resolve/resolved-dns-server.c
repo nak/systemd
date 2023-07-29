@@ -90,7 +90,7 @@ int dns_server_new(
                 break;
 
         default:
-                assert_not_reached();
+                assert_not_reached("Unknown server type");
         }
 
         s->linked = true;
@@ -158,7 +158,7 @@ void dns_server_unlink(DnsServer *s) {
                 s->manager->n_dns_servers--;
                 break;
         default:
-                assert_not_reached();
+                assert_not_reached("Unknown server type");
         }
 
         s->linked = false;
@@ -195,25 +195,25 @@ void dns_server_move_back_and_unmark(DnsServer *s) {
 
         case DNS_SERVER_LINK:
                 assert(s->link);
-                tail = LIST_FIND_TAIL(servers, s);
+                LIST_FIND_TAIL(servers, s, tail);
                 LIST_REMOVE(servers, s->link->dns_servers, s);
                 LIST_INSERT_AFTER(servers, s->link->dns_servers, tail, s);
                 break;
 
         case DNS_SERVER_SYSTEM:
-                tail = LIST_FIND_TAIL(servers, s);
+                LIST_FIND_TAIL(servers, s, tail);
                 LIST_REMOVE(servers, s->manager->dns_servers, s);
                 LIST_INSERT_AFTER(servers, s->manager->dns_servers, tail, s);
                 break;
 
         case DNS_SERVER_FALLBACK:
-                tail = LIST_FIND_TAIL(servers, s);
+                LIST_FIND_TAIL(servers, s, tail);
                 LIST_REMOVE(servers, s->manager->fallback_dns_servers, s);
                 LIST_INSERT_AFTER(servers, s->manager->fallback_dns_servers, tail, s);
                 break;
 
         default:
-                assert_not_reached();
+                assert_not_reached("Unknown server type");
         }
 }
 
@@ -230,7 +230,7 @@ static void dns_server_verified(DnsServer *s, DnsServerFeatureLevel level) {
                 s->verified_feature_level = level;
         }
 
-        assert_se(sd_event_now(s->manager->event, CLOCK_BOOTTIME, &s->verified_usec) >= 0);
+        assert_se(sd_event_now(s->manager->event, clock_boottime_or_monotonic(), &s->verified_usec) >= 0);
 }
 
 static void dns_server_reset_counters(DnsServer *s) {
@@ -405,7 +405,7 @@ static bool dns_server_grace_period_expired(DnsServer *s) {
         if (s->verified_usec == 0)
                 return false;
 
-        assert_se(sd_event_now(s->manager->event, CLOCK_BOOTTIME, &ts) >= 0);
+        assert_se(sd_event_now(s->manager->event, clock_boottime_or_monotonic(), &ts) >= 0);
 
         if (s->verified_usec + s->features_grace_period_usec > ts)
                 return false;
@@ -542,7 +542,7 @@ DnsServerFeatureLevel dns_server_possible_feature_level(DnsServer *s) {
                            DNS_SERVER_FEATURE_LEVEL_IS_UDP(s->possible_feature_level) &&
                            ((s->possible_feature_level != DNS_SERVER_FEATURE_LEVEL_DO) || dns_server_get_dnssec_mode(s) != DNSSEC_YES)) {
 
-                        /* We lost too many UDP packets in a row, and are on a UDP feature level. If the
+                        /* We lost too many UDP packets in a row, and are on an UDP feature level. If the
                          * packets are lost, maybe the server cannot parse them, hence downgrading sounds
                          * like a good idea. We might downgrade all the way down to TCP this way.
                          *
@@ -648,11 +648,6 @@ int dns_server_adjust_opt(DnsServer *server, DnsPacket *packet, DnsServerFeature
 int dns_server_ifindex(const DnsServer *s) {
         assert(s);
 
-        /* For loopback addresses, go via the loopback interface, regardless which interface this is linked
-         * to. */
-        if (in_addr_is_localhost(s->family, &s->address))
-                return LOOPBACK_IFINDEX;
-
         /* The link ifindex always takes precedence */
         if (s->link)
                 return s->link->ifindex;
@@ -731,8 +726,7 @@ void dns_server_warn_downgrade(DnsServer *server) {
 
         log_struct(LOG_NOTICE,
                    "MESSAGE_ID=" SD_MESSAGE_DNSSEC_DOWNGRADE_STR,
-                   LOG_MESSAGE("Server %s does not support DNSSEC, downgrading to non-DNSSEC mode.",
-                               strna(dns_server_string_full(server))),
+                   LOG_MESSAGE("Server %s does not support DNSSEC, downgrading to non-DNSSEC mode.", strna(dns_server_string_full(server))),
                    "DNS_SERVER=%s", strna(dns_server_string_full(server)),
                    "DNS_SERVER_FEATURE_LEVEL=%s", dns_server_feature_level_to_string(server->possible_feature_level));
 
@@ -821,6 +815,8 @@ void dns_server_mark_all(DnsServer *server) {
 }
 
 DnsServer *dns_server_find(DnsServer *first, int family, const union in_addr_union *in_addr, uint16_t port, int ifindex, const char *name) {
+        DnsServer *s;
+
         LIST_FOREACH(servers, s, first)
                 if (s->family == family &&
                     in_addr_equal(family, &s->address, in_addr) > 0 &&
@@ -879,17 +875,8 @@ DnsServer *manager_get_dns_server(Manager *m) {
         manager_read_resolv_conf(m);
 
         /* If no DNS server was chosen so far, pick the first one */
-        if (!m->current_dns_server ||
-            /* In case m->current_dns_server != m->dns_servers */
-            manager_server_is_stub(m, m->current_dns_server))
+        if (!m->current_dns_server)
                 manager_set_dns_server(m, m->dns_servers);
-
-        while (m->current_dns_server &&
-               manager_server_is_stub(m, m->current_dns_server)) {
-                manager_next_dns_server(m, NULL);
-                if (m->current_dns_server == m->dns_servers)
-                        manager_set_dns_server(m, NULL);
-        }
 
         if (!m->current_dns_server) {
                 bool found = false;
@@ -996,6 +983,8 @@ void dns_server_reset_features(DnsServer *s) {
 }
 
 void dns_server_reset_features_all(DnsServer *s) {
+        DnsServer *i;
+
         LIST_FOREACH(servers, i, s)
                 dns_server_reset_features(i);
 }
@@ -1092,6 +1081,6 @@ static const char* const dns_server_feature_level_table[_DNS_SERVER_FEATURE_LEVE
         [DNS_SERVER_FEATURE_LEVEL_EDNS0]     = "UDP+EDNS0",
         [DNS_SERVER_FEATURE_LEVEL_TLS_PLAIN] = "TLS+EDNS0",
         [DNS_SERVER_FEATURE_LEVEL_DO]        = "UDP+EDNS0+DO",
-        [DNS_SERVER_FEATURE_LEVEL_TLS_DO]    = "TLS+EDNS0+DO",
+        [DNS_SERVER_FEATURE_LEVEL_TLS_DO]    = "TLS+EDNS0+D0",
 };
 DEFINE_STRING_TABLE_LOOKUP(dns_server_feature_level, DnsServerFeatureLevel);

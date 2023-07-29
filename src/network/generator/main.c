@@ -2,9 +2,7 @@
 
 #include <getopt.h>
 
-#include "build.h"
 #include "fd-util.h"
-#include "fs-util.h"
 #include "generator.h"
 #include "macro.h"
 #include "main-func.h"
@@ -18,83 +16,66 @@
 static const char *arg_root = NULL;
 
 static int network_save(Network *network, const char *dest_dir) {
-        _cleanup_(unlink_and_freep) char *temp_path = NULL;
+        _cleanup_free_ char *filename = NULL;
         _cleanup_fclose_ FILE *f = NULL;
-        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(network);
 
-        r = generator_open_unit_file_full(dest_dir, NULL, NULL, &f, &temp_path);
+        r = asprintf(&filename, "%s-%s.network",
+                     isempty(network->ifname) ? "91" : "90",
+                     isempty(network->ifname) ? "default" : network->ifname);
+        if (r < 0)
+                return log_oom();
+
+        r = generator_open_unit_file(dest_dir, "kernel command line", filename, &f);
         if (r < 0)
                 return r;
 
         network_dump(network, f);
 
-        if (asprintf(&p, "%s/%s-%s.network",
-                     dest_dir,
-                     isempty(network->ifname) ? "91" : "90",
-                     isempty(network->ifname) ? "default" : network->ifname) < 0)
-                return log_oom();
-
-        r = conservative_rename(temp_path, p);
-        if (r < 0)
-                return r;
-
-        temp_path = mfree(temp_path);
         return 0;
 }
 
 static int netdev_save(NetDev *netdev, const char *dest_dir) {
-        _cleanup_(unlink_and_freep) char *temp_path = NULL;
+        _cleanup_free_ char *filename = NULL;
         _cleanup_fclose_ FILE *f = NULL;
-        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(netdev);
 
-        r = generator_open_unit_file_full(dest_dir, NULL, NULL, &f, &temp_path);
+        r = asprintf(&filename, "90-%s.netdev",
+                     netdev->ifname);
+        if (r < 0)
+                return log_oom();
+
+        r = generator_open_unit_file(dest_dir, "kernel command line", filename, &f);
         if (r < 0)
                 return r;
 
         netdev_dump(netdev, f);
 
-        if (asprintf(&p, "%s/90-%s.netdev", dest_dir, netdev->ifname) < 0)
-                return log_oom();
-
-        r = conservative_rename(temp_path, p);
-        if (r < 0)
-                return r;
-
-        temp_path = mfree(temp_path);
         return 0;
 }
 
 static int link_save(Link *link, const char *dest_dir) {
-        _cleanup_(unlink_and_freep) char *temp_path = NULL;
+        _cleanup_free_ char *filename = NULL;
         _cleanup_fclose_ FILE *f = NULL;
-        _cleanup_free_ char *p = NULL;
         int r;
 
         assert(link);
 
-        r = generator_open_unit_file_full(dest_dir, NULL, NULL, &f, &temp_path);
+        r = asprintf(&filename, "90-%s.link",
+                     link->ifname);
+        if (r < 0)
+                return log_oom();
+
+        r = generator_open_unit_file(dest_dir, "kernel command line", filename, &f);
         if (r < 0)
                 return r;
 
         link_dump(link, f);
 
-        if (asprintf(&p, "%s/%s-%s.link",
-                     dest_dir,
-                     !isempty(link->ifname) ? "90" : !hw_addr_is_null(&link->mac) ? "91" : "92",
-                     link->filename) < 0)
-                return log_oom();
-
-        r = conservative_rename(temp_path, p);
-        if (r < 0)
-                return r;
-
-        temp_path = mfree(temp_path);
         return 0;
 }
 
@@ -123,7 +104,7 @@ static int context_save(Context *context) {
                         r = k;
         }
 
-        HASHMAP_FOREACH(link, context->links_by_filename) {
+        HASHMAP_FOREACH(link, context->links_by_name) {
                 k = link_save(link, p);
                 if (k < 0 && r >= 0)
                         r = k;
@@ -176,7 +157,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         return 1;
@@ -185,10 +166,6 @@ static int parse_argv(int argc, char *argv[]) {
 static int run(int argc, char *argv[]) {
         _cleanup_(context_clear) Context context = {};
         int r;
-
-        log_setup();
-
-        umask(0022);
 
         r = parse_argv(argc, argv);
         if (r <= 0)

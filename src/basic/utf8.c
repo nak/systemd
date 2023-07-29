@@ -90,7 +90,7 @@ int utf8_encoded_to_unichar(const char *str, char32_t *ret_unichar) {
         switch (len) {
         case 1:
                 *ret_unichar = (char32_t)str[0];
-                return 1;
+                return 0;
         case 2:
                 unichar = str[0] & 0x1f;
                 break;
@@ -119,14 +119,17 @@ int utf8_encoded_to_unichar(const char *str, char32_t *ret_unichar) {
         }
 
         *ret_unichar = unichar;
-        return len;
+
+        return 0;
 }
 
 bool utf8_is_printable_newline(const char* str, size_t length, bool allow_newline) {
+        const char *p;
+
         assert(str);
 
-        for (const char *p = str; length > 0;) {
-                int encoded_len;
+        for (p = str; length > 0;) {
+                int encoded_len, r;
                 char32_t val;
 
                 encoded_len = utf8_encoded_valid_unichar(p, length);
@@ -134,7 +137,8 @@ bool utf8_is_printable_newline(const char* str, size_t length, bool allow_newlin
                         return false;
                 assert(encoded_len > 0 && (size_t) encoded_len <= length);
 
-                if (utf8_encoded_to_unichar(p, &val) < 0 ||
+                r = utf8_encoded_to_unichar(p, &val);
+                if (r < 0 ||
                     unichar_is_control(val) ||
                     (!allow_newline && val == '\n'))
                         return false;
@@ -285,12 +289,14 @@ char *utf8_escape_non_printable_full(const char *str, size_t console_width, bool
 }
 
 char *ascii_is_valid(const char *str) {
+        const char *p;
+
         /* Check whether the string consists of valid ASCII bytes,
          * i.e values between 0 and 127, inclusive. */
 
         assert(str);
 
-        for (const char *p = str; *p; p++)
+        for (p = str; *p; p++)
                 if ((unsigned char) *p >= 128)
                         return NULL;
 
@@ -308,37 +314,6 @@ char *ascii_is_valid_n(const char *str, size_t len) {
                         return NULL;
 
         return (char*) str;
-}
-
-int utf8_to_ascii(const char *str, char replacement_char, char **ret) {
-        /* Convert to a string that has only ASCII chars, replacing anything that is not ASCII
-         * by replacement_char. */
-
-        _cleanup_free_ char *ans = new(char, strlen(str) + 1);
-        if (!ans)
-                return -ENOMEM;
-
-        char *q = ans;
-
-        for (const char *p = str; *p; q++) {
-                int l;
-
-                l = utf8_encoded_valid_unichar(p, SIZE_MAX);
-                if (l < 0)  /* Non-UTF-8, let's not even try to propagate the garbage */
-                        return l;
-
-                if (l == 1)
-                        *q = *p;
-                else
-                        /* non-ASCII, we need to replace it */
-                        *q = replacement_char;
-
-                p += l;
-        }
-        *q = '\0';
-
-        *ret = TAKE_PTR(ans);
-        return 0;
 }
 
 /**

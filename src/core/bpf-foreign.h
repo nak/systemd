@@ -1,13 +1,10 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-2.1+ */
 
 #pragma once
 
 #include "unit.h"
 
-static inline int bpf_foreign_supported(void) {
-        return cg_all_unified();
-}
-
+int bpf_foreign_supported(void);
 /*
  * Attach cgroup-bpf programs foreign to systemd, i.e. loaded to the kernel by an entity
  * external to systemd.

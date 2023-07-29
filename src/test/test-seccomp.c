@@ -46,7 +46,7 @@ static bool have_seccomp_privs(void) {
         return geteuid() == 0 && have_effective_cap(CAP_SYS_ADMIN) > 0; /* If we are root but CAP_SYS_ADMIN we can't do caps (unless we also do NNP) */
 }
 
-TEST(parse_syscall_and_errno) {
+static void test_parse_syscall_and_errno(void) {
         _cleanup_free_ char *n = NULL;
         int e;
 
@@ -104,9 +104,11 @@ TEST(parse_syscall_and_errno) {
         assert_se(parse_syscall_and_errno("hoge:", &n, &e) == -EINVAL);
 }
 
-TEST(seccomp_arch_to_string) {
+static void test_seccomp_arch_to_string(void) {
         uint32_t a, b;
         const char *name;
+
+        log_info("/* %s */", __func__);
 
         a = seccomp_arch_native();
         assert_se(a > 0);
@@ -116,8 +118,10 @@ TEST(seccomp_arch_to_string) {
         assert_se(a == b);
 }
 
-TEST(architecture_table) {
-        const char *n2;
+static void test_architecture_table(void) {
+        const char *n, *n2;
+
+        log_info("/* %s */", __func__);
 
         NULSTR_FOREACH(n,
                        "native\0"
@@ -132,8 +136,6 @@ TEST(architecture_table) {
                        "mips-le\0"
                        "mips64-le\0"
                        "mips64-le-n32\0"
-                       "parisc\0"
-                       "parisc64\0"
                        "ppc\0"
                        "ppc64\0"
                        "ppc64-le\0"
@@ -151,7 +153,9 @@ TEST(architecture_table) {
         }
 }
 
-TEST(syscall_filter_set_find) {
+static void test_syscall_filter_set_find(void) {
+        log_info("/* %s */", __func__);
+
         assert_se(!syscall_filter_set_find(NULL));
         assert_se(!syscall_filter_set_find(""));
         assert_se(!syscall_filter_set_find("quux"));
@@ -162,7 +166,9 @@ TEST(syscall_filter_set_find) {
         assert_se(syscall_filter_set_find("@raw-io") == syscall_filter_sets + SYSCALL_FILTER_SET_RAW_IO);
 }
 
-TEST(filter_sets) {
+static void test_filter_sets(void) {
+        log_info("/* %s */", __func__);
+
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
                 return;
@@ -224,7 +230,9 @@ TEST(filter_sets) {
         }
 }
 
-TEST(filter_sets_ordered) {
+static void test_filter_sets_ordered(void) {
+        log_info("/* %s */", __func__);
+
         /* Ensure "@default" always remains at the beginning of the list */
         assert_se(SYSCALL_FILTER_SET_DEFAULT == 0);
         assert_se(streq(syscall_filter_sets[0].name, "@default"));
@@ -234,7 +242,7 @@ TEST(filter_sets_ordered) {
         assert_se(streq(syscall_filter_sets[SYSCALL_FILTER_SET_KNOWN].name, "@known"));
 
         for (size_t i = 0; i < _SYSCALL_FILTER_SET_MAX; i++) {
-                const char *p = NULL;
+                const char *k, *p = NULL;
 
                 /* Make sure each group has a description */
                 assert_se(!isempty(syscall_filter_sets[0].help));
@@ -257,7 +265,7 @@ TEST(filter_sets_ordered) {
         }
 }
 
-TEST(restrict_namespace) {
+static void test_restrict_namespace(void) {
         char *s = NULL;
         unsigned long ul;
         pid_t pid;
@@ -266,6 +274,8 @@ TEST(restrict_namespace) {
                 log_notice("Testing without namespaces, skipping %s", __func__);
                 return;
         }
+
+        log_info("/* %s */", __func__);
 
         assert_se(namespace_flags_to_string(0, &s) == 0 && isempty(s));
         s = mfree(s);
@@ -358,9 +368,11 @@ TEST(restrict_namespace) {
         assert_se(wait_for_terminate_and_check("nsseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(protect_sysctl) {
+static void test_protect_sysctl(void) {
         pid_t pid;
         _cleanup_free_ char *seccomp = NULL;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -410,8 +422,10 @@ TEST(protect_sysctl) {
         assert_se(wait_for_terminate_and_check("sysctlseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(protect_syslog) {
+static void test_protect_syslog(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -450,8 +464,10 @@ TEST(protect_syslog) {
         assert_se(wait_for_terminate_and_check("syslogseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(restrict_address_families) {
+static void test_restrict_address_families(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -537,8 +553,10 @@ TEST(restrict_address_families) {
         assert_se(wait_for_terminate_and_check("socketseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(restrict_realtime) {
+static void test_restrict_realtime(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -559,32 +577,22 @@ TEST(restrict_realtime) {
         assert_se(pid >= 0);
 
         if (pid == 0) {
-                /* On some CI environments, the restriction may be already enabled. */
-                if (sched_setscheduler(0, SCHED_FIFO, &(struct sched_param) { .sched_priority = 1 }) < 0) {
-                        log_full_errno(errno == EPERM ? LOG_DEBUG : LOG_WARNING, errno,
-                                       "Failed to set scheduler parameter for FIFO: %m");
-                        assert(errno == EPERM);
-                }
-                if (sched_setscheduler(0, SCHED_RR, &(struct sched_param) { .sched_priority = 1 }) < 0) {
-                        log_full_errno(errno == EPERM ? LOG_DEBUG : LOG_WARNING, errno,
-                                       "Failed to set scheduler parameter for RR: %m");
-                        assert(errno == EPERM);
-                }
-
+                assert_se(sched_setscheduler(0, SCHED_FIFO, &(struct sched_param) { .sched_priority = 1 }) >= 0);
+                assert_se(sched_setscheduler(0, SCHED_RR, &(struct sched_param) { .sched_priority = 1 }) >= 0);
                 assert_se(sched_setscheduler(0, SCHED_IDLE, &(struct sched_param) { .sched_priority = 0 }) >= 0);
                 assert_se(sched_setscheduler(0, SCHED_BATCH, &(struct sched_param) { .sched_priority = 0 }) >= 0);
                 assert_se(sched_setscheduler(0, SCHED_OTHER, &(struct sched_param) {}) >= 0);
 
-                assert_se(seccomp_restrict_realtime_full(ENOANO) >= 0);
+                assert_se(seccomp_restrict_realtime() >= 0);
 
                 assert_se(sched_setscheduler(0, SCHED_IDLE, &(struct sched_param) { .sched_priority = 0 }) >= 0);
                 assert_se(sched_setscheduler(0, SCHED_BATCH, &(struct sched_param) { .sched_priority = 0 }) >= 0);
                 assert_se(sched_setscheduler(0, SCHED_OTHER, &(struct sched_param) {}) >= 0);
 
                 assert_se(sched_setscheduler(0, SCHED_FIFO, &(struct sched_param) { .sched_priority = 1 }) < 0);
-                assert_se(errno == ENOANO);
+                assert_se(errno == EPERM);
                 assert_se(sched_setscheduler(0, SCHED_RR, &(struct sched_param) { .sched_priority = 1 }) < 0);
-                assert_se(errno == ENOANO);
+                assert_se(errno == EPERM);
 
                 _exit(EXIT_SUCCESS);
         }
@@ -592,8 +600,10 @@ TEST(restrict_realtime) {
         assert_se(wait_for_terminate_and_check("realtimeseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(memory_deny_write_execute_mmap) {
+static void test_memory_deny_write_execute_mmap(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -650,10 +660,12 @@ TEST(memory_deny_write_execute_mmap) {
         assert_se(wait_for_terminate_and_check("memoryseccomp-mmap", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(memory_deny_write_execute_shmat) {
+static void test_memory_deny_write_execute_shmat(void) {
         int shmid;
         pid_t pid;
         uint32_t arch;
+
+        log_info("/* %s */", __func__);
 
         SECCOMP_FOREACH_LOCAL_ARCH(arch) {
                 log_debug("arch %s: SCMP_SYS(mmap) = %d", seccomp_arch_to_string(arch), SCMP_SYS(mmap));
@@ -667,7 +679,7 @@ TEST(memory_deny_write_execute_shmat) {
                 log_notice("Seccomp not available, skipping %s", __func__);
                 return;
         }
-        if (!have_seccomp_privs() || have_effective_cap(CAP_IPC_OWNER) <= 0) {
+        if (!have_seccomp_privs()) {
                 log_notice("Not privileged, skipping %s", __func__);
                 return;
         }
@@ -723,8 +735,10 @@ TEST(memory_deny_write_execute_shmat) {
         assert_se(wait_for_terminate_and_check("memoryseccomp-shmat", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(restrict_archs) {
+static void test_restrict_archs(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -761,8 +775,10 @@ TEST(restrict_archs) {
         assert_se(wait_for_terminate_and_check("archseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(load_syscall_filter_set_raw) {
+static void test_load_syscall_filter_set_raw(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -874,8 +890,10 @@ TEST(load_syscall_filter_set_raw) {
         assert_se(wait_for_terminate_and_check("syscallrawseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(native_syscalls_filtered) {
+static void test_native_syscalls_filtered(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -932,9 +950,11 @@ TEST(native_syscalls_filtered) {
         assert_se(wait_for_terminate_and_check("nativeseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-TEST(lock_personality) {
+static void test_lock_personality(void) {
         unsigned long current;
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -946,15 +966,8 @@ TEST(lock_personality) {
         }
 
         assert_se(opinionated_personality(&current) >= 0);
-        /* On ppc64le sanitizers disable ASLR (i.e. by setting ADDR_NO_RANDOMIZE),
-         * which opinionated_personality() doesn't return. Let's tweak the current
-         * personality ourselves in such cases.
-         * See: https://github.com/llvm/llvm-project/commit/78f7a6eaa601bfdd6ae70ffd3da2254c21ff77f9
-         */
-        if (FLAGS_SET(safe_personality(PERSONALITY_INVALID), ADDR_NO_RANDOMIZE))
-                current |= ADDR_NO_RANDOMIZE;
 
-        log_info("current personality=0x%lX", current);
+        log_info("current personality=%lu", current);
 
         pid = fork();
         assert_se(pid >= 0);
@@ -964,14 +977,13 @@ TEST(lock_personality) {
 
                 assert_se((unsigned long) safe_personality(current) == current);
 
-                /* Note, we also test that safe_personality() works correctly, by checking whether errno is properly
+                /* Note, we also test that safe_personality() works correctly, by checkig whether errno is properly
                  * set, in addition to the return value */
                 errno = 0;
-                assert_se(safe_personality(PER_LINUX | MMAP_PAGE_ZERO) == -EPERM);
+                assert_se(safe_personality(PER_LINUX | ADDR_NO_RANDOMIZE) == -EPERM);
                 assert_se(errno == EPERM);
 
-                if (!FLAGS_SET(current, ADDR_NO_RANDOMIZE))
-                        assert_se(safe_personality(PER_LINUX | ADDR_NO_RANDOMIZE) == -EPERM);
+                assert_se(safe_personality(PER_LINUX | MMAP_PAGE_ZERO) == -EPERM);
                 assert_se(safe_personality(PER_LINUX | ADDR_COMPAT_LAYOUT) == -EPERM);
                 assert_se(safe_personality(PER_LINUX | READ_IMPLIES_EXEC) == -EPERM);
                 assert_se(safe_personality(PER_LINUX_32BIT) == -EPERM);
@@ -1003,8 +1015,10 @@ static int real_open(const char *path, int flags, mode_t mode) {
 #endif
 }
 
-TEST(restrict_suid_sgid) {
+static void test_restrict_suid_sgid(void) {
         pid_t pid;
+
+        log_info("/* %s */", __func__);
 
         if (!is_seccomp_available()) {
                 log_notice("Seccomp not available, skipping %s", __func__);
@@ -1020,7 +1034,7 @@ TEST(restrict_suid_sgid) {
 
         if (pid == 0) {
                 char path[] = "/tmp/suidsgidXXXXXX", dir[] = "/tmp/suidsgiddirXXXXXX";
-                int fd = -EBADF, k = -EBADF;
+                int fd = -1, k = -1;
                 const char *z;
 
                 fd = mkostemp_safe(path);
@@ -1199,4 +1213,27 @@ TEST(restrict_suid_sgid) {
         assert_se(wait_for_terminate_and_check("suidsgidseccomp", pid, WAIT_LOG) == EXIT_SUCCESS);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_parse_syscall_and_errno();
+        test_seccomp_arch_to_string();
+        test_architecture_table();
+        test_syscall_filter_set_find();
+        test_filter_sets();
+        test_filter_sets_ordered();
+        test_restrict_namespace();
+        test_protect_sysctl();
+        test_protect_syslog();
+        test_restrict_address_families();
+        test_restrict_realtime();
+        test_memory_deny_write_execute_mmap();
+        test_memory_deny_write_execute_shmat();
+        test_restrict_archs();
+        test_load_syscall_filter_set_raw();
+        test_native_syscalls_filtered();
+        test_lock_personality();
+        test_restrict_suid_sgid();
+
+        return 0;
+}

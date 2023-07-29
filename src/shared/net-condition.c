@@ -6,48 +6,45 @@
 #include "env-util.h"
 #include "log.h"
 #include "net-condition.h"
-#include "netif-util.h"
 #include "network-util.h"
 #include "socket-util.h"
 #include "string-table.h"
 #include "strv.h"
-#include "wifi-util.h"
 
 void net_match_clear(NetMatch *match) {
         if (!match)
                 return;
 
-        match->hw_addr = set_free(match->hw_addr);
-        match->permanent_hw_addr = set_free(match->permanent_hw_addr);
+        match->mac = set_free_free(match->mac);
+        match->permanent_mac = set_free_free(match->permanent_mac);
         match->path = strv_free(match->path);
         match->driver = strv_free(match->driver);
         match->iftype = strv_free(match->iftype);
-        match->kind = strv_free(match->kind);
         match->ifname = strv_free(match->ifname);
         match->property = strv_free(match->property);
-        match->wlan_iftype = strv_free(match->wlan_iftype);
+        match->wifi_iftype = strv_free(match->wifi_iftype);
         match->ssid = strv_free(match->ssid);
-        match->bssid = set_free(match->bssid);
+        match->bssid = set_free_free(match->bssid);
 }
 
 bool net_match_is_empty(const NetMatch *match) {
         assert(match);
 
         return
-                set_isempty(match->hw_addr) &&
-                set_isempty(match->permanent_hw_addr) &&
+                set_isempty(match->mac) &&
+                set_isempty(match->permanent_mac) &&
                 strv_isempty(match->path) &&
                 strv_isempty(match->driver) &&
                 strv_isempty(match->iftype) &&
-                strv_isempty(match->kind) &&
                 strv_isempty(match->ifname) &&
                 strv_isempty(match->property) &&
-                strv_isempty(match->wlan_iftype) &&
+                strv_isempty(match->wifi_iftype) &&
                 strv_isempty(match->ssid) &&
                 set_isempty(match->bssid);
 }
 
 static bool net_condition_test_strv(char * const *patterns, const char *string) {
+        char * const *p;
         bool match = false, has_positive_rule = false;
 
         if (strv_isempty(patterns))
@@ -78,6 +75,7 @@ static bool net_condition_test_ifname(char * const *patterns, const char *ifname
         if (net_condition_test_strv(patterns, ifname))
                 return true;
 
+        char * const *p;
         STRV_FOREACH(p, alternative_names)
                 if (net_condition_test_strv(patterns, *p))
                         return true;
@@ -86,6 +84,8 @@ static bool net_condition_test_ifname(char * const *patterns, const char *ifname
 }
 
 static int net_condition_test_property(char * const *match_property, sd_device *device) {
+        char * const *p;
+
         if (strv_isempty(match_property))
                 return true;
 
@@ -117,37 +117,66 @@ static int net_condition_test_property(char * const *match_property, sd_device *
         return true;
 }
 
+static const char *const wifi_iftype_table[NL80211_IFTYPE_MAX+1] = {
+        [NL80211_IFTYPE_ADHOC] = "ad-hoc",
+        [NL80211_IFTYPE_STATION] = "station",
+        [NL80211_IFTYPE_AP] = "ap",
+        [NL80211_IFTYPE_AP_VLAN] = "ap-vlan",
+        [NL80211_IFTYPE_WDS] = "wds",
+        [NL80211_IFTYPE_MONITOR] = "monitor",
+        [NL80211_IFTYPE_MESH_POINT] = "mesh-point",
+        [NL80211_IFTYPE_P2P_CLIENT] = "p2p-client",
+        [NL80211_IFTYPE_P2P_GO] = "p2p-go",
+        [NL80211_IFTYPE_P2P_DEVICE] = "p2p-device",
+        [NL80211_IFTYPE_OCB] = "ocb",
+        [NL80211_IFTYPE_NAN] = "nan",
+};
+
+DEFINE_PRIVATE_STRING_TABLE_LOOKUP_TO_STRING(wifi_iftype, enum nl80211_iftype);
+
 int net_match_config(
                 const NetMatch *match,
                 sd_device *device,
-                const struct hw_addr_data *hw_addr,
-                const struct hw_addr_data *permanent_hw_addr,
+                const struct ether_addr *mac,
+                const struct ether_addr *permanent_mac,
                 const char *driver,
                 unsigned short iftype,
-                const char *kind,
                 const char *ifname,
                 char * const *alternative_names,
-                enum nl80211_iftype wlan_iftype,
+                enum nl80211_iftype wifi_iftype,
                 const char *ssid,
                 const struct ether_addr *bssid) {
 
         _cleanup_free_ char *iftype_str = NULL;
         const char *path = NULL;
+        int r;
 
         assert(match);
 
-        if (net_get_type_string(device, iftype, &iftype_str) == -ENOMEM)
-                return -ENOMEM;
+        r = link_get_type_string(device, iftype, &iftype_str);
+        if (r == -ENOMEM)
+                return r;
 
-        if (device)
+        if (device) {
+                const char *mac_str;
+
                 (void) sd_device_get_property_value(device, "ID_PATH", &path);
+                if (!driver)
+                        (void) sd_device_get_property_value(device, "ID_NET_DRIVER", &driver);
+                if (!ifname)
+                        (void) sd_device_get_sysname(device, &ifname);
+                if (!mac &&
+                    sd_device_get_sysattr_value(device, "address", &mac_str) >= 0)
+                        mac = ether_aton(mac_str);
+        }
 
-        if (match->hw_addr && (!hw_addr || !set_contains(match->hw_addr, hw_addr)))
+        if (match->mac && (!mac || !set_contains(match->mac, mac)))
                 return false;
 
-        if (match->permanent_hw_addr &&
-            (!permanent_hw_addr ||
-             !set_contains(match->permanent_hw_addr, permanent_hw_addr)))
+        if (match->permanent_mac &&
+            (!permanent_mac ||
+             ether_addr_is_null(permanent_mac) ||
+             !set_contains(match->permanent_mac, permanent_mac)))
                 return false;
 
         if (!net_condition_test_strv(match->path, path))
@@ -159,16 +188,13 @@ int net_match_config(
         if (!net_condition_test_strv(match->iftype, iftype_str))
                 return false;
 
-        if (!net_condition_test_strv(match->kind, kind))
-                return false;
-
         if (!net_condition_test_ifname(match->ifname, ifname, alternative_names))
                 return false;
 
         if (!net_condition_test_property(match->property, device))
                 return false;
 
-        if (!net_condition_test_strv(match->wlan_iftype, nl80211_iftype_to_string(wlan_iftype)))
+        if (!net_condition_test_strv(match->wifi_iftype, wifi_iftype_to_string(wifi_iftype)))
                 return false;
 
         if (!net_condition_test_strv(match->ssid, ssid))
@@ -233,13 +259,15 @@ int config_parse_match_strv(
                 void *data,
                 void *userdata) {
 
-        const char *p = ASSERT_PTR(rvalue);
-        char ***sv = ASSERT_PTR(data);
+        const char *p = rvalue;
+        char ***sv = data;
         bool invert;
         int r;
 
         assert(filename);
         assert(lvalue);
+        assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *sv = strv_free(*sv);
@@ -288,13 +316,15 @@ int config_parse_match_ifnames(
                 void *data,
                 void *userdata) {
 
-        const char *p = ASSERT_PTR(rvalue);
-        char ***sv = ASSERT_PTR(data);
+        const char *p = rvalue;
+        char ***sv = data;
         bool invert;
         int r;
 
         assert(filename);
         assert(lvalue);
+        assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *sv = strv_free(*sv);
@@ -349,13 +379,15 @@ int config_parse_match_property(
                 void *data,
                 void *userdata) {
 
-        const char *p = ASSERT_PTR(rvalue);
-        char ***sv = ASSERT_PTR(data);
+        const char *p = rvalue;
+        char ***sv = data;
         bool invert;
         int r;
 
         assert(filename);
         assert(lvalue);
+        assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *sv = strv_free(*sv);

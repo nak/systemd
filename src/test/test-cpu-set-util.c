@@ -3,13 +3,14 @@
 #include "alloc-util.h"
 #include "cpu-set-util.h"
 #include "string-util.h"
-#include "tests.h"
 #include "macro.h"
 
-TEST(parse_cpu_set) {
+static void test_parse_cpu_set(void) {
         CPUSet c = {};
         _cleanup_free_ char *str = NULL;
         int cpu;
+
+        log_info("/* %s */", __func__);
 
         /* Single value */
         assert_se(parse_cpu_set_full("0", &c, true, NULL, "fake", 1, "CPUAffinity") >= 0);
@@ -209,9 +210,11 @@ TEST(parse_cpu_set) {
         cpu_set_reset(&c);
 }
 
-TEST(parse_cpu_set_extend) {
+static void test_parse_cpu_set_extend(void) {
         CPUSet c = {};
         _cleanup_free_ char *s1 = NULL, *s2 = NULL;
+
+        log_info("/* %s */", __func__);
 
         assert_se(parse_cpu_set_extend("1 3", &c, true, NULL, "fake", 1, "CPUAffinity") == 1);
         assert_se(CPU_COUNT_S(c.allocated, c.set) == 2);
@@ -229,9 +232,11 @@ TEST(parse_cpu_set_extend) {
         log_info("cpu_set_to_string: (null)");
 }
 
-TEST(cpu_set_to_from_dbus) {
+static void test_cpu_set_to_from_dbus(void) {
         _cleanup_(cpu_set_reset) CPUSet c = {}, c2 = {};
         _cleanup_free_ char *s = NULL;
+
+        log_info("/* %s */", __func__);
 
         assert_se(parse_cpu_set_extend("1 3 8 100-200", &c, true, NULL, "fake", 1, "CPUAffinity") == 1);
         assert_se(s = cpu_set_to_string(&c));
@@ -251,7 +256,7 @@ TEST(cpu_set_to_from_dbus) {
 
         assert_se(allocated <= sizeof expected);
         assert_se(allocated >= DIV_ROUND_UP(201u, 8u)); /* We need at least 201 bits for our mask */
-        assert_se(memcmp(array, expected, allocated) == 0);
+        assert(memcmp(array, expected, allocated) == 0);
 
         assert_se(cpu_set_from_dbus(array, allocated, &c2) == 0);
         assert_se(c2.set);
@@ -259,15 +264,15 @@ TEST(cpu_set_to_from_dbus) {
         assert_se(memcmp(c.set, c2.set, c.allocated) == 0);
 }
 
-TEST(cpus_in_affinity_mask) {
+static void test_cpus_in_affinity_mask(void) {
         int r;
 
         r = cpus_in_affinity_mask();
-        assert_se(r > 0);
+        assert(r > 0);
         log_info("cpus_in_affinity_mask: %d", r);
 }
 
-TEST(print_cpu_alloc_size) {
+int main(int argc, char *argv[]) {
         log_info("CPU_ALLOC_SIZE(1) = %zu", CPU_ALLOC_SIZE(1));
         log_info("CPU_ALLOC_SIZE(9) = %zu", CPU_ALLOC_SIZE(9));
         log_info("CPU_ALLOC_SIZE(64) = %zu", CPU_ALLOC_SIZE(64));
@@ -275,6 +280,11 @@ TEST(print_cpu_alloc_size) {
         log_info("CPU_ALLOC_SIZE(1024) = %zu", CPU_ALLOC_SIZE(1024));
         log_info("CPU_ALLOC_SIZE(1025) = %zu", CPU_ALLOC_SIZE(1025));
         log_info("CPU_ALLOC_SIZE(8191) = %zu", CPU_ALLOC_SIZE(8191));
-}
 
-DEFINE_TEST_MAIN(LOG_INFO);
+        test_parse_cpu_set();
+        test_parse_cpu_set_extend();
+        test_cpus_in_affinity_mask();
+        test_cpu_set_to_from_dbus();
+
+        return 0;
+}

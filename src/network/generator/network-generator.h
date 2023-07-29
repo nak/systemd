@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #pragma once
 
+#include <net/ethernet.h>
 #include <stdio.h>
 
-#include "ether-addr-util.h"
 #include "hashmap.h"
 #include "in-addr-util.h"
 #include "list.h"
@@ -13,12 +13,11 @@ typedef enum DHCPType {
         DHCP_TYPE_OFF,
         DHCP_TYPE_ON,
         DHCP_TYPE_ANY,
-        DHCP_TYPE_DHCP4,
+        DHCP_TYPE_DHCP,
         DHCP_TYPE_DHCP6,
         DHCP_TYPE_AUTO6,
         DHCP_TYPE_EITHER6,
         DHCP_TYPE_IBFT,
-        DHCP_TYPE_LINK6,
         _DHCP_TYPE_MAX,
         _DHCP_TYPE_INVALID = -EINVAL,
 } DHCPType;
@@ -81,21 +80,15 @@ struct NetDev {
 };
 
 struct Link {
-        char *filename;
-
         /* [Match] */
-        struct hw_addr_data mac;
-
-        /* [Link] */
         char *ifname;
-        char **policies;
-        char **alt_policies;
+        struct ether_addr mac;
 };
 
 typedef struct Context {
         Hashmap *networks_by_name;
         Hashmap *netdevs_by_name;
-        Hashmap *links_by_filename;
+        Hashmap *links_by_name;
 } Context;
 
 int parse_cmdline_item(const char *key, const char *value, void *data);
@@ -110,6 +103,6 @@ NetDev *netdev_get(Context *context, const char *ifname);
 void netdev_dump(NetDev *netdev, FILE *f);
 int netdev_format(NetDev *netdev, char **ret);
 
-Link *link_get(Context *context, const char *filename);
+Link *link_get(Context *context, const char *ifname);
 void link_dump(Link *link, FILE *f);
 int link_format(Link *link, char **ret);

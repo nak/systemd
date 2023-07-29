@@ -2,6 +2,7 @@
 
 #include "alloc-util.h"
 #include "fd-util.h"
+#include "fileio.h"
 #include "fuzz.h"
 #include "hostname-setup.h"
 
@@ -9,7 +10,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *ret = NULL;
 
-        f = data_to_file(data, size);
+        if (size == 0)
+                return 0;
+
+        f = fmemopen_unlocked((char*) data, size, "re");
         assert_se(f);
 
         /* We don't want to fill the logs with messages about parse errors.

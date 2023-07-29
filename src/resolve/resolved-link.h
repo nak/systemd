@@ -1,12 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #pragma once
 
-#include <sys/stat.h>
-
 #include "sd-netlink.h"
 
 #include "in-addr-util.h"
-#include "network-util.h"
 #include "ratelimit.h"
 #include "resolve-util.h"
 
@@ -26,7 +23,6 @@ struct LinkAddress {
 
         int family;
         union in_addr_union in_addr;
-        union in_addr_union in_addr_broadcast;
         unsigned char prefixlen;
 
         unsigned char flags, scope;
@@ -69,8 +65,6 @@ struct Link {
         DnsScope *mdns_ipv4_scope;
         DnsScope *mdns_ipv6_scope;
 
-        struct stat networkd_state_file_stat;
-        LinkOperationalState networkd_operstate;
         bool is_managed;
 
         char *ifname;
@@ -105,18 +99,11 @@ bool link_dnssec_supported(Link *l);
 
 DnsOverTlsMode link_get_dns_over_tls_mode(Link *l);
 
-ResolveSupport link_get_llmnr_support(Link *link);
-ResolveSupport link_get_mdns_support(Link *link);
-
 int link_save_user(Link *l);
 int link_load_user(Link *l);
 void link_remove_user(Link *l);
 
-int link_address_new(Link *l,
-                LinkAddress **ret,
-                int family,
-                const union in_addr_union *in_addr,
-                const union in_addr_union *in_addr_broadcast);
+int link_address_new(Link *l, LinkAddress **ret, int family, const union in_addr_union *in_addr);
 LinkAddress *link_address_free(LinkAddress *a);
 int link_address_update_rtnl(LinkAddress *a, sd_netlink_message *m);
 bool link_address_relevant(LinkAddress *l, bool local_multicast);

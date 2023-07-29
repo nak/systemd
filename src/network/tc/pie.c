@@ -18,21 +18,21 @@ static int pie_fill_message(Link *link, QDisc *qdisc, sd_netlink_message *req) {
         assert(qdisc);
         assert(req);
 
-        assert_se(pie = PIE(qdisc));
+        pie = PIE(qdisc);
 
         r = sd_netlink_message_open_container_union(req, TCA_OPTIONS, "pie");
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not open container TCA_OPTIONS: %m");
 
         if (pie->packet_limit > 0) {
                 r = sd_netlink_message_append_u32(req, TCA_PIE_LIMIT, pie->packet_limit);
                 if (r < 0)
-                        return r;
+                        return log_link_error_errno(link, r, "Could not append TCA_PIE_PLIMIT attribute: %m");
         }
 
         r = sd_netlink_message_close_container(req);
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not close container TCA_OPTIONS: %m");
 
         return 0;
 }
@@ -51,12 +51,13 @@ int config_parse_pie_packet_limit(
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
         ProportionalIntegralControllerEnhanced *pie;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(QDISC_KIND_PIE, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)

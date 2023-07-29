@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include <net/if.h>
-#include <netinet/in.h>
-#include <linux/if_arp.h>
 
 #include "conf-parser.h"
 #include "macvlan.h"
@@ -33,40 +31,40 @@ static int netdev_macvlan_fill_message_create(NetDev *netdev, Link *link, sd_net
 
                 r = sd_netlink_message_append_u32(req, IFLA_MACVLAN_MACADDR_MODE, MACVLAN_MACADDR_SET);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACVLAN_MACADDR_MODE attribute: %m");
 
                 r = sd_netlink_message_open_container(req, IFLA_MACVLAN_MACADDR_DATA);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not open IFLA_MACVLAN_MACADDR_DATA container: %m");
 
                 SET_FOREACH(mac_addr, m->match_source_mac) {
                         r = sd_netlink_message_append_ether_addr(req, IFLA_MACVLAN_MACADDR, mac_addr);
                         if (r < 0)
-                                return r;
+                                return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACVLAN_MACADDR attribute: %m");
                 }
 
                 r = sd_netlink_message_close_container(req);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not close IFLA_MACVLAN_MACADDR_DATA container: %m");
         }
 
         if (m->mode != _NETDEV_MACVLAN_MODE_INVALID) {
                 r = sd_netlink_message_append_u32(req, IFLA_MACVLAN_MODE, m->mode);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACVLAN_MODE attribute: %m");
         }
 
         /* set the nopromisc flag if Promiscuous= of the link is explicitly set to false */
         if (m->mode == NETDEV_MACVLAN_MODE_PASSTHRU && link->network->promiscuous == 0) {
                 r = sd_netlink_message_append_u16(req, IFLA_MACVLAN_FLAGS, MACVLAN_FLAG_NOPROMISC);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACVLAN_FLAGS attribute: %m");
         }
 
         if (m->bc_queue_length != UINT32_MAX) {
                 r = sd_netlink_message_append_u32(req, IFLA_MACVLAN_BC_QUEUE_LEN, m->bc_queue_length);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACVLAN_BC_QUEUE_LEN attribute: %m");
         }
 
         return 0;
@@ -84,7 +82,7 @@ int config_parse_macvlan_broadcast_queue_size(
                 void *data,
                 void *userdata) {
 
-        MacVlan *m = ASSERT_PTR(userdata);
+        MacVlan *m = userdata;
         uint32_t v;
         int r;
 
@@ -93,6 +91,7 @@ int config_parse_macvlan_broadcast_queue_size(
         assert(lvalue);
         assert(rvalue);
         assert(data);
+        assert(userdata);
 
         if (isempty(rvalue)) {
                 m->bc_queue_length = UINT32_MAX;
@@ -128,7 +127,7 @@ static void macvlan_done(NetDev *n) {
 
         assert(m);
 
-        set_free(m->match_source_mac);
+        set_free_free(m->match_source_mac);
 }
 
 static void macvlan_init(NetDev *n) {
@@ -154,7 +153,6 @@ const NetDevVTable macvtap_vtable = {
         .sections = NETDEV_COMMON_SECTIONS "MACVTAP\0",
         .fill_message_create = netdev_macvlan_fill_message_create,
         .create_type = NETDEV_CREATE_STACKED,
-        .iftype = ARPHRD_ETHER,
         .generate_mac = true,
 };
 
@@ -165,6 +163,5 @@ const NetDevVTable macvlan_vtable = {
         .sections = NETDEV_COMMON_SECTIONS "MACVLAN\0",
         .fill_message_create = netdev_macvlan_fill_message_create,
         .create_type = NETDEV_CREATE_STACKED,
-        .iftype = ARPHRD_ETHER,
         .generate_mac = true,
 };

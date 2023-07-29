@@ -6,15 +6,14 @@
 
 #include "alloc-util.h"
 #include "bus-common-errors.h"
+#include "bus-locator.h"
 #include "bus-message-util.h"
 #include "bus-polkit.h"
-#include "networkd-dhcp-server-bus.h"
 #include "networkd-json.h"
 #include "networkd-link-bus.h"
 #include "networkd-link.h"
 #include "networkd-manager-bus.h"
 #include "networkd-manager.h"
-#include "networkd-network-bus.h"
 #include "path-util.h"
 #include "strv.h"
 #include "user-util.h"
@@ -197,10 +196,11 @@ static int bus_method_reconfigure_link(sd_bus_message *message, void *userdata, 
 
 static int bus_method_reload(sd_bus_message *message, void *userdata, sd_bus_error *error) {
         Manager *manager = userdata;
+        Link *link;
         int r;
 
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
-                                    "org.freedesktop.network1.reload",
+                                    bus_network_cmpnt("reload"),
                                     NULL, true, UID_INVALID,
                                     &manager->polkit_registry, error);
         if (r < 0)
@@ -208,9 +208,19 @@ static int bus_method_reload(sd_bus_message *message, void *userdata, sd_bus_err
         if (r == 0)
                 return 1; /* Polkit will call us back */
 
-        r = manager_reload(manager);
+        r = netdev_load(manager, true);
         if (r < 0)
                 return r;
+
+        r = network_reload(manager);
+        if (r < 0)
+                return r;
+
+        HASHMAP_FOREACH(link, manager->links_by_index) {
+                r = link_reconfigure(link, /* force = */ false);
+                if (r < 0)
+                        return r;
+        }
 
         return sd_bus_reply_method_return(message, NULL);
 }
@@ -223,10 +233,11 @@ static int bus_method_describe(sd_bus_message *message, void *userdata, sd_bus_e
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_(json_variant_unrefp) JsonVariant *v = NULL;
         _cleanup_free_ char *text = NULL;
-        Manager *manager = ASSERT_PTR(userdata);
+        Manager *manager = userdata;
         int r;
 
         assert(message);
+        assert(manager);
 
         r = manager_build_json(manager, &v);
         if (r < 0)
@@ -275,7 +286,7 @@ static int property_get_namespace_id(
         return sd_bus_message_append(reply, "t", id);
 }
 
-static const sd_bus_vtable manager_vtable[] = {
+const sd_bus_vtable manager_vtable[] = {
         SD_BUS_VTABLE_START(0),
 
         SD_BUS_PROPERTY("OperationalState", "s", property_get_operational_state, offsetof(Manager, operational_state), SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
@@ -405,13 +416,6 @@ int manager_send_changed_strv(Manager *manager, char **properties) {
         return sd_bus_emit_properties_changed_strv(
                         manager->bus,
                         "/org/freedesktop/network1",
-                        "org.freedesktop.network1.Manager",
+                        bus_network_mgr->interface,
                         properties);
 }
-
-const BusObjectImplementation manager_object = {
-        "/org/freedesktop/network1",
-        "org.freedesktop.network1.Manager",
-        .vtables = BUS_VTABLES(manager_vtable),
-        .children = BUS_IMPLEMENTATIONS(&dhcp_server_object, &link_object, &network_object),
-};

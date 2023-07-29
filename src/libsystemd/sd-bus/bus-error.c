@@ -14,42 +14,43 @@
 #include "errno-util.h"
 #include "string-util.h"
 #include "strv.h"
+#include "util.h"
 
 BUS_ERROR_MAP_ELF_REGISTER const sd_bus_error_map bus_standard_errors[] = {
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_FAILED,                             EACCES),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NO_MEMORY,                          ENOMEM),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_SERVICE_UNKNOWN,                    EHOSTUNREACH),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NAME_HAS_NO_OWNER,                  ENXIO),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NO_REPLY,                           ETIMEDOUT),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_IO_ERROR,                           EIO),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_BAD_ADDRESS,                        EADDRNOTAVAIL),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NOT_SUPPORTED,                      EOPNOTSUPP),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_LIMITS_EXCEEDED,                    ENOBUFS),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_ACCESS_DENIED,                      EACCES),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_AUTH_FAILED,                        EACCES),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NO_SERVER,                          EHOSTDOWN),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_TIMEOUT,                            ETIMEDOUT),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_NO_NETWORK,                         ENONET),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_ADDRESS_IN_USE,                     EADDRINUSE),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_DISCONNECTED,                       ECONNRESET),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_INVALID_ARGS,                       EINVAL),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_FILE_NOT_FOUND,                     ENOENT),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_FILE_EXISTS,                        EEXIST),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_UNKNOWN_METHOD,                     EBADR),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_UNKNOWN_OBJECT,                     EBADR),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_UNKNOWN_INTERFACE,                  EBADR),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_UNKNOWN_PROPERTY,                   EBADR),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_PROPERTY_READ_ONLY,                 EROFS),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_UNIX_PROCESS_ID_UNKNOWN,            ESRCH),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_INVALID_SIGNATURE,                  EINVAL),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_INCONSISTENT_MESSAGE,               EBADMSG),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_TIMED_OUT,                          ETIMEDOUT),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_MATCH_RULE_NOT_FOUND,               ENOENT),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_MATCH_RULE_INVALID,                 EINVAL),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_INTERACTIVE_AUTHORIZATION_REQUIRED, EACCES),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_INVALID_FILE_CONTENT,               EINVAL),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_SELINUX_SECURITY_CONTEXT_UNKNOWN,   ESRCH),
-        SD_BUS_ERROR_MAP(SD_BUS_ERROR_OBJECT_PATH_IN_USE,                 EBUSY),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.Failed",                           EACCES),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NoMemory",                         ENOMEM),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.ServiceUnknown",                   EHOSTUNREACH),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NameHasNoOwner",                   ENXIO),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NoReply",                          ETIMEDOUT),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.IOError",                          EIO),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.BadAddress",                       EADDRNOTAVAIL),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NotSupported",                     EOPNOTSUPP),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.LimitsExceeded",                   ENOBUFS),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.AccessDenied",                     EACCES),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.AuthFailed",                       EACCES),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.InteractiveAuthorizationRequired", EACCES),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NoServer",                         EHOSTDOWN),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.Timeout",                          ETIMEDOUT),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.NoNetwork",                        ENONET),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.AddressInUse",                     EADDRINUSE),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.Disconnected",                     ECONNRESET),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.InvalidArgs",                      EINVAL),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.FileNotFound",                     ENOENT),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.FileExists",                       EEXIST),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.UnknownMethod",                    EBADR),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.UnknownObject",                    EBADR),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.UnknownInterface",                 EBADR),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.UnknownProperty",                  EBADR),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.PropertyReadOnly",                 EROFS),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.UnixProcessIdUnknown",             ESRCH),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.InvalidSignature",                 EINVAL),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.InconsistentMessage",              EBADMSG),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.TimedOut",                         ETIMEDOUT),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.MatchRuleInvalid",                 EINVAL),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.InvalidFileContent",               EINVAL),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.MatchRuleNotFound",                ENOENT),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.SELinuxSecurityContextUnknown",    ESRCH),
+        SD_BUS_ERROR_MAP("org.freedesktop.DBus.Error.ObjectPathInUse",                  EBUSY),
         SD_BUS_ERROR_MAP_END
 };
 
@@ -91,7 +92,7 @@ static int bus_error_name_to_errno(const char *name) {
                                 }
                         }
 
-        m = ALIGN_PTR(__start_SYSTEMD_BUS_ERROR_MAP);
+        m = ALIGN_TO_PTR(__start_SYSTEMD_BUS_ERROR_MAP, sizeof(void*));
         while (m < __stop_SYSTEMD_BUS_ERROR_MAP) {
                 /* For magic ELF error maps, the end marker might
                  * appear in the middle of things, since multiple maps
@@ -100,7 +101,7 @@ static int bus_error_name_to_errno(const char *name) {
                  * boundary, which is the selected alignment for the
                  * arrays. */
                 if (m->code == BUS_ERROR_MAP_END_MARKER) {
-                        m = ALIGN_PTR(m + 1);
+                        m = ALIGN_TO_PTR(m + 1, sizeof(void*));
                         continue;
                 }
 
@@ -236,7 +237,7 @@ _public_ int sd_bus_error_set(sd_bus_error *e, const char *name, const char *mes
         return -r;
 }
 
-_public_ int sd_bus_error_setfv(sd_bus_error *e, const char *name, const char *format, va_list ap) {
+int bus_error_setfv(sd_bus_error *e, const char *name, const char *format, va_list ap) {
         int r;
 
         if (!name)
@@ -251,15 +252,10 @@ _public_ int sd_bus_error_setfv(sd_bus_error *e, const char *name, const char *f
                         return -ENOMEM;
                 }
 
-                if (format) {
-                        _cleanup_free_ char *mesg = NULL;
-
-                        /* If we hit OOM on formatting the pretty message, we ignore
-                         * this, since we at least managed to write the error name */
-
-                        if (vasprintf(&mesg, format, ap) >= 0)
-                                e->message = TAKE_PTR(mesg);
-                }
+                /* If we hit OOM on formatting the pretty message, we ignore
+                 * this, since we at least managed to write the error name */
+                if (format)
+                        (void) vasprintf((char**) &e->message, format, ap);
 
                 e->_need_free = 1;
         }
@@ -276,7 +272,7 @@ _public_ int sd_bus_error_setf(sd_bus_error *e, const char *name, const char *fo
                 va_list ap;
 
                 va_start(ap, format);
-                r = sd_bus_error_setfv(e, name, format, ap);
+                r = bus_error_setfv(e, name, format, ap);
                 assert(!name || r < 0);
                 va_end(ap);
 
@@ -493,7 +489,7 @@ _public_ int sd_bus_error_set_errno(sd_bus_error *e, int error) {
                         *e = BUS_ERROR_FAILED;
         }
 
-        /* Now, fill in the message from strerror_r() if we can */
+        /* Now, fill in the message from strerror() if we can */
         bus_error_strerror(e, error);
         return -error;
 }
@@ -554,7 +550,7 @@ _public_ int sd_bus_error_set_errnofv(sd_bus_error *e, int error, const char *fo
         }
 
 fail:
-        /* If that didn't work, use strerror_r() for the message */
+        /* If that didn't work, use strerror() for the message */
         bus_error_strerror(e, error);
         return -error;
 }
@@ -585,16 +581,19 @@ _public_ int sd_bus_error_set_errnof(sd_bus_error *e, int error, const char *for
         return sd_bus_error_set_errno(e, error);
 }
 
-const char* _bus_error_message(const sd_bus_error *e, int error, char buf[static ERRNO_BUF_LEN]) {
-        /* Sometimes, the D-Bus server is a little bit too verbose with
-         * its error messages, so let's override them here */
-        if (sd_bus_error_has_name(e, SD_BUS_ERROR_ACCESS_DENIED))
-                return "Access denied";
+const char *bus_error_message(const sd_bus_error *e, int error) {
 
-        if (e && e->message)
-                return e->message;
+        if (e) {
+                /* Sometimes, the D-Bus server is a little bit too verbose with
+                 * its error messages, so let's override them here */
+                if (sd_bus_error_has_name(e, SD_BUS_ERROR_ACCESS_DENIED))
+                        return "Access denied";
 
-        return strerror_r(abs(error), buf, ERRNO_BUF_LEN);
+                if (e->message)
+                        return e->message;
+        }
+
+        return strerror_safe(error);
 }
 
 static bool map_ok(const sd_bus_error_map *map) {

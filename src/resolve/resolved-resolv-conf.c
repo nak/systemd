@@ -10,9 +10,8 @@
 #include "fd-util.h"
 #include "fileio.h"
 #include "fs-util.h"
-#include "label-util.h"
+#include "label.h"
 #include "ordered-set.h"
-#include "path-util.h"
 #include "resolved-conf.h"
 #include "resolved-dns-server.h"
 #include "resolved-resolv-conf.h"
@@ -42,7 +41,8 @@ int manager_check_resolv_conf(const Manager *m) {
 
         /* Is it symlinked to our own uplink file? */
         if (stat(PRIVATE_STATIC_RESOLV_CONF, &own) >= 0 &&
-            stat_inode_same(&st, &own))
+            st.st_dev == own.st_dev &&
+            st.st_ino == own.st_ino)
                 return log_warning_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
                                          "DNSStubListener= is disabled, but /etc/resolv.conf is a symlink to "
                                          PRIVATE_STATIC_RESOLV_CONF " which expects DNSStubListener= to be enabled.");
@@ -51,6 +51,8 @@ int manager_check_resolv_conf(const Manager *m) {
 }
 
 static bool file_is_our_own(const struct stat *st) {
+        const char *path;
+
         assert(st);
 
         FOREACH_STRING(path,
@@ -62,7 +64,8 @@ static bool file_is_our_own(const struct stat *st) {
 
                 /* Is it symlinked to our own uplink file? */
                 if (stat(path, &own) >= 0 &&
-                    stat_inode_same(st, &own))
+                    st->st_dev == own.st_dev &&
+                    st->st_ino == own.st_ino)
                         return true;
         }
 
@@ -372,12 +375,7 @@ int manager_write_resolv_conf(Manager *m) {
 
                 temp_path_stub = mfree(temp_path_stub); /* free the string explicitly, so that we don't unlink anymore */
         } else {
-                _cleanup_free_ char *fname = NULL;
-                r = path_extract_filename(PRIVATE_UPLINK_RESOLV_CONF, &fname);
-                if (r < 0)
-                        return log_warning_errno(r, "Failed to extract filename from path '" PRIVATE_UPLINK_RESOLV_CONF "', ignoring: %m");
-
-                r = symlink_atomic_label(fname, PRIVATE_STUB_RESOLV_CONF);
+                r = symlink_atomic_label(basename(PRIVATE_UPLINK_RESOLV_CONF), PRIVATE_STUB_RESOLV_CONF);
                 if (r < 0)
                         log_warning_errno(r, "Failed to symlink %s, ignoring: %m", PRIVATE_STUB_RESOLV_CONF);
         }
@@ -419,7 +417,8 @@ int resolv_conf_mode(void) {
                         continue;
                 }
 
-                if (stat_inode_same(&system_st, &our_st))
+                if (system_st.st_dev == our_st.st_dev &&
+                    system_st.st_ino == our_st.st_ino)
                         return m;
         }
 

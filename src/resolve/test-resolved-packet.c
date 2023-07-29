@@ -4,7 +4,7 @@
 #include "resolved-dns-packet.h"
 #include "tests.h"
 
-TEST(dns_packet_new) {
+static void test_dns_packet_new(void) {
         size_t i;
          _cleanup_(dns_packet_unrefp) DnsPacket *p2 = NULL;
 
@@ -23,4 +23,10 @@ TEST(dns_packet_new) {
         assert_se(dns_packet_new(&p2, DNS_PROTOCOL_DNS, DNS_PACKET_SIZE_MAX + 1, DNS_PACKET_SIZE_MAX) == -EFBIG);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_dns_packet_new();
+
+        return 0;
+}

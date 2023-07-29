@@ -13,12 +13,13 @@ Documentation=man:systemd-fsck-root.service(8)
 DefaultDependencies=no
 Conflicts=shutdown.target
 Before=local-fs.target shutdown.target
+Wants=systemd-fsckd.socket
+After=systemd-fsckd.socket
 ConditionPathIsReadWrite=!/
-OnFailure=emergency.target
-OnFailureJobMode=replace-irreversibly
+ConditionPathExists=!/run/initramfs/fsck-root
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart={{ROOTLIBEXECDIR}}/systemd-fsck
-TimeoutSec=infinity
+TimeoutSec=0

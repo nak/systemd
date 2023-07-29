@@ -10,7 +10,7 @@ typedef enum PagerFlags {
         PAGER_JUMP_TO_END = 1 << 1,
 } PagerFlags;
 
-void pager_open(PagerFlags flags);
+int pager_open(PagerFlags flags);
 void pager_close(void);
 bool pager_have(void) _pure_;
 

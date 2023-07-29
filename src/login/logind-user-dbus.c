@@ -26,10 +26,11 @@ static int property_get_uid(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         return sd_bus_message_append(reply, "u", (uint32_t) u->user_record->uid);
 }
@@ -43,10 +44,11 @@ static int property_get_gid(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         return sd_bus_message_append(reply, "u", (uint32_t) u->user_record->gid);
 }
@@ -60,10 +62,11 @@ static int property_get_name(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         return sd_bus_message_append(reply, "s", u->user_record->user_name);
 }
@@ -80,10 +83,11 @@ static int property_get_display(
                 sd_bus_error *error) {
 
         _cleanup_free_ char *p = NULL;
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         p = u->display ? session_bus_path(u->display) : strdup("/");
         if (!p)
@@ -101,11 +105,13 @@ static int property_get_sessions(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
+        Session *session;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         r = sd_bus_message_open_container(reply, 'a', "(so)");
         if (r < 0)
@@ -136,10 +142,11 @@ static int property_get_idle_hint(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         return sd_bus_message_append(reply, "b", user_get_idle_hint(u, NULL) > 0);
 }
@@ -153,12 +160,13 @@ static int property_get_idle_since_hint(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
         dual_timestamp t = DUAL_TIMESTAMP_NULL;
         uint64_t k;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         (void) user_get_idle_hint(u, &t);
         k = streq(property, "IdleSinceHint") ? t.realtime : t.monotonic;
@@ -175,11 +183,12 @@ static int property_get_linger(
                 void *userdata,
                 sd_bus_error *error) {
 
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(u);
 
         r = user_check_linger_file(u);
 
@@ -187,10 +196,11 @@ static int property_get_linger(
 }
 
 int bus_user_method_terminate(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
         int r;
 
         assert(message);
+        assert(u);
 
         r = bus_verify_polkit_async(
                         message,
@@ -214,11 +224,12 @@ int bus_user_method_terminate(sd_bus_message *message, void *userdata, sd_bus_er
 }
 
 int bus_user_method_kill(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        User *u = ASSERT_PTR(userdata);
+        User *u = userdata;
         int32_t signo;
         int r;
 
         assert(message);
+        assert(u);
 
         r = bus_verify_polkit_async(
                         message,
@@ -249,7 +260,7 @@ int bus_user_method_kill(sd_bus_message *message, void *userdata, sd_bus_error *
 }
 
 static int user_object_find(sd_bus *bus, const char *path, const char *interface, void *userdata, void **found, sd_bus_error *error) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
         uid_t uid;
         User *user;
         int r;
@@ -258,6 +269,7 @@ static int user_object_find(sd_bus *bus, const char *path, const char *interface
         assert(path);
         assert(interface);
         assert(found);
+        assert(m);
 
         if (streq(path, "/org/freedesktop/login1/user/self")) {
                 sd_bus_message *message;
@@ -369,11 +381,12 @@ static const sd_bus_vtable user_vtable[] = {
         SD_BUS_PROPERTY("Linger", "b", property_get_linger, 0, 0),
 
         SD_BUS_METHOD("Terminate", NULL, NULL, bus_user_method_terminate, SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("Kill",
-                                SD_BUS_ARGS("i", signal_number),
-                                SD_BUS_NO_RESULT,
-                                bus_user_method_kill,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("Kill",
+                                 "i",
+                                 SD_BUS_PARAM(signal_number),
+                                 NULL,,
+                                 bus_user_method_kill,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
 
         SD_BUS_VTABLE_END
 };

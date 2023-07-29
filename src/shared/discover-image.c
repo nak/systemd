@@ -14,7 +14,6 @@
 
 #include "alloc-util.h"
 #include "btrfs-util.h"
-#include "chase.h"
 #include "chattr-util.h"
 #include "copy.h"
 #include "dirent-util.h"
@@ -22,14 +21,12 @@
 #include "dissect-image.h"
 #include "env-file.h"
 #include "env-util.h"
-#include "extension-util.h"
 #include "fd-util.h"
 #include "fs-util.h"
 #include "hashmap.h"
 #include "hostname-setup.h"
 #include "id128-util.h"
-#include "initrd-util.h"
-#include "lock-util.h"
+#include "lockfile-util.h"
 #include "log.h"
 #include "loop-util.h"
 #include "macro.h"
@@ -60,29 +57,11 @@ static const char* const image_search_path[_IMAGE_CLASS_MAX] = {
                             "/usr/local/lib/portables\0"
                             "/usr/lib/portables\0",
 
-        /* Note that we don't allow storing extensions under /usr/, unlike with other image types. That's
-         * because extension images are supposed to extend /usr/, so you get into recursive races, especially
-         * with directory-based extensions, as the kernel's OverlayFS explicitly checks for this and errors
-         * out with -ELOOP if it finds that a lowerdir= is a child of another lowerdir=. */
-        [IMAGE_SYSEXT] =    "/etc/extensions\0"            /* only place symlinks here */
-                            "/run/extensions\0"            /* and here too */
-                            "/var/lib/extensions\0",       /* the main place for images */
-
-        [IMAGE_CONFEXT] =   "/run/confexts\0"              /* only place symlinks here */
-                            "/var/lib/confexts\0"          /* the main place for images */
-                            "/usr/local/lib/confexts\0"
-                            "/usr/lib/confexts\0",
-};
-
-/* Inside the initrd, use a slightly different set of search path (i.e. include .extra/sysext in extension
- * search dir) */
-static const char* const image_search_path_initrd[_IMAGE_CLASS_MAX] = {
-        /* (entries that aren't listed here will get the same search path as for the non initrd-case) */
-
-        [IMAGE_SYSEXT] =    "/etc/extensions\0"            /* only place symlinks here */
-                            "/run/extensions\0"            /* and here too */
-                            "/var/lib/extensions\0"        /* the main place for images */
-                            "/.extra/sysext\0"             /* put sysext picked up by systemd-stub last, since not trusted */
+        [IMAGE_EXTENSION] = "/etc/extensions\0"             /* only place symlinks here */
+                            "/run/extensions\0"             /* and here too */
+                            "/var/lib/extensions\0"         /* the main place for images */
+                            "/usr/local/lib/extensions\0"
+                            "/usr/lib/extensions\0",
 };
 
 static Image *image_free(Image *i) {
@@ -105,9 +84,8 @@ DEFINE_HASH_OPS_WITH_VALUE_DESTRUCTOR(image_hash_ops, char, string_hash_func, st
 
 static char **image_settings_path(Image *image) {
         _cleanup_strv_free_ char **l = NULL;
-        _cleanup_free_ char *fn = NULL;
-        size_t i = 0;
-        int r;
+        const char *fn, *s;
+        unsigned i = 0;
 
         assert(image);
 
@@ -115,9 +93,7 @@ static char **image_settings_path(Image *image) {
         if (!l)
                 return NULL;
 
-        fn = strjoin(image->name, ".nspawn");
-        if (!fn)
-                return NULL;
+        fn = strjoina(image->name, ".nspawn");
 
         FOREACH_STRING(s, "/etc/systemd/nspawn", "/run/systemd/nspawn") {
                 l[i] = path_join(s, fn);
@@ -127,32 +103,25 @@ static char **image_settings_path(Image *image) {
                 i++;
         }
 
-        r = file_in_same_dir(image->path, fn, l + i);
-        if (r == -ENOMEM)
+        l[i] = file_in_same_dir(image->path, fn);
+        if (!l[i])
                 return NULL;
-        if (r < 0)
-                log_debug_errno(r, "Failed to generate .nspawn settings path from image path, ignoring: %m");
-
-        strv_uniq(l);
 
         return TAKE_PTR(l);
 }
 
-static int image_roothash_path(Image *image, char **ret) {
-        _cleanup_free_ char *fn = NULL;
+static char *image_roothash_path(Image *image) {
+        const char *fn;
 
         assert(image);
 
-        fn = strjoin(image->name, ".roothash");
-        if (!fn)
-                return -ENOMEM;
+        fn = strjoina(image->name, ".roothash");
 
-        return file_in_same_dir(image->path, fn, ret);
+        return file_in_same_dir(image->path, fn);
 }
 
 static int image_new(
                 ImageType t,
-                ImageClass c,
                 const char *pretty,
                 const char *path,
                 const char *filename,
@@ -176,7 +145,6 @@ static int image_new(
         *i = (Image) {
                 .n_ref = 1,
                 .type = t,
-                .class = c,
                 .read_only = read_only,
                 .crtime = crtime,
                 .mtime = mtime,
@@ -204,13 +172,15 @@ static int image_new(
 static int extract_pretty(const char *path, const char *suffix, char **ret) {
         _cleanup_free_ char *name = NULL;
         const char *p;
+        size_t n;
 
         assert(path);
         assert(ret);
 
         p = last_path_component(path);
+        n = strcspn(p, "/");
 
-        name = strdupcspn(p, "/");
+        name = strndup(p, n);
         if (!name)
                 return -ENOMEM;
 
@@ -232,7 +202,6 @@ static int extract_pretty(const char *path, const char *suffix, char **ret) {
 }
 
 static int image_make(
-                ImageClass c,
                 const char *pretty,
                 int dfd,
                 const char *path,
@@ -274,7 +243,7 @@ static int image_make(
                 (faccessat(dfd, filename, W_OK, AT_EACCESS) < 0 && errno == EROFS);
 
         if (S_ISDIR(st->st_mode)) {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
                 unsigned file_attr = 0;
                 usec_t crtime = 0;
 
@@ -308,7 +277,6 @@ static int image_make(
                                         return r;
 
                                 r = image_new(IMAGE_SUBVOLUME,
-                                              c,
                                               pretty,
                                               path,
                                               filename,
@@ -345,7 +313,6 @@ static int image_make(
 
                 /* It's just a normal directory. */
                 r = image_new(IMAGE_DIRECTORY,
-                              c,
                               pretty,
                               path,
                               filename,
@@ -366,7 +333,7 @@ static int image_make(
                 if (!ret)
                         return 0;
 
-                (void) fd_getcrtime_at(dfd, filename, AT_SYMLINK_FOLLOW, &crtime);
+                (void) fd_getcrtime_at(dfd, filename, &crtime, 0);
 
                 if (!pretty) {
                         r = extract_pretty(filename, ".raw", &pretty_buffer);
@@ -377,7 +344,6 @@ static int image_make(
                 }
 
                 r = image_new(IMAGE_RAW,
-                              c,
                               pretty,
                               path,
                               filename,
@@ -394,7 +360,7 @@ static int image_make(
                 return 0;
 
         } else if (S_ISBLK(st->st_mode)) {
-                _cleanup_close_ int block_fd = -EBADF;
+                _cleanup_close_ int block_fd = -1;
                 uint64_t size = UINT64_MAX;
 
                 /* A block device */
@@ -438,7 +404,6 @@ static int image_make(
                 }
 
                 r = image_new(IMAGE_BLOCK,
-                              c,
                               pretty,
                               path,
                               filename,
@@ -458,19 +423,12 @@ static int image_make(
         return -EMEDIUMTYPE;
 }
 
-static const char *pick_image_search_path(ImageClass class) {
-        if (class < 0 || class >= _IMAGE_CLASS_MAX)
-                return NULL;
-
-        /* Use the initrd search path if there is one, otherwise use the common one */
-        return in_initrd() && image_search_path_initrd[class] ? image_search_path_initrd[class] : image_search_path[class];
-}
-
 int image_find(ImageClass class,
                const char *name,
                const char *root,
                Image **ret) {
 
+        const char *path;
         int r;
 
         assert(class >= 0);
@@ -481,13 +439,13 @@ int image_find(ImageClass class,
         if (!image_name_is_valid(name))
                 return -ENOENT;
 
-        NULSTR_FOREACH(path, pick_image_search_path(class)) {
+        NULSTR_FOREACH(path, image_search_path[class]) {
                 _cleanup_free_ char *resolved = NULL;
                 _cleanup_closedir_ DIR *d = NULL;
                 struct stat st;
                 int flags;
 
-                r = chase_and_opendir(path, root, CHASE_PREFIX_ROOT, &resolved, &d);
+                r = chase_symlinks_and_opendir(path, root, CHASE_PREFIX_ROOT, &resolved, &d);
                 if (r == -ENOENT)
                         continue;
                 if (r < 0)
@@ -517,13 +475,13 @@ int image_find(ImageClass class,
                         if (!S_ISREG(st.st_mode))
                                 continue;
 
-                        r = image_make(class, name, dirfd(d), resolved, raw, &st, ret);
+                        r = image_make(name, dirfd(d), resolved, raw, &st, ret);
 
                 } else {
                         if (!S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode))
                                 continue;
 
-                        r = image_make(class, name, dirfd(d), resolved, name, &st, ret);
+                        r = image_make(name, dirfd(d), resolved, name, &st, ret);
                 }
                 if (IN_SET(r, -ENOENT, -EMEDIUMTYPE))
                         continue;
@@ -537,7 +495,7 @@ int image_find(ImageClass class,
         }
 
         if (class == IMAGE_MACHINE && streq(name, ".host")) {
-                r = image_make(class, ".host", AT_FDCWD, NULL, empty_to_root(root), NULL, ret);
+                r = image_make(".host", AT_FDCWD, NULL, empty_to_root(root), NULL, ret);
                 if (r < 0)
                         return r;
 
@@ -557,9 +515,9 @@ int image_from_path(const char *path, Image **ret) {
          * overridden by another, different image earlier in the search path */
 
         if (path_equal(path, "/"))
-                return image_make(IMAGE_MACHINE, ".host", AT_FDCWD, NULL, "/", NULL, ret);
+                return image_make(".host", AT_FDCWD, NULL, "/", NULL, ret);
 
-        return image_make(_IMAGE_CLASS_INVALID, NULL, AT_FDCWD, NULL, path, NULL, ret);
+        return image_make(NULL, AT_FDCWD, NULL, path, NULL, ret);
 }
 
 int image_find_harder(ImageClass class, const char *name_or_path, const char *root, Image **ret) {
@@ -574,17 +532,19 @@ int image_discover(
                 const char *root,
                 Hashmap *h) {
 
+        const char *path;
         int r;
 
         assert(class >= 0);
         assert(class < _IMAGE_CLASS_MAX);
         assert(h);
 
-        NULSTR_FOREACH(path, pick_image_search_path(class)) {
+        NULSTR_FOREACH(path, image_search_path[class]) {
                 _cleanup_free_ char *resolved = NULL;
                 _cleanup_closedir_ DIR *d = NULL;
+                struct dirent *de;
 
-                r = chase_and_opendir(path, root, CHASE_PREFIX_ROOT, &resolved, &d);
+                r = chase_symlinks_and_opendir(path, root, CHASE_PREFIX_ROOT, &resolved, &d);
                 if (r == -ENOENT)
                         continue;
                 if (r < 0)
@@ -633,7 +593,7 @@ int image_discover(
                         if (hashmap_contains(h, pretty))
                                 continue;
 
-                        r = image_make(class, pretty, dirfd(d), resolved, de->d_name, &st, &image);
+                        r = image_make(pretty, dirfd(d), resolved, de->d_name, &st, &image);
                         if (IN_SET(r, -ENOENT, -EMEDIUMTYPE))
                                 continue;
                         if (r < 0)
@@ -652,7 +612,7 @@ int image_discover(
         if (class == IMAGE_MACHINE && !hashmap_contains(h, ".host")) {
                 _cleanup_(image_unrefp) Image *image = NULL;
 
-                r = image_make(IMAGE_MACHINE, ".host", AT_FDCWD, NULL, empty_to_root("/"), NULL, &image);
+                r = image_make(".host", AT_FDCWD, NULL, empty_to_root("/"), NULL, &image);
                 if (r < 0)
                         return r;
 
@@ -672,6 +632,7 @@ int image_remove(Image *i) {
         _cleanup_(release_lock_file) LockFile global_lock = LOCK_FILE_INIT, local_lock = LOCK_FILE_INIT;
         _cleanup_strv_free_ char **settings = NULL;
         _cleanup_free_ char *roothash = NULL;
+        char **j;
         int r;
 
         assert(i);
@@ -683,9 +644,9 @@ int image_remove(Image *i) {
         if (!settings)
                 return -ENOMEM;
 
-        r = image_roothash_path(i, &roothash);
-        if (r < 0)
-                return r;
+        roothash = image_roothash_path(i);
+        if (!roothash)
+                return -ENOMEM;
 
         /* Make sure we don't interfere with a running nspawn */
         r = image_path_lock(i->path, LOCK_EX|LOCK_NB, &global_lock, &local_lock);
@@ -734,9 +695,10 @@ int image_remove(Image *i) {
                 return -EOPNOTSUPP;
         }
 
-        STRV_FOREACH(j, settings)
+        STRV_FOREACH(j, settings) {
                 if (unlink(*j) < 0 && errno != ENOENT)
                         log_debug_errno(errno, "Failed to unlink %s, ignoring: %m", *j);
+        }
 
         if (unlink(roothash) < 0 && errno != ENOENT)
                 log_debug_errno(errno, "Failed to unlink %s, ignoring: %m", roothash);
@@ -745,16 +707,14 @@ int image_remove(Image *i) {
 }
 
 static int rename_auxiliary_file(const char *path, const char *new_name, const char *suffix) {
-        _cleanup_free_ char *fn = NULL, *rs = NULL;
-        int r;
+        _cleanup_free_ char *rs = NULL;
+        const char *fn;
 
-        fn = strjoin(new_name, suffix);
-        if (!fn)
+        fn = strjoina(new_name, suffix);
+
+        rs = file_in_same_dir(path, fn);
+        if (!rs)
                 return -ENOMEM;
-
-        r = file_in_same_dir(path, fn, &rs);
-        if (r < 0)
-                return r;
 
         return rename_noreplace(AT_FDCWD, path, AT_FDCWD, rs);
 }
@@ -764,6 +724,7 @@ int image_rename(Image *i, const char *new_name) {
         _cleanup_free_ char *new_path = NULL, *nn = NULL, *roothash = NULL;
         _cleanup_strv_free_ char **settings = NULL;
         unsigned file_attr = 0;
+        char **j;
         int r;
 
         assert(i);
@@ -778,9 +739,9 @@ int image_rename(Image *i, const char *new_name) {
         if (!settings)
                 return -ENOMEM;
 
-        r = image_roothash_path(i, &roothash);
-        if (r < 0)
-                return r;
+        roothash = image_roothash_path(i);
+        if (!roothash)
+                return -ENOMEM;
 
         /* Make sure we don't interfere with a running nspawn */
         r = image_path_lock(i->path, LOCK_EX|LOCK_NB, &global_lock, &local_lock);
@@ -811,7 +772,7 @@ int image_rename(Image *i, const char *new_name) {
 
                 _fallthrough_;
         case IMAGE_SUBVOLUME:
-                r = file_in_same_dir(i->path, new_name, &new_path);
+                new_path = file_in_same_dir(i->path, new_name);
                 break;
 
         case IMAGE_BLOCK:
@@ -820,23 +781,23 @@ int image_rename(Image *i, const char *new_name) {
                 if (path_startswith(i->path, "/dev"))
                         return -EROFS;
 
-                r = file_in_same_dir(i->path, new_name, &new_path);
+                new_path = file_in_same_dir(i->path, new_name);
                 break;
 
         case IMAGE_RAW: {
                 const char *fn;
 
                 fn = strjoina(new_name, ".raw");
-
-                r = file_in_same_dir(i->path, fn, &new_path);
+                new_path = file_in_same_dir(i->path, fn);
                 break;
         }
 
         default:
                 return -EOPNOTSUPP;
         }
-        if (r < 0)
-                return r;
+
+        if (!new_path)
+                return -ENOMEM;
 
         nn = strdup(new_name);
         if (!nn)
@@ -867,18 +828,16 @@ int image_rename(Image *i, const char *new_name) {
 }
 
 static int clone_auxiliary_file(const char *path, const char *new_name, const char *suffix) {
-        _cleanup_free_ char *fn = NULL, *rs = NULL;
-        int r;
+        _cleanup_free_ char *rs = NULL;
+        const char *fn;
 
-        fn = strjoin(new_name, suffix);
-        if (!fn)
+        fn = strjoina(new_name, suffix);
+
+        rs = file_in_same_dir(path, fn);
+        if (!rs)
                 return -ENOMEM;
 
-        r = file_in_same_dir(path, fn, &rs);
-        if (r < 0)
-                return r;
-
-        return copy_file_atomic(path, rs, 0664, COPY_REFLINK);
+        return copy_file_atomic(path, rs, 0664, 0, 0, COPY_REFLINK);
 }
 
 int image_clone(Image *i, const char *new_name, bool read_only) {
@@ -886,6 +845,7 @@ int image_clone(Image *i, const char *new_name, bool read_only) {
         _cleanup_strv_free_ char **settings = NULL;
         _cleanup_free_ char *roothash = NULL;
         const char *new_path;
+        char **j;
         int r;
 
         assert(i);
@@ -897,9 +857,9 @@ int image_clone(Image *i, const char *new_name, bool read_only) {
         if (!settings)
                 return -ENOMEM;
 
-        r = image_roothash_path(i, &roothash);
-        if (r < 0)
-                return r;
+        roothash = image_roothash_path(i);
+        if (!roothash)
+                return -ENOMEM;
 
         /* Make sure nobody takes the new name, between the time we
          * checked it is currently unused in all search paths, and the
@@ -923,13 +883,13 @@ int image_clone(Image *i, const char *new_name, bool read_only) {
 
                 new_path = strjoina("/var/lib/machines/", new_name);
 
-                r = btrfs_subvol_snapshot_at(AT_FDCWD, i->path, AT_FDCWD, new_path,
-                                             (read_only ? BTRFS_SNAPSHOT_READ_ONLY : 0) |
-                                             BTRFS_SNAPSHOT_FALLBACK_COPY |
-                                             BTRFS_SNAPSHOT_FALLBACK_DIRECTORY |
-                                             BTRFS_SNAPSHOT_FALLBACK_IMMUTABLE |
-                                             BTRFS_SNAPSHOT_RECURSIVE |
-                                             BTRFS_SNAPSHOT_QUOTA);
+                r = btrfs_subvol_snapshot(i->path, new_path,
+                                          (read_only ? BTRFS_SNAPSHOT_READ_ONLY : 0) |
+                                          BTRFS_SNAPSHOT_FALLBACK_COPY |
+                                          BTRFS_SNAPSHOT_FALLBACK_DIRECTORY |
+                                          BTRFS_SNAPSHOT_FALLBACK_IMMUTABLE |
+                                          BTRFS_SNAPSHOT_RECURSIVE |
+                                          BTRFS_SNAPSHOT_QUOTA);
                 if (r >= 0)
                         /* Enable "subtree" quotas for the copy, if we didn't copy any quota from the source. */
                         (void) btrfs_subvol_auto_qgroup(new_path, 0, true);
@@ -939,8 +899,7 @@ int image_clone(Image *i, const char *new_name, bool read_only) {
         case IMAGE_RAW:
                 new_path = strjoina("/var/lib/machines/", new_name, ".raw");
 
-                r = copy_file_atomic_full(i->path, new_path, read_only ? 0444 : 0644, FS_NOCOW_FL, FS_NOCOW_FL,
-                                          COPY_REFLINK|COPY_CRTIME, NULL, NULL);
+                r = copy_file_atomic(i->path, new_path, read_only ? 0444 : 0644, FS_NOCOW_FL, FS_NOCOW_FL, COPY_REFLINK|COPY_CRTIME);
                 break;
 
         case IMAGE_BLOCK:
@@ -1024,7 +983,7 @@ int image_read_only(Image *i, bool b) {
         }
 
         case IMAGE_BLOCK: {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
                 struct stat st;
                 int state = b;
 
@@ -1158,7 +1117,7 @@ int image_set_limit(Image *i, uint64_t referenced_max) {
         return btrfs_subvol_set_subtree_quota_limit(i->path, 0, referenced_max);
 }
 
-int image_read_metadata(Image *i, const ImagePolicy *image_policy) {
+int image_read_metadata(Image *i) {
         _cleanup_(release_lock_file) LockFile global_lock = LOCK_FILE_INIT, local_lock = LOCK_FILE_INIT;
         int r;
 
@@ -1177,17 +1136,7 @@ int image_read_metadata(Image *i, const ImagePolicy *image_policy) {
                 _cleanup_free_ char *hostname = NULL;
                 _cleanup_free_ char *path = NULL;
 
-                if (i->class == IMAGE_SYSEXT) {
-                        r = extension_has_forbidden_content(i->path);
-                        if (r < 0)
-                                return r;
-                        if (r > 0)
-                                return log_debug_errno(SYNTHETIC_ERRNO(ENOMEDIUM),
-                                                       "Conflicting content found in image %s, refusing.",
-                                                       i->name);
-                }
-
-                r = chase("/etc/hostname", i->path, CHASE_PREFIX_ROOT|CHASE_TRAIL_SLASH, &path, NULL);
+                r = chase_symlinks("/etc/hostname", i->path, CHASE_PREFIX_ROOT|CHASE_TRAIL_SLASH, &path, NULL);
                 if (r < 0 && r != -ENOENT)
                         log_debug_errno(r, "Failed to chase /etc/hostname in image %s: %m", i->name);
                 else if (r >= 0) {
@@ -1198,11 +1147,25 @@ int image_read_metadata(Image *i, const ImagePolicy *image_policy) {
 
                 path = mfree(path);
 
-                r = id128_get_machine(i->path, &machine_id);
-                if (r < 0)
-                        log_debug_errno(r, "Failed to read machine ID in image %s, ignoring: %m", i->name);
+                r = chase_symlinks("/etc/machine-id", i->path, CHASE_PREFIX_ROOT|CHASE_TRAIL_SLASH, &path, NULL);
+                if (r < 0 && r != -ENOENT)
+                        log_debug_errno(r, "Failed to chase /etc/machine-id in image %s: %m", i->name);
+                else if (r >= 0) {
+                        _cleanup_close_ int fd = -1;
 
-                r = chase("/etc/machine-info", i->path, CHASE_PREFIX_ROOT|CHASE_TRAIL_SLASH, &path, NULL);
+                        fd = open(path, O_RDONLY|O_CLOEXEC|O_NOCTTY);
+                        if (fd < 0)
+                                log_debug_errno(errno, "Failed to open %s: %m", path);
+                        else {
+                                r = id128_read_fd(fd, ID128_PLAIN, &machine_id);
+                                if (r < 0)
+                                        log_debug_errno(r, "Image %s contains invalid machine ID.", i->name);
+                        }
+                }
+
+                path = mfree(path);
+
+                r = chase_symlinks("/etc/machine-info", i->path, CHASE_PREFIX_ROOT|CHASE_TRAIL_SLASH, &path, NULL);
                 if (r < 0 && r != -ENOENT)
                         log_debug_errno(r, "Failed to chase /etc/machine-info in image %s: %m", i->name);
                 else if (r >= 0) {
@@ -1215,7 +1178,7 @@ int image_read_metadata(Image *i, const ImagePolicy *image_policy) {
                 if (r < 0)
                         log_debug_errno(r, "Failed to read os-release in image, ignoring: %m");
 
-                r = load_extension_release_pairs(i->path, i->class, i->name, /* relax_extension_release_check= */ false, &extension_release);
+                r = load_extension_release_pairs(i->path, i->name, &extension_release);
                 if (r < 0)
                         log_debug_errno(r, "Failed to read extension-release in image, ignoring: %m");
 
@@ -1233,29 +1196,25 @@ int image_read_metadata(Image *i, const ImagePolicy *image_policy) {
                 _cleanup_(loop_device_unrefp) LoopDevice *d = NULL;
                 _cleanup_(dissected_image_unrefp) DissectedImage *m = NULL;
 
-                r = loop_device_make_by_path(i->path, O_RDONLY, /* sector_size= */ UINT32_MAX, LO_FLAGS_PARTSCAN, LOCK_SH, &d);
+                r = loop_device_make_by_path(i->path, O_RDONLY, LO_FLAGS_PARTSCAN, &d);
                 if (r < 0)
                         return r;
 
-                r = dissect_loop_device(
-                                d,
-                                /* verity= */ NULL,
-                                /* mount_options= */ NULL,
-                                image_policy,
+                r = dissect_image(
+                                d->fd,
+                                NULL, NULL,
+                                d->uevent_seqnum_not_before,
+                                d->timestamp_not_before,
                                 DISSECT_IMAGE_GENERIC_ROOT |
                                 DISSECT_IMAGE_REQUIRE_ROOT |
                                 DISSECT_IMAGE_RELAX_VAR_CHECK |
                                 DISSECT_IMAGE_READ_ONLY |
-                                DISSECT_IMAGE_USR_NO_ROOT |
-                                DISSECT_IMAGE_ADD_PARTITION_DEVICES |
-                                DISSECT_IMAGE_PIN_PARTITION_DEVICES,
+                                DISSECT_IMAGE_USR_NO_ROOT,
                                 &m);
                 if (r < 0)
                         return r;
 
-                r = dissected_image_acquire_metadata(m,
-                                                     DISSECT_IMAGE_VALIDATE_OS |
-                                                     DISSECT_IMAGE_VALIDATE_OS_EXT);
+                r = dissected_image_acquire_metadata(m);
                 if (r < 0)
                         return r;
 
@@ -1307,9 +1266,11 @@ bool image_in_search_path(
                 const char *root,
                 const char *image) {
 
+        const char *path;
+
         assert(image);
 
-        NULSTR_FOREACH(path, pick_image_search_path(class)) {
+        NULSTR_FOREACH(path, image_search_path[class]) {
                 const char *p, *q;
                 size_t k;
 

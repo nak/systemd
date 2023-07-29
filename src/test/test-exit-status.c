@@ -4,7 +4,9 @@
 #include "string-util.h"
 #include "tests.h"
 
-TEST(exit_status_to_string) {
+static void test_exit_status_to_string(void) {
+        log_info("/* %s */", __func__);
+
         for (int i = -1; i <= 256; i++) {
                 const char *s, *class;
 
@@ -19,7 +21,9 @@ TEST(exit_status_to_string) {
         }
 }
 
-TEST(exit_status_from_string) {
+static void test_exit_status_from_string(void) {
+        log_info("/* %s */", __func__);
+
         assert_se(exit_status_from_string("11") == 11);
         assert_se(exit_status_from_string("-1") == -ERANGE);
         assert_se(exit_status_from_string("256") == -ERANGE);
@@ -28,11 +32,21 @@ TEST(exit_status_from_string) {
         assert_se(exit_status_from_string("FAILURE") == 1);
 }
 
-TEST(exit_status_NUMA_POLICY) {
+static void test_exit_status_NUMA_POLICY(void) {
+        log_info("/* %s */", __func__);
+
         assert_se(streq(exit_status_to_string(EXIT_NUMA_POLICY, EXIT_STATUS_FULL), "NUMA_POLICY"));
         assert_se(streq(exit_status_to_string(EXIT_NUMA_POLICY, EXIT_STATUS_SYSTEMD), "NUMA_POLICY"));
         assert_se(!exit_status_to_string(EXIT_NUMA_POLICY, EXIT_STATUS_BSD));
         assert_se(!exit_status_to_string(EXIT_NUMA_POLICY, EXIT_STATUS_LSB));
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_exit_status_to_string();
+        test_exit_status_from_string();
+        test_exit_status_NUMA_POLICY();
+
+        return 0;
+}

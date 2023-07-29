@@ -4,8 +4,7 @@
 #include <net/if.h>
 
 #include "alloc-util.h"
-#include "build.h"
-#include "constants.h"
+#include "def.h"
 #include "dns-domain.h"
 #include "extract-word.h"
 #include "fileio.h"
@@ -137,7 +136,7 @@ int resolvconf_parse_argv(int argc, char *argv[]) {
         arg_mode = _MODE_INVALID;
 
         while ((c = getopt_long(argc, argv, "hadxpfm:uIi:l:Rr:vV", options, NULL)) >= 0)
-                switch (c) {
+                switch(c) {
 
                 case 'h':
                         return resolvconf_help();
@@ -204,7 +203,7 @@ int resolvconf_parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (arg_mode == _MODE_INVALID)

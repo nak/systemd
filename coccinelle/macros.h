@@ -1,6 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
-/*
- * Collected macros from our systemd codebase to make the cocci semantic
+/* Collected macros from our systemd codebase to make the cocci semantic
  * parser happy. Inspired by the original cocci macros file
  * /usr/lib64/coccinelle/standard.h (including the YACFE_* symbols)
  */
@@ -43,7 +41,7 @@
 
 // src/basic/umask-util.h
 #define _cleanup_umask_
-#define WITH_UMASK(mask)                                            \
+#define RUN_WITH_UMASK(mask)                                            \
         for (_cleanup_umask_ mode_t _saved_umask_ = umask(mask) | S_IFMT; \
              FLAGS_SET(_saved_umask_, S_IFMT);                          \
              _saved_umask_ &= 0777)
@@ -165,7 +163,7 @@
         } while (false)
 
 #define LIST_JUST_US(name,item)                                         \
-        (!(item)->name##_prev && !(item)->name##_next)
+        (!(item)->name##_prev && !(item)->name##_next)                  \
 #define LIST_FOREACH(name,i,head)                                       \
         for ((i) = (head); (i); (i) = (i)->name##_next)
 #define LIST_FOREACH_SAFE(name,i,n,head)                                \
@@ -189,6 +187,8 @@
              (i) != (p);                                                \
              (i) = (i)->name##_next ? (i)->name##_next : (head))
 
+#define LIST_IS_EMPTY(head)                                             \
+        (!(head))
 #define LIST_JOIN(name,a,b)                                             \
         do {                                                            \
                 assert(b);                                              \

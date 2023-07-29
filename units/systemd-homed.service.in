@@ -11,11 +11,12 @@
 Description=Home Area Manager
 Documentation=man:systemd-homed.service(8)
 Documentation=man:org.freedesktop.home1(5)
+
 After=home.mount dbus.service
 
 [Service]
 BusName=org.freedesktop.home1
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETGID CAP_SETUID CAP_SYS_RESOURCE CAP_SETPCAP CAP_DAC_READ_SEARCH CAP_SETFCAP
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_SETGID CAP_SETUID CAP_SYS_RESOURCE CAP_SETPCAP CAP_DAC_READ_SEARCH
 DeviceAllow=/dev/loop-control rw
 DeviceAllow=/dev/mapper/control rw
 DeviceAllow=block-* rw
@@ -27,13 +28,12 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 NoNewPrivileges=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_ALG AF_INET AF_INET6
-RestrictNamespaces=mnt user
+RestrictNamespaces=mnt
 RestrictRealtime=yes
 StateDirectory=systemd/home
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
 SystemCallFilter=@system-service @mount
-TimeoutStopSec=3min
 {{SERVICE_WATCHDOG}}
 
 [Install]

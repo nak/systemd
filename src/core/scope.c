@@ -4,14 +4,11 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
-#include "cgroup-setup.h"
 #include "dbus-scope.h"
 #include "dbus-unit.h"
-#include "exit-status.h"
 #include "load-dropin.h"
 #include "log.h"
 #include "process-util.h"
-#include "random-util.h"
 #include "scope.h"
 #include "serialize.h"
 #include "special.h"
@@ -20,11 +17,9 @@
 #include "strv.h"
 #include "unit-name.h"
 #include "unit.h"
-#include "user-util.h"
 
 static const UnitActiveState state_translation_table[_SCOPE_STATE_MAX] = {
         [SCOPE_DEAD] = UNIT_INACTIVE,
-        [SCOPE_START_CHOWN] = UNIT_ACTIVATING,
         [SCOPE_RUNNING] = UNIT_ACTIVE,
         [SCOPE_ABANDONED] = UNIT_ACTIVE,
         [SCOPE_STOP_SIGTERM] = UNIT_DEACTIVATING,
@@ -43,8 +38,6 @@ static void scope_init(Unit *u) {
         s->runtime_max_usec = USEC_INFINITY;
         s->timeout_stop_usec = u->manager->default_timeout_stop_usec;
         u->ignore_on_isolate = true;
-        s->user = s->group = NULL;
-        s->oom_policy = _OOM_POLICY_INVALID;
 }
 
 static void scope_done(Unit *u) {
@@ -56,24 +49,6 @@ static void scope_done(Unit *u) {
         s->controller_track = sd_bus_track_unref(s->controller_track);
 
         s->timer_event_source = sd_event_source_disable_unref(s->timer_event_source);
-
-        s->user = mfree(s->user);
-        s->group = mfree(s->group);
-}
-
-static usec_t scope_running_timeout(Scope *s) {
-        usec_t delta = 0;
-
-        assert(s);
-
-        if (s->runtime_rand_extra_usec != 0) {
-                delta = random_u64_range(s->runtime_rand_extra_usec);
-                log_unit_debug(UNIT(s), "Adding delta of %s sec to timeout", FORMAT_TIMESPAN(delta, USEC_PER_SEC));
-        }
-
-        return usec_add(usec_add(UNIT(s)->active_enter_timestamp.monotonic,
-                                 s->runtime_max_usec),
-                        delta);
 }
 
 static int scope_arm_timer(Scope *s, usec_t usec) {
@@ -116,7 +91,7 @@ static void scope_set_state(Scope *s, ScopeState state) {
         old_state = s->state;
         s->state = state;
 
-        if (!IN_SET(state, SCOPE_STOP_SIGTERM, SCOPE_STOP_SIGKILL, SCOPE_START_CHOWN, SCOPE_RUNNING))
+        if (!IN_SET(state, SCOPE_STOP_SIGTERM, SCOPE_STOP_SIGKILL))
                 s->timer_event_source = sd_event_source_disable_unref(s->timer_event_source);
 
         if (IN_SET(state, SCOPE_DEAD, SCOPE_FAILED)) {
@@ -127,26 +102,27 @@ static void scope_set_state(Scope *s, ScopeState state) {
         if (state != old_state)
                 log_debug("%s changed %s -> %s", UNIT(s)->id, scope_state_to_string(old_state), scope_state_to_string(state));
 
-        unit_notify(UNIT(s), state_translation_table[old_state], state_translation_table[state], /* reload_success = */ true);
+        unit_notify(UNIT(s), state_translation_table[old_state], state_translation_table[state], 0);
 }
 
 static int scope_add_default_dependencies(Scope *s) {
+        int r;
+
         assert(s);
 
         if (!UNIT(s)->default_dependencies)
                 return 0;
 
         /* Make sure scopes are unloaded on shutdown */
-        if (!UNIT(s)->ignore_on_soft_reboot)
-                return unit_add_two_dependencies_by_name(
-                                UNIT(s),
-                                UNIT_BEFORE, UNIT_CONFLICTS,
-                                SPECIAL_SHUTDOWN_TARGET, true,
-                                UNIT_DEPENDENCY_DEFAULT);
+        r = unit_add_two_dependencies_by_name(
+                        UNIT(s),
+                        UNIT_BEFORE, UNIT_CONFLICTS,
+                        SPECIAL_SHUTDOWN_TARGET, true,
+                        UNIT_DEPENDENCY_DEFAULT);
+        if (r < 0)
+                return r;
 
-        /* Unless we are meant to survive soft reboot, in which case we need to conflict with
-         * non-soft-reboot targets. */
-        return unit_add_dependencies_on_real_shutdown_targets(UNIT(s));
+        return 0;
 }
 
 static int scope_verify(Scope *s) {
@@ -195,11 +171,6 @@ static int scope_add_extras(Scope *s) {
         if (r < 0)
                 return r;
 
-        if (s->oom_policy < 0)
-                s->oom_policy = s->cgroup_context.delegate ? OOM_CONTINUE : UNIT(s)->manager->default_oom_policy;
-
-        s->cgroup_context.memory_oom_group = s->oom_policy == OOM_KILL;
-
         return scope_add_default_dependencies(s);
 }
 
@@ -238,7 +209,7 @@ static usec_t scope_coldplug_timeout(Scope *s) {
         switch (s->deserialized_state) {
 
         case SCOPE_RUNNING:
-                return scope_running_timeout(s);
+                return usec_add(UNIT(s)->active_enter_timestamp.monotonic, s->runtime_max_usec);
 
         case SCOPE_STOP_SIGKILL:
         case SCOPE_STOP_SIGTERM:
@@ -284,6 +255,7 @@ static int scope_coldplug(Unit *u) {
 
 static void scope_dump(Unit *u, FILE *f, const char *prefix) {
         Scope *s = SCOPE(u);
+        char buf_runtime[FORMAT_TIMESPAN_MAX];
 
         assert(s);
         assert(f);
@@ -291,14 +263,10 @@ static void scope_dump(Unit *u, FILE *f, const char *prefix) {
         fprintf(f,
                 "%sScope State: %s\n"
                 "%sResult: %s\n"
-                "%sRuntimeMaxSec: %s\n"
-                "%sRuntimeRandomizedExtraSec: %s\n"
-                "%sOOMPolicy: %s\n",
+                "%sRuntimeMaxSec: %s\n",
                 prefix, scope_state_to_string(s->state),
                 prefix, scope_result_to_string(s->result),
-                prefix, FORMAT_TIMESPAN(s->runtime_max_usec, USEC_PER_SEC),
-                prefix, FORMAT_TIMESPAN(s->runtime_rand_extra_usec, USEC_PER_SEC),
-                prefix, oom_policy_to_string(s->oom_policy));
+                prefix, format_timespan(buf_runtime, sizeof(buf_runtime), s->runtime_max_usec, USEC_PER_SEC));
 
         cgroup_context_dump(UNIT(s), f, prefix);
         kill_context_dump(&s->kill_context, f, prefix);
@@ -368,114 +336,9 @@ fail:
         scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
 }
 
-static int scope_enter_start_chown(Scope *s) {
-        Unit *u = UNIT(s);
-        pid_t pid;
-        int r;
-
-        assert(s);
-        assert(s->user);
-
-        r = scope_arm_timer(s, usec_add(now(CLOCK_MONOTONIC), u->manager->default_timeout_start_usec));
-        if (r < 0)
-                return r;
-
-        r = unit_fork_helper_process(u, "(sd-chown-cgroup)", &pid);
-        if (r < 0)
-                goto fail;
-
-        if (r == 0) {
-                uid_t uid = UID_INVALID;
-                gid_t gid = GID_INVALID;
-
-                if (!isempty(s->user)) {
-                        const char *user = s->user;
-
-                        r = get_user_creds(&user, &uid, &gid, NULL, NULL, 0);
-                        if (r < 0) {
-                                log_unit_error_errno(UNIT(s), r, "Failed to resolve user \"%s\": %m", user);
-                                _exit(EXIT_USER);
-                        }
-                }
-
-                if (!isempty(s->group)) {
-                        const char *group = s->group;
-
-                        r = get_group_creds(&group, &gid, 0);
-                        if (r < 0) {
-                                log_unit_error_errno(UNIT(s), r, "Failed to resolve group \"%s\": %m", group);
-                                _exit(EXIT_GROUP);
-                        }
-                }
-
-                r = cg_set_access(SYSTEMD_CGROUP_CONTROLLER, u->cgroup_path, uid, gid);
-                if (r < 0) {
-                        log_unit_error_errno(UNIT(s), r, "Failed to adjust control group access: %m");
-                        _exit(EXIT_CGROUP);
-                }
-
-                _exit(EXIT_SUCCESS);
-        }
-
-        r = unit_watch_pid(UNIT(s), pid, true);
-        if (r < 0)
-                goto fail;
-
-        scope_set_state(s, SCOPE_START_CHOWN);
-
-        return 1;
-fail:
-        s->timer_event_source = sd_event_source_disable_unref(s->timer_event_source);
-        return r;
-}
-
-static int scope_enter_running(Scope *s) {
-        Unit *u = UNIT(s);
-        int r;
-
-        assert(s);
-
-        (void) bus_scope_track_controller(s);
-
-        r = unit_acquire_invocation_id(u);
-        if (r < 0)
-                return r;
-
-        unit_export_state_files(u);
-
-        r = unit_attach_pids_to_cgroup(u, u->pids, NULL);
-        if (r < 0) {
-                log_unit_warning_errno(u, r, "Failed to add PIDs to scope's control group: %m");
-                scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
-                return r;
-        }
-        if (r == 0) {
-                log_unit_warning(u, "No PIDs left to attach to the scope's control group, refusing.");
-                scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
-                return -ECHILD;
-        }
-        log_unit_debug(u, "%i %s added to scope's control group.", r, r == 1 ? "process" : "processes");
-
-        s->result = SCOPE_SUCCESS;
-
-        scope_set_state(s, SCOPE_RUNNING);
-
-        /* Set the maximum runtime timeout. */
-        scope_arm_timer(s, scope_running_timeout(s));
-
-        /* On unified we use proper notifications hence we can unwatch the PIDs
-         * we just attached to the scope. This can also be done on legacy as
-         * we're going to update the list of the processes we watch with the
-         * PIDs currently in the scope anyway. */
-        unit_unwatch_all_pids(u);
-
-        /* Start watching the PIDs currently in the scope (legacy hierarchy only) */
-        (void) unit_enqueue_rewatch_pids(u);
-        return 1;
-}
-
 static int scope_start(Unit *u) {
         Scope *s = SCOPE(u);
+        int r;
 
         assert(s);
 
@@ -494,15 +357,46 @@ static int scope_start(Unit *u) {
         if (!u->transient && !MANAGER_IS_RELOADING(u->manager))
                 return -ENOENT;
 
+        (void) bus_scope_track_controller(s);
+
+        r = unit_acquire_invocation_id(u);
+        if (r < 0)
+                return r;
+
         (void) unit_realize_cgroup(u);
         (void) unit_reset_accounting(u);
 
-        /* We check only for User= option to keep behavior consistent with logic for service units,
-         * i.e. having 'Delegate=true Group=foo' w/o specifying User= has no effect. */
-        if (s->user && unit_cgroup_delegate(u))
-                return scope_enter_start_chown(s);
+        unit_export_state_files(u);
 
-        return scope_enter_running(s);
+        r = unit_attach_pids_to_cgroup(u, u->pids, NULL);
+        if (r < 0) {
+                log_unit_warning_errno(u, r, "Failed to add PIDs to scope's control group: %m");
+                scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
+                return r;
+        }
+        if (r == 0) {
+                log_unit_warning(u, "No PIDs left to attach to the scope's control group, refusing: %m");
+                scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
+                return -ECHILD;
+        }
+        log_unit_debug(u, "%i %s added to scope's control group.", r, r == 1 ? "process" : "processes");
+
+        s->result = SCOPE_SUCCESS;
+
+        scope_set_state(s, SCOPE_RUNNING);
+
+        /* Set the maximum runtime timeout. */
+        scope_arm_timer(s, usec_add(UNIT(s)->active_enter_timestamp.monotonic, s->runtime_max_usec));
+
+        /* On unified we use proper notifications hence we can unwatch the PIDs
+         * we just attached to the scope. This can also be done on legacy as
+         * we're going to update the list of the processes we watch with the
+         * PIDs currently in the scope anyway. */
+        unit_unwatch_all_pids(u);
+
+        /* Start watching the PIDs currently in the scope (legacy hierarchy only) */
+        (void) unit_enqueue_rewatch_pids(u);
+        return 1;
 }
 
 static int scope_stop(Unit *u) {
@@ -530,8 +424,8 @@ static void scope_reset_failed(Unit *u) {
         s->result = SCOPE_SUCCESS;
 }
 
-static int scope_kill(Unit *u, KillWho who, int signo, int code, int value, sd_bus_error *error) {
-        return unit_kill_common(u, who, signo, code, value, -1, -1, error);
+static int scope_kill(Unit *u, KillWho who, int signo, sd_bus_error *error) {
+        return unit_kill_common(u, who, signo, -1, -1, error);
 }
 
 static int scope_get_timeout(Unit *u, usec_t *timeout) {
@@ -628,52 +522,15 @@ static void scope_notify_cgroup_empty_event(Unit *u) {
 
         if (IN_SET(s->state, SCOPE_RUNNING, SCOPE_ABANDONED, SCOPE_STOP_SIGTERM, SCOPE_STOP_SIGKILL))
                 scope_enter_dead(s, SCOPE_SUCCESS);
-}
 
-static void scope_notify_cgroup_oom_event(Unit *u, bool managed_oom) {
-        Scope *s = SCOPE(u);
-
-        if (managed_oom)
-                log_unit_debug(u, "Process(es) of control group were killed by systemd-oomd.");
-        else
-                log_unit_debug(u, "Process of control group was killed by the OOM killer.");
-
-        if (s->oom_policy == OOM_CONTINUE)
-                return;
-
-        switch (s->state) {
-
-        case SCOPE_START_CHOWN:
-        case SCOPE_RUNNING:
-                scope_enter_signal(s, SCOPE_STOP_SIGTERM, SCOPE_FAILURE_OOM_KILL);
-                break;
-
-        case SCOPE_STOP_SIGTERM:
-                scope_enter_signal(s, SCOPE_STOP_SIGKILL, SCOPE_FAILURE_OOM_KILL);
-                break;
-
-        case SCOPE_STOP_SIGKILL:
-                if (s->result == SCOPE_SUCCESS)
-                        s->result = SCOPE_FAILURE_OOM_KILL;
-                break;
-        /* SCOPE_DEAD, SCOPE_ABANDONED, and SCOPE_FAILED end up in default */
-        default:
-                ;
-        }
+        /* If the cgroup empty notification comes when the unit is not active, we must have failed to clean
+         * up the cgroup earlier and should do it now. */
+        if (IN_SET(s->state, SCOPE_DEAD, SCOPE_FAILED))
+                unit_prune_cgroup(u);
 }
 
 static void scope_sigchld_event(Unit *u, pid_t pid, int code, int status) {
-        Scope *s = SCOPE(u);
-
-        assert(s);
-
-        if (s->state == SCOPE_START_CHOWN) {
-                if (!is_clean_exit(code, status, EXIT_CLEAN_COMMAND, NULL))
-                        scope_enter_dead(s, SCOPE_FAILURE_RESOURCES);
-                else
-                        scope_enter_running(s);
-                return;
-        }
+        assert(u);
 
         /* If we get a SIGCHLD event for one of the processes we were interested in, then we look for others to
          * watch, under the assumption that we'll sooner or later get a SIGCHLD for them, as the original
@@ -711,13 +568,8 @@ static int scope_dispatch_timer(sd_event_source *source, usec_t usec, void *user
                 scope_enter_dead(s, SCOPE_FAILURE_TIMEOUT);
                 break;
 
-        case SCOPE_START_CHOWN:
-                log_unit_warning(UNIT(s), "User lookup timed out. Entering failed state.");
-                scope_enter_dead(s, SCOPE_FAILURE_TIMEOUT);
-                break;
-
         default:
-                assert_not_reached();
+                assert_not_reached("Timeout at wrong time.");
         }
 
         return 0;
@@ -784,17 +636,12 @@ static void scope_enumerate_perpetual(Manager *m) {
 
         unit_add_to_load_queue(u);
         unit_add_to_dbus_queue(u);
-        /* Enqueue an explicit cgroup realization here. Unlike other cgroups this one already exists and is
-         * populated (by us, after all!) already, even when we are not in a reload cycle. Hence we cannot
-         * apply the settings at creation time anymore, but let's at least apply them asynchronously. */
-        unit_add_to_cgroup_realize_queue(u);
 }
 
 static const char* const scope_result_table[_SCOPE_RESULT_MAX] = {
-        [SCOPE_SUCCESS]           = "success",
+        [SCOPE_SUCCESS] = "success",
         [SCOPE_FAILURE_RESOURCES] = "resources",
-        [SCOPE_FAILURE_TIMEOUT]   = "timeout",
-        [SCOPE_FAILURE_OOM_KILL]  = "oom-kill",
+        [SCOPE_FAILURE_TIMEOUT] = "timeout",
 };
 
 DEFINE_STRING_TABLE_LOOKUP(scope_result, ScopeResult);
@@ -845,7 +692,6 @@ const UnitVTable scope_vtable = {
         .reset_failed = scope_reset_failed,
 
         .notify_cgroup_empty = scope_notify_cgroup_empty_event,
-        .notify_cgroup_oom = scope_notify_cgroup_oom_event,
 
         .bus_set_property = bus_scope_set_property,
         .bus_commit_properties = bus_scope_commit_properties,

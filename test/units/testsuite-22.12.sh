@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
-#
+#! /bin/bash
+
 # Test the "Age" parameter (with age-by) for systemd-tmpfiles.
+
 set -e
 set -x
 

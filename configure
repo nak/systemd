@@ -2,23 +2,22 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -e
 
-cflags="CFLAGS=${CFLAGS-}"
-cxxflags="CXXFLAGS=${CXXFLAGS-}"
-args=()
-
-for arg in "$@"; do
-    case "$arg" in
+cflags=CFLAGS="$CFLAGS"
+cxxflags=CXXFLAGS="$CXXFLAGS"
+declare -a args
+j=0
+for i in "$@"; do
+    case "$i" in
         CFLAGS=*)
-            cflags="$arg"
-            ;;
+            cflags="$i";;
         CXXFLAGS=*)
-            cxxflags="$arg"
-            ;;
-        *)
-            args+=("$arg")
+            cxxflags="$i";;
+	*)
+	    args[$j]="$i"
+	    j=$((j+1))
     esac
 done
 
-export "${cflags?}" "${cxxflags?}"
+export "$cflags" "$cxxflags"
 set -x
 exec meson build "${args[@]}"

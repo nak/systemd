@@ -120,13 +120,15 @@ int numa_to_cpu_set(const NUMAPolicy *policy, CPUSet *ret) {
                         return r;
         }
 
-        *ret = TAKE_STRUCT(s);
+        *ret = s;
+        s = (CPUSet) {};
 
         return 0;
 }
 
 static int numa_max_node(void) {
         _cleanup_closedir_ DIR *d = NULL;
+        struct dirent *de;
         int r, max_node = 0;
 
         d = opendir("/sys/devices/system/node");

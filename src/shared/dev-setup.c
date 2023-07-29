@@ -6,9 +6,8 @@
 
 #include "alloc-util.h"
 #include "dev-setup.h"
-#include "label-util.h"
+#include "label.h"
 #include "log.h"
-#include "mkdir-label.h"
 #include "nulstr-util.h"
 #include "path-util.h"
 #include "umask-util.h"
@@ -22,6 +21,7 @@ int dev_setup(const char *prefix, uid_t uid, gid_t gid) {
                 "/proc/self/fd/1\0"  "/dev/stdout\0"
                 "/proc/self/fd/2\0"  "/dev/stderr\0";
 
+        const char *j, *k;
         int r;
 
         NULSTR_FOREACH_PAIR(j, k, symlinks) {

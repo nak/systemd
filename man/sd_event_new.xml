@@ -135,10 +135,8 @@
         int r;
         …
         r = sd_event_default(&amp;event);
-        if (r &lt; 0) {
-          errno = -r;
-          fprintf(stderr, "Failed to allocate event loop: %m\n");
-        }
+        if (r &lt; 0)
+                fprintf(stderr, "Failed to allocate event loop: %s\n", strerror(-r));
         …
 }</programlisting>
 

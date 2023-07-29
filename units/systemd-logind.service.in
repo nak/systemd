@@ -16,6 +16,8 @@ Documentation=man:org.freedesktop.login1(5)
 
 Wants=user.slice modprobe@drm.service
 After=nss-user-lookup.target user.slice modprobe@drm.service
+ConditionPathExists=|/lib/systemd/system/dbus.service
+ConditionPathExists=|/lib/systemd/system/dbus-broker.service
 
 # Ask for the dbus socket.
 Wants=dbus.socket
@@ -58,7 +60,6 @@ StateDirectory=systemd/linger
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
 SystemCallFilter=@system-service
-Type=notify-reload
 {{SERVICE_WATCHDOG}}
 
 # Increase the default a bit in order to allow many simultaneous logins since

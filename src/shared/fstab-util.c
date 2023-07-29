@@ -7,7 +7,6 @@
 #include "alloc-util.h"
 #include "device-nodes.h"
 #include "fstab-util.h"
-#include "initrd-util.h"
 #include "macro.h"
 #include "mount-util.h"
 #include "nulstr-util.h"
@@ -19,8 +18,6 @@
 int fstab_has_fstype(const char *fstype) {
         _cleanup_endmntent_ FILE *f = NULL;
         struct mntent *m;
-
-        assert(fstype);
 
         f = setmntent(fstab_path(), "re");
         if (!f)
@@ -49,7 +46,6 @@ bool fstab_is_extrinsic(const char *mount, const char *opts) {
 
         if (PATH_STARTSWITH_SET(mount,
                                 "/run/initramfs",    /* This should stay around from before we boot until after we shutdown */
-                                "/run/nextroot",     /* Similar (though might be updated from the host) */
                                 "/proc",             /* All of this is API VFS */
                                 "/sys",              /* … dito … */
                                 "/dev"))             /* … dito … */
@@ -57,7 +53,7 @@ bool fstab_is_extrinsic(const char *mount, const char *opts) {
 
         /* If this is an initrd mount, and we are not in the initrd, then leave
          * this around forever, too. */
-        if (fstab_test_option(opts, "x-initrd.mount\0") && !in_initrd())
+        if (opts && fstab_test_option(opts, "x-initrd.mount\0") && !in_initrd())
                 return true;
 
         return false;
@@ -91,7 +87,7 @@ int fstab_filter_options(
                 char ***ret_values,
                 char **ret_filtered) {
 
-        const char *namefound = NULL, *x;
+        const char *name, *namefound = NULL, *x;
         _cleanup_strv_free_ char **stor = NULL, **values = NULL;
         _cleanup_free_ char *value = NULL, **filtered = NULL;
         int r;
@@ -130,17 +126,17 @@ int fstab_filter_options(
                                 if (!x)
                                         continue;
                                 /* Match name, but when ret_values, only when followed by assignment. */
-                                if (*x == '=' || (!ret_values && *x == '\0')) {
-                                        /* Keep the last occurrence found */
-                                        namefound = name;
+                                if (*x == '=' || (!ret_values && *x == '\0'))
                                         goto found;
-                                }
                         }
 
                         *t = *s;
                         t++;
                         continue;
                 found:
+                        /* Keep the last occurrence found */
+                        namefound = name;
+
                         if (ret_value || ret_values) {
                                 assert(IN_SET(*x, '=', '\0'));
 
@@ -289,15 +285,4 @@ char *fstab_node_to_udev_node(const char *p) {
                 return tag_to_udev_node(p+10, "partlabel");
 
         return strdup(p);
-}
-
-bool fstab_is_bind(const char *options, const char *fstype) {
-
-        if (fstab_test_option(options, "bind\0" "rbind\0"))
-                return true;
-
-        if (fstype && STR_IN_SET(fstype, "bind", "rbind"))
-                return true;
-
-        return false;
 }

@@ -44,6 +44,7 @@ int nss_passwd_to_user_record(
         int r;
 
         assert(pwd);
+        assert(ret);
 
         if (isempty(pwd->pw_name))
                 return -EINVAL;
@@ -160,8 +161,7 @@ int nss_passwd_to_user_record(
         hr->mask = USER_RECORD_REGULAR |
                 (!strv_isempty(hr->hashed_password) ? USER_RECORD_PRIVILEGED : 0);
 
-        if (ret)
-                *ret = TAKE_PTR(hr);
+        *ret = TAKE_PTR(hr);
         return 0;
 }
 
@@ -216,6 +216,7 @@ int nss_user_record_by_name(
         int r;
 
         assert(name);
+        assert(ret);
 
         for (;;) {
                 buf = malloc(buflen);
@@ -256,8 +257,7 @@ int nss_user_record_by_name(
         if (r < 0)
                 return r;
 
-        if (ret)
-                (*ret)->incomplete = incomplete;
+        (*ret)->incomplete = incomplete;
         return 0;
 }
 
@@ -272,6 +272,8 @@ int nss_user_record_by_uid(
         size_t buflen = 4096;
         struct spwd spwd, *sresult = NULL;
         int r;
+
+        assert(ret);
 
         for (;;) {
                 buf = malloc(buflen);
@@ -311,8 +313,7 @@ int nss_user_record_by_uid(
         if (r < 0)
                 return r;
 
-        if (ret)
-                (*ret)->incomplete = incomplete;
+        (*ret)->incomplete = incomplete;
         return 0;
 }
 
@@ -325,6 +326,7 @@ int nss_group_to_group_record(
         int r;
 
         assert(grp);
+        assert(ret);
 
         if (isempty(grp->gr_name))
                 return -EINVAL;
@@ -374,8 +376,7 @@ int nss_group_to_group_record(
         g->mask = USER_RECORD_REGULAR |
                 (!strv_isempty(g->hashed_password) ? USER_RECORD_PRIVILEGED : 0);
 
-        if (ret)
-                *ret = TAKE_PTR(g);
+        *ret = TAKE_PTR(g);
         return 0;
 }
 
@@ -430,6 +431,7 @@ int nss_group_record_by_name(
         int r;
 
         assert(name);
+        assert(ret);
 
         for (;;) {
                 buf = malloc(buflen);
@@ -469,8 +471,7 @@ int nss_group_record_by_name(
         if (r < 0)
                 return r;
 
-        if (ret)
-                (*ret)->incomplete = incomplete;
+        (*ret)->incomplete = incomplete;
         return 0;
 }
 
@@ -485,6 +486,8 @@ int nss_group_record_by_gid(
         size_t buflen = 4096;
         struct sgrp sgrp, *sresult = NULL;
         int r;
+
+        assert(ret);
 
         for (;;) {
                 buf = malloc(buflen);
@@ -523,7 +526,6 @@ int nss_group_record_by_gid(
         if (r < 0)
                 return r;
 
-        if (ret)
-                (*ret)->incomplete = incomplete;
+        (*ret)->incomplete = incomplete;
         return 0;
 }

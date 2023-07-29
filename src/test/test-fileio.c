@@ -14,7 +14,6 @@
 #include "fileio.h"
 #include "fs-util.h"
 #include "io-util.h"
-#include "memfd-util.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "process-util.h"
@@ -25,8 +24,9 @@
 #include "strv.h"
 #include "tests.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
-TEST(parse_env_file) {
+static void test_parse_env_file(void) {
         _cleanup_(unlink_tempfilep) char
                 t[] = "/tmp/test-fileio-in-XXXXXX",
                 p[] = "/tmp/test-fileio-out-XXXXXX";
@@ -35,6 +35,7 @@ TEST(parse_env_file) {
                         *six = NULL, *seven = NULL, *eight = NULL, *nine = NULL, *ten = NULL,
                         *eleven = NULL, *twelve = NULL, *thirteen = NULL;
         _cleanup_strv_free_ char **a = NULL, **b = NULL;
+        char **i;
         unsigned k;
         int r;
 
@@ -109,7 +110,8 @@ TEST(parse_env_file) {
                        "eleven", &eleven,
                        "twelve", &twelve,
                        "thirteen", &thirteen);
-        assert_se(r == 0);
+
+        assert_se(r >= 0);
 
         log_info("one=[%s]", strna(one));
         log_info("two=[%s]", strna(two));
@@ -164,12 +166,13 @@ static void test_one_shell_var(const char *file, const char *variable, const cha
         assert_se(streq(from_shell, value));
 }
 
-TEST(parse_multiline_env_file) {
+static void test_parse_multiline_env_file(void) {
         _cleanup_(unlink_tempfilep) char
                 t[] = "/tmp/test-fileio-in-XXXXXX",
                 p[] = "/tmp/test-fileio-out-XXXXXX";
         FILE *f;
         _cleanup_strv_free_ char **a = NULL, **b = NULL;
+        char **i;
         int r;
 
         assert_se(fmkostemp_safe(t, "w", &f) == 0);
@@ -215,10 +218,11 @@ TEST(parse_multiline_env_file) {
         assert_se(r >= 0);
 }
 
-TEST(merge_env_file) {
+static void test_merge_env_file(void) {
         _cleanup_(unlink_tempfilep) char t[] = "/tmp/test-fileio-XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_strv_free_ char **a = NULL;
+        char **i;
         int r;
 
         assert_se(fmkostemp_safe(t, "w", &f) == 0);
@@ -237,7 +241,7 @@ TEST(merge_env_file) {
                                 "zzzz=${foobar:-${nothing}}\n"
                                 "zzzzz=${nothing:+${nothing}}\n"
                                 , WRITE_STRING_FILE_AVOID_NEWLINE);
-        assert_se(r >= 0);
+        assert(r >= 0);
 
         r = merge_env_file(&a, NULL, t);
         assert_se(r >= 0);
@@ -278,10 +282,11 @@ TEST(merge_env_file) {
         assert_se(a[10] == NULL);
 }
 
-TEST(merge_env_file_invalid) {
+static void test_merge_env_file_invalid(void) {
         _cleanup_(unlink_tempfilep) char t[] = "/tmp/test-fileio-XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_strv_free_ char **a = NULL;
+        char **i;
         int r;
 
         assert_se(fmkostemp_safe(t, "w", &f) == 0);
@@ -300,7 +305,7 @@ TEST(merge_env_file_invalid) {
                                 "#\n"
                                 "\n\n"                  /* empty line */
                                 , WRITE_STRING_FILE_AVOID_NEWLINE);
-        assert_se(r >= 0);
+        assert(r >= 0);
 
         r = merge_env_file(&a, NULL, t);
         assert_se(r >= 0);
@@ -311,11 +316,13 @@ TEST(merge_env_file_invalid) {
         assert_se(strv_isempty(a));
 }
 
-TEST(executable_is_script) {
+static void test_executable_is_script(void) {
         _cleanup_(unlink_tempfilep) char t[] = "/tmp/test-fileio-XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         char *command;
         int r;
+
+        log_info("/* %s */", __func__);
 
         assert_se(fmkostemp_safe(t, "w", &f) == 0);
         fputs("#! /bin/script -a -b \ngoo goo", f);
@@ -330,16 +337,23 @@ TEST(executable_is_script) {
         assert_se(r == 0);
 
         r = executable_is_script("/usr/bin/yum", &command);
+        assert_se(r > 0 || r == -ENOENT);
         if (r > 0) {
                 assert_se(startswith(command, "/"));
                 free(command);
         }
 }
 
-TEST(status_field) {
-        _cleanup_free_ char *p = NULL, *s = NULL, *z = NULL;
+static void test_status_field(void) {
+        _cleanup_free_ char *t = NULL, *p = NULL, *s = NULL, *z = NULL;
         unsigned long long total = 0, buffers = 0;
         int r;
+
+        log_info("/* %s */", __func__);
+
+        assert_se(get_proc_field("/proc/self/status", "Threads", WHITESPACE, &t) == 0);
+        puts(t);
+        assert_se(streq(t, "1"));
 
         r = get_proc_field("/proc/meminfo", "MemTotal", WHITESPACE, &p);
         if (r != -ENOENT) {
@@ -367,7 +381,9 @@ TEST(status_field) {
         }
 }
 
-TEST(capeff) {
+static void test_capeff(void) {
+        log_info("/* %s */", __func__);
+
         for (int pid = 0; pid < 2; pid++) {
                 _cleanup_free_ char *capeff = NULL;
                 int r, p;
@@ -385,47 +401,13 @@ TEST(capeff) {
         }
 }
 
-TEST(read_one_line_file) {
-        _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-fileio-1lf-XXXXXX";
-        int fd;
-        _cleanup_fclose_ FILE *f = NULL;
-        _cleanup_free_ char *buf, *buf2, *buf3, *buf4, *buf5;
-
-        fd = mkostemp_safe(fn);
-        assert_se(fd >= 0);
-
-        f = fdopen(fd, "we");
-        assert_se(f);
-
-        assert_se(read_one_line_file(fn, &buf) == 0);
-        assert_se(streq_ptr(buf, ""));
-        assert_se(read_one_line_file(fn, &buf2) == 0);
-        assert_se(streq_ptr(buf2, ""));
-
-        assert_se(write_string_stream(f, "x", WRITE_STRING_FILE_AVOID_NEWLINE) >= 0);
-        fflush(f);
-
-        assert_se(read_one_line_file(fn, &buf3) == 1);
-        assert_se(streq_ptr(buf3, "x"));
-
-        assert_se(write_string_stream(f, "\n", WRITE_STRING_FILE_AVOID_NEWLINE) >= 0);
-        fflush(f);
-
-        assert_se(read_one_line_file(fn, &buf4) == 2);
-        assert_se(streq_ptr(buf4, "x"));
-
-        assert_se(write_string_stream(f, "\n", WRITE_STRING_FILE_AVOID_NEWLINE) >= 0);
-        fflush(f);
-
-        assert_se(read_one_line_file(fn, &buf5) == 2);
-        assert_se(streq_ptr(buf5, "x"));
-}
-
-TEST(write_string_stream) {
+static void test_write_string_stream(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-write_string_stream-XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         int fd;
         char buf[64];
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(fn);
         assert_se(fd >= 0);
@@ -456,10 +438,12 @@ TEST(write_string_stream) {
         assert_se(streq(buf, "boohoo"));
 }
 
-TEST(write_string_file) {
+static void test_write_string_file(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-write_string_file-XXXXXX";
         char buf[64] = {};
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd;
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(fn);
         assert_se(fd >= 0);
@@ -470,10 +454,12 @@ TEST(write_string_file) {
         assert_se(streq(buf, "boohoo\n"));
 }
 
-TEST(write_string_file_no_create) {
+static void test_write_string_file_no_create(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-write_string_file_no_create-XXXXXX";
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd;
         char buf[64] = {};
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(fn);
         assert_se(fd >= 0);
@@ -485,12 +471,14 @@ TEST(write_string_file_no_create) {
         assert_se(streq(buf, "boohoo\n"));
 }
 
-TEST(write_string_file_verify) {
+static void test_write_string_file_verify(void) {
         _cleanup_free_ char *buf = NULL, *buf2 = NULL;
         int r;
 
+        log_info("/* %s */", __func__);
+
         r = read_one_line_file("/proc/version", &buf);
-        if (r < 0 && ERRNO_IS_PRIVILEGE(r))
+        if (ERRNO_IS_PRIVILEGE(r))
                 return;
         assert_se(r >= 0);
         assert_se(buf2 = strjoin(buf, "\n"));
@@ -508,28 +496,14 @@ TEST(write_string_file_verify) {
         assert_se(write_string_file("/proc/version", buf2, WRITE_STRING_FILE_VERIFY_ON_FAILURE|WRITE_STRING_FILE_AVOID_NEWLINE) == 0);
 }
 
-static void check_file_pairs_one(char **l) {
-        assert_se(l);
-        assert_se(strv_length(l) == 14);
-
-        STRV_FOREACH_PAIR(k, v, l) {
-                assert_se(STR_IN_SET(*k, "NAME", "ID", "PRETTY_NAME", "ANSI_COLOR", "HOME_URL", "SUPPORT_URL", "BUG_REPORT_URL"));
-                printf("%s=%s\n", *k, *v);
-                assert_se(!streq(*k, "NAME") || streq(*v, "Arch Linux"));
-                assert_se(!streq(*k, "ID") || streq(*v, "arch"));
-                assert_se(!streq(*k, "PRETTY_NAME") || streq(*v, "Arch Linux"));
-                assert_se(!streq(*k, "ANSI_COLOR") || streq(*v, "0;36"));
-                assert_se(!streq(*k, "HOME_URL") || streq(*v, "https://www.archlinux.org/"));
-                assert_se(!streq(*k, "SUPPORT_URL") || streq(*v, "https://bbs.archlinux.org/"));
-                assert_se(!streq(*k, "BUG_REPORT_URL") || streq(*v, "https://bugs.archlinux.org/"));
-        }
-}
-
-TEST(load_env_file_pairs) {
+static void test_load_env_file_pairs(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-load_env_file_pairs-XXXXXX";
         int fd, r;
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_strv_free_ char **l = NULL;
+        char **k, **v;
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(fn);
         assert_se(fd >= 0);
@@ -545,20 +519,27 @@ TEST(load_env_file_pairs) {
                         WRITE_STRING_FILE_CREATE);
         assert_se(r == 0);
 
-        r = load_env_file_pairs_fd(fd, fn, &l);
-        assert_se(r >= 0);
-        check_file_pairs_one(l);
-        l = strv_free(l);
-
         f = fdopen(fd, "r");
         assert_se(f);
 
         r = load_env_file_pairs(f, fn, &l);
         assert_se(r >= 0);
-        check_file_pairs_one(l);
+
+        assert_se(strv_length(l) == 14);
+        STRV_FOREACH_PAIR(k, v, l) {
+                assert_se(STR_IN_SET(*k, "NAME", "ID", "PRETTY_NAME", "ANSI_COLOR", "HOME_URL", "SUPPORT_URL", "BUG_REPORT_URL"));
+                printf("%s=%s\n", *k, *v);
+                if (streq(*k, "NAME")) assert_se(streq(*v, "Arch Linux"));
+                if (streq(*k, "ID")) assert_se(streq(*v, "arch"));
+                if (streq(*k, "PRETTY_NAME")) assert_se(streq(*v, "Arch Linux"));
+                if (streq(*k, "ANSI_COLOR")) assert_se(streq(*v, "0;36"));
+                if (streq(*k, "HOME_URL")) assert_se(streq(*v, "https://www.archlinux.org/"));
+                if (streq(*k, "SUPPORT_URL")) assert_se(streq(*v, "https://bbs.archlinux.org/"));
+                if (streq(*k, "BUG_REPORT_URL")) assert_se(streq(*v, "https://bugs.archlinux.org/"));
+        }
 }
 
-TEST(search_and_fopen) {
+static void test_search_and_fopen(void) {
         static const char* const dirs[] = {
                 "/tmp/foo/bar",
                 "/tmp",
@@ -567,9 +548,11 @@ TEST(search_and_fopen) {
         char name[] = "/tmp/test-search_and_fopen.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *p = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *e;
         int r;
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -595,27 +578,29 @@ TEST(search_and_fopen) {
         f = safe_fclose(f);
         p = mfree(p);
 
-        r = search_and_fopen("/a/file/which/does/not/exist/i/guess", "re", NULL, (const char**) dirs, &f, &p);
+        r = search_and_fopen("/a/file/which/does/not/exist/i/guess", "r", NULL, (const char**) dirs, &f, &p);
         assert_se(r == -ENOENT);
-        r = search_and_fopen("afilewhichdoesnotexistiguess", "re", NULL, (const char**) dirs, &f, &p);
+        r = search_and_fopen("afilewhichdoesnotexistiguess", "r", NULL, (const char**) dirs, &f, &p);
         assert_se(r == -ENOENT);
 
         r = unlink(name);
         assert_se(r == 0);
 
-        r = search_and_fopen(basename(name), "re", NULL, (const char**) dirs, &f, &p);
+        r = search_and_fopen(basename(name), "r", NULL, (const char**) dirs, &f, &p);
         assert_se(r == -ENOENT);
 }
 
-TEST(search_and_fopen_nulstr) {
+static void test_search_and_fopen_nulstr(void) {
         static const char dirs[] =
                 "/tmp/foo/bar\0"
                 "/tmp\0";
 
+        log_info("/* %s */", __func__);
+
         _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-search_and_fopen.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *p = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *e;
         int r;
 
@@ -636,24 +621,26 @@ TEST(search_and_fopen_nulstr) {
         f = safe_fclose(f);
         p = mfree(p);
 
-        r = search_and_fopen_nulstr("/a/file/which/does/not/exist/i/guess", "re", NULL, dirs, &f, &p);
+        r = search_and_fopen_nulstr("/a/file/which/does/not/exist/i/guess", "r", NULL, dirs, &f, &p);
         assert_se(r == -ENOENT);
-        r = search_and_fopen_nulstr("afilewhichdoesnotexistiguess", "re", NULL, dirs, &f, &p);
+        r = search_and_fopen_nulstr("afilewhichdoesnotexistiguess", "r", NULL, dirs, &f, &p);
         assert_se(r == -ENOENT);
 
         r = unlink(name);
         assert_se(r == 0);
 
-        r = search_and_fopen_nulstr(basename(name), "re", NULL, dirs, &f, &p);
+        r = search_and_fopen_nulstr(basename(name), "r", NULL, dirs, &f, &p);
         assert_se(r == -ENOENT);
 }
 
-TEST(writing_tmpfile) {
+static void test_writing_tmpfile(void) {
         _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-systemd_writing_tmpfile.XXXXXX";
         _cleanup_free_ char *contents = NULL;
         size_t size;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         int r;
+
+        log_info("/* %s */", __func__);
 
         struct iovec iov[] = {
                 IOVEC_MAKE_STRING("abc\n"),
@@ -673,8 +660,10 @@ TEST(writing_tmpfile) {
         assert_se(streq(contents, "abc\n" ALPHANUMERICAL "\n"));
 }
 
-TEST(tempfn) {
+static void test_tempfn(void) {
         char *ret = NULL, *p;
+
+        log_info("/* %s */", __func__);
 
         assert_se(tempfn_xxxxxx("/foo/bar/waldo", NULL, &ret) >= 0);
         assert_se(streq_ptr(ret, "/foo/bar/.#waldoXXXXXX"));
@@ -714,11 +703,11 @@ static const char chars[] =
 
 DISABLE_WARNING_TYPE_LIMITS;
 
-TEST(fgetc) {
+static void test_fgetc(void) {
         _cleanup_fclose_ FILE *f = NULL;
         char c;
 
-        assert_se(f = fmemopen_unlocked((void*) chars, sizeof(chars), "r"));
+        assert_se(f = fmemopen_unlocked((void*) chars, sizeof(chars), "re"));
 
         for (size_t i = 0; i < sizeof(chars); i++) {
                 assert_se(safe_fgetc(f, &c) == 1);
@@ -808,17 +797,21 @@ static void test_read_line_one_file(FILE *f) {
         assert_se(read_line(f, 1024, &line) == 0 && streq(line, ""));
 }
 
-TEST(read_line1) {
+static void test_read_line(void) {
         _cleanup_fclose_ FILE *f = NULL;
 
-        assert_se(f = fmemopen_unlocked((void*) buffer, sizeof(buffer), "r"));
+        log_info("/* %s */", __func__);
+
+        assert_se(f = fmemopen_unlocked((void*) buffer, sizeof(buffer), "re"));
         test_read_line_one_file(f);
 }
 
-TEST(read_line2) {
+static void test_read_line2(void) {
         _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-fileio.XXXXXX";
         int fd;
         _cleanup_fclose_ FILE *f = NULL;
+
+        log_info("/* %s */", __func__);
 
         fd = mkostemp_safe(name);
         assert_se(fd >= 0);
@@ -830,10 +823,12 @@ TEST(read_line2) {
         test_read_line_one_file(f);
 }
 
-TEST(read_line3) {
+static void test_read_line3(void) {
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *line = NULL;
         int r;
+
+        log_info("/* %s */", __func__);
 
         f = fopen("/proc/uptime", "re");
         if (!f && IN_SET(errno, ENOENT, EPERM))
@@ -849,7 +844,7 @@ TEST(read_line3) {
         assert_se(read_line(f, LINE_MAX, NULL) == 0);
 }
 
-TEST(read_line4) {
+static void test_read_line4(void) {
         static const struct {
                 size_t length;
                 const char *string;
@@ -883,7 +878,7 @@ TEST(read_line4) {
         }
 }
 
-TEST(read_nul_string) {
+static void test_read_nul_string(void) {
         static const char test[] = "string nr. 1\0"
                 "string nr. 2\n\0"
                 "\377empty string follows\0"
@@ -893,6 +888,8 @@ TEST(read_nul_string) {
 
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *s = NULL;
+
+        log_info("/* %s */", __func__);
 
         assert_se(f = fmemopen_unlocked((void*) test, sizeof(test)-1, "r"));
 
@@ -917,15 +914,17 @@ TEST(read_nul_string) {
         assert_se(read_nul_string(f, LONG_LINE_MAX, &s) == 0 && streq_ptr(s, ""));
 }
 
-TEST(read_full_file_socket) {
+static void test_read_full_file_socket(void) {
         _cleanup_(rm_rf_physical_and_freep) char *z = NULL;
-        _cleanup_close_ int listener = -EBADF;
+        _cleanup_close_ int listener = -1;
         _cleanup_free_ char *data = NULL, *clientname = NULL;
         union sockaddr_union sa;
-        const char *j, *jj;
+        const char *j;
         size_t size;
         pid_t pid;
         int r;
+
+        log_info("/* %s */", __func__);
 
         listener = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0);
         assert_se(listener >= 0);
@@ -938,11 +937,6 @@ TEST(read_full_file_socket) {
         assert_se(bind(listener, &sa.sa, SOCKADDR_UN_LEN(sa.un)) >= 0);
         assert_se(listen(listener, 1) >= 0);
 
-        /* Make sure the socket doesn't fit into a struct sockaddr_un, but we can still access it */
-        jj = strjoina(z, "/a_very_long_patha_very_long_patha_very_long_patha_very_long_patha_very_long_patha_very_long_patha_very_long_patha_very_long_path");
-        assert_se(strlen(jj) > sizeof_field(struct sockaddr_un, sun_path));
-        assert_se(rename(j, jj) >= 0);
-
         /* Bind the *client* socket to some randomized name, to verify that this works correctly. */
         assert_se(asprintf(&clientname, "@%" PRIx64 "/test-bindname", random_u64()) >= 0);
 
@@ -951,7 +945,7 @@ TEST(read_full_file_socket) {
         if (r == 0) {
                 union sockaddr_union peer = {};
                 socklen_t peerlen = sizeof(peer);
-                _cleanup_close_ int rfd = -EBADF;
+                _cleanup_close_ int rfd = -1;
                 /* child */
 
                 rfd = accept4(listener, NULL, 0, SOCK_CLOEXEC);
@@ -970,8 +964,8 @@ TEST(read_full_file_socket) {
                 _exit(EXIT_SUCCESS);
         }
 
-        assert_se(read_full_file_full(AT_FDCWD, jj, UINT64_MAX, SIZE_MAX, 0, NULL, &data, &size) == -ENXIO);
-        assert_se(read_full_file_full(AT_FDCWD, jj, UINT64_MAX, SIZE_MAX, READ_FULL_FILE_CONNECT_SOCKET, clientname, &data, &size) >= 0);
+        assert_se(read_full_file_full(AT_FDCWD, j, UINT64_MAX, SIZE_MAX, 0, NULL, &data, &size) == -ENXIO);
+        assert_se(read_full_file_full(AT_FDCWD, j, UINT64_MAX, SIZE_MAX, READ_FULL_FILE_CONNECT_SOCKET, clientname, &data, &size) >= 0);
         assert_se(size == strlen(TEST_STR));
         assert_se(streq(data, TEST_STR));
 
@@ -979,12 +973,14 @@ TEST(read_full_file_socket) {
 #undef TEST_STR
 }
 
-TEST(read_full_file_offset_size) {
+static void test_read_full_file_offset_size(void) {
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_(unlink_and_freep) char *fn = NULL;
         _cleanup_free_ char *rbuf = NULL;
         size_t rbuf_size;
         uint8_t buf[4711];
+
+        log_info("/* %s */", __func__);
 
         random_bytes(buf, sizeof(buf));
 
@@ -1000,25 +996,6 @@ TEST(read_full_file_offset_size) {
 
         assert_se(read_full_file_full(AT_FDCWD, fn, UINT64_MAX, 128, 0, NULL, &rbuf, &rbuf_size) >= 0);
         assert_se(rbuf_size == 128);
-        assert_se(memcmp(buf, rbuf, rbuf_size) == 0);
-        rbuf = mfree(rbuf);
-
-        assert_se(read_full_file_full(AT_FDCWD, fn, UINT64_MAX, 128, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) == -E2BIG);
-        assert_se(read_full_file_full(AT_FDCWD, fn, UINT64_MAX, sizeof(buf)-1, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) == -E2BIG);
-        assert_se(read_full_file_full(AT_FDCWD, fn, UINT64_MAX, sizeof(buf), READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) >= 0);
-        assert_se(rbuf_size == sizeof(buf));
-        assert_se(memcmp(buf, rbuf, rbuf_size) == 0);
-        rbuf = mfree(rbuf);
-
-        assert_se(read_full_file_full(AT_FDCWD, fn, 47, 128, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) == -E2BIG);
-        assert_se(read_full_file_full(AT_FDCWD, fn, 47, sizeof(buf)-47-1, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) == -E2BIG);
-        assert_se(read_full_file_full(AT_FDCWD, fn, 47, sizeof(buf)-47, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) >= 0);
-        assert_se(rbuf_size == sizeof(buf)-47);
-        assert_se(memcmp(buf+47, rbuf, rbuf_size) == 0);
-        rbuf = mfree(rbuf);
-
-        assert_se(read_full_file_full(AT_FDCWD, fn, UINT64_MAX, sizeof(buf)+1, READ_FULL_FILE_FAIL_WHEN_LARGER, NULL, &rbuf, &rbuf_size) >= 0);
-        assert_se(rbuf_size == sizeof(buf));
         assert_se(memcmp(buf, rbuf, rbuf_size) == 0);
         rbuf = mfree(rbuf);
 
@@ -1042,7 +1019,8 @@ TEST(read_full_file_offset_size) {
         rbuf = mfree(rbuf);
 }
 
-static void test_read_virtual_file_one(size_t max_size) {
+static void test_read_virtual_file(size_t max_size) {
+        const char *filename;
         int r;
 
         log_info("/* %s (max_size=%zu) */", __func__, max_size);
@@ -1066,63 +1044,46 @@ static void test_read_virtual_file_one(size_t max_size) {
                                   IN_SET(r,
                                          -ENOENT,  /* Some of the files might be absent */
                                          -EINVAL,  /* too small reads from /proc/self/pagemap trigger EINVAL */
-                                         -EFBIG,   /* /proc/kcore and /proc/self/pagemap should be too large */
-                                         -EBADF)); /* /proc/kcore is masked when we are running in docker. */
+                                         -EFBIG)); /* /proc/kcore and /proc/self/pagemap should be too large */
                 } else
                         log_info("read_virtual_file(\"%s\", %zu): %s (%zu bytes)", filename, max_size, r ? "non-truncated" : "truncated", size);
         }
 }
 
-TEST(test_read_virtual_file) {
-        test_read_virtual_file_one(0);
-        test_read_virtual_file_one(1);
-        test_read_virtual_file_one(2);
-        test_read_virtual_file_one(20);
-        test_read_virtual_file_one(4096);
-        test_read_virtual_file_one(4097);
-        test_read_virtual_file_one(SIZE_MAX);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_parse_env_file();
+        test_parse_multiline_env_file();
+        test_merge_env_file();
+        test_merge_env_file_invalid();
+        test_executable_is_script();
+        test_status_field();
+        test_capeff();
+        test_write_string_stream();
+        test_write_string_file();
+        test_write_string_file_no_create();
+        test_write_string_file_verify();
+        test_load_env_file_pairs();
+        test_search_and_fopen();
+        test_search_and_fopen_nulstr();
+        test_writing_tmpfile();
+        test_tempfn();
+        test_fgetc();
+        test_read_line();
+        test_read_line2();
+        test_read_line3();
+        test_read_line4();
+        test_read_nul_string();
+        test_read_full_file_socket();
+        test_read_full_file_offset_size();
+        test_read_virtual_file(0);
+        test_read_virtual_file(1);
+        test_read_virtual_file(2);
+        test_read_virtual_file(20);
+        test_read_virtual_file(4096);
+        test_read_virtual_file(4097);
+        test_read_virtual_file(SIZE_MAX);
+
+        return 0;
 }
-
-TEST(test_fdopen_independent) {
-#define TEST_TEXT "this is some random test text we are going to write to a memfd"
-        _cleanup_close_ int fd = -EBADF;
-        _cleanup_fclose_ FILE *f = NULL;
-        char buf[STRLEN(TEST_TEXT) + 1];
-
-        fd = memfd_new("fdopen_independent");
-        if (fd < 0) {
-                assert_se(ERRNO_IS_NOT_SUPPORTED(fd));
-                return;
-        }
-
-        assert_se(write(fd, TEST_TEXT, strlen(TEST_TEXT)) == strlen(TEST_TEXT));
-        /* we'll leave the read offset at the end of the memfd, the fdopen_independent() descriptors should
-         * start at the beginning anyway */
-
-        assert_se(fdopen_independent(fd, "re", &f) >= 0);
-        zero(buf);
-        assert_se(fread(buf, 1, sizeof(buf), f) == strlen(TEST_TEXT));
-        assert_se(streq(buf, TEST_TEXT));
-        assert_se((fcntl(fileno(f), F_GETFL) & O_ACCMODE) == O_RDONLY);
-        assert_se(FLAGS_SET(fcntl(fileno(f), F_GETFD), FD_CLOEXEC));
-        f = safe_fclose(f);
-
-        assert_se(fdopen_independent(fd, "r", &f) >= 0);
-        zero(buf);
-        assert_se(fread(buf, 1, sizeof(buf), f) == strlen(TEST_TEXT));
-        assert_se(streq(buf, TEST_TEXT));
-        assert_se((fcntl(fileno(f), F_GETFL) & O_ACCMODE) == O_RDONLY);
-        assert_se(!FLAGS_SET(fcntl(fileno(f), F_GETFD), FD_CLOEXEC));
-        f = safe_fclose(f);
-
-        assert_se(fdopen_independent(fd, "r+e", &f) >= 0);
-        zero(buf);
-        assert_se(fread(buf, 1, sizeof(buf), f) == strlen(TEST_TEXT));
-        assert_se(streq(buf, TEST_TEXT));
-        assert_se((fcntl(fileno(f), F_GETFL) & O_ACCMODE) == O_RDWR);
-        assert_se(FLAGS_SET(fcntl(fileno(f), F_GETFD), FD_CLOEXEC));
-        f = safe_fclose(f);
-}
-
-
-DEFINE_TEST_MAIN(LOG_DEBUG);

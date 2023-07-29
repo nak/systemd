@@ -10,7 +10,6 @@
 #include "sd-bus.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "bus-error.h"
 #include "bus-util.h"
 #include "cgroup-show.h"
@@ -36,10 +35,10 @@
 typedef struct Group {
         char *path;
 
-        bool n_tasks_valid;
-        bool cpu_valid;
-        bool memory_valid;
-        bool io_valid;
+        bool n_tasks_valid:1;
+        bool cpu_valid:1;
+        bool memory_valid:1;
+        bool io_valid:1;
 
         uint64_t n_tasks;
 
@@ -56,13 +55,6 @@ typedef struct Group {
         uint64_t io_input_bps, io_output_bps;
 } Group;
 
-/* Counted objects, enum order matters */
-typedef enum PidsCount {
-        COUNT_USERSPACE_PROCESSES,      /* least */
-        COUNT_ALL_PROCESSES,
-        COUNT_PIDS,                     /* most, requires pids controller */
-} PidsCount;
-
 static unsigned arg_depth = 3;
 static unsigned arg_iterations = UINT_MAX;
 static bool arg_batch = false;
@@ -73,7 +65,11 @@ static char* arg_root = NULL;
 static bool arg_recursive = true;
 static bool arg_recursive_unset = false;
 
-static PidsCount arg_count = COUNT_PIDS;
+static enum {
+        COUNT_PIDS,
+        COUNT_USERSPACE_PROCESSES,
+        COUNT_ALL_PROCESSES,
+} arg_count = COUNT_PIDS;
 
 static enum {
         ORDER_PATH,
@@ -96,33 +92,24 @@ static Group *group_free(Group *g) {
         return mfree(g);
 }
 
-DEFINE_PRIVATE_HASH_OPS_WITH_VALUE_DESTRUCTOR(group_hash_ops, char, path_hash_func, path_compare, Group, group_free);
 
 static const char *maybe_format_timespan(char *buf, size_t l, usec_t t, usec_t accuracy) {
         if (arg_raw) {
-               (void) snprintf(buf, l, USEC_FMT, t);
+               snprintf(buf, l, USEC_FMT, t);
                return buf;
         }
         return format_timespan(buf, l, t, accuracy);
 }
 
-#define BUFSIZE1 CONST_MAX(FORMAT_TIMESPAN_MAX, DECIMAL_STR_MAX(usec_t))
-#define MAYBE_FORMAT_TIMESPAN(t, accuracy) \
-        maybe_format_timespan((char[BUFSIZE1]){}, BUFSIZE1, t, accuracy)
-
 static const char *maybe_format_bytes(char *buf, size_t l, bool is_valid, uint64_t t) {
         if (!is_valid)
                 return "-";
         if (arg_raw) {
-                (void) snprintf(buf, l, "%" PRIu64, t);
+                snprintf(buf, l, "%" PRIu64, t);
                 return buf;
         }
         return format_bytes(buf, l, t);
 }
-
-#define BUFSIZE2 CONST_MAX(FORMAT_BYTES_MAX, DECIMAL_STR_MAX(uint64_t))
-#define MAYBE_FORMAT_BYTES(is_valid, t) \
-        maybe_format_bytes((char[BUFSIZE2]){}, BUFSIZE2, is_valid, t)
 
 static bool is_root_cgroup(const char *path) {
 
@@ -515,6 +502,7 @@ static int refresh_one(
 }
 
 static int refresh(const char *root, Hashmap *a, Hashmap *b, unsigned iteration) {
+        const char *c;
         int r;
 
         FOREACH_STRING(c, SYSTEMD_CGROUP_CONTROLLER, "cpu", "cpuacct", "memory", "io", "blkio", "pids") {
@@ -607,7 +595,8 @@ static void display(Hashmap *a) {
         Group *g;
         Group **array;
         signed path_columns;
-        unsigned rows, n = 0, maxtcpu = 0, maxtpath = 3; /* 3 for ellipsize() to work properly */
+        unsigned rows, n = 0, j, maxtcpu = 0, maxtpath = 3; /* 3 for ellipsize() to work properly */
+        char buffer[MAX4(21U, FORMAT_BYTES_MAX, FORMAT_TIMESPAN_MAX, DECIMAL_STR_MAX(usec_t))];
 
         assert(a);
 
@@ -623,12 +612,21 @@ static void display(Hashmap *a) {
         typesafe_qsort(array, n, group_compare);
 
         /* Find the longest names in one run */
-        for (unsigned j = 0; j < n; j++) {
-                maxtcpu = MAX(maxtcpu,
-                              strlen(MAYBE_FORMAT_TIMESPAN((usec_t) (array[j]->cpu_usage / NSEC_PER_USEC), 0)));
-                maxtpath = MAX(maxtpath,
-                               strlen(array[j]->path));
+        for (j = 0; j < n; j++) {
+                unsigned cputlen, pathtlen;
+
+                maybe_format_timespan(buffer, sizeof(buffer), (usec_t) (array[j]->cpu_usage / NSEC_PER_USEC), 0);
+                cputlen = strlen(buffer);
+                maxtcpu = MAX(maxtcpu, cputlen);
+
+                pathtlen = strlen(array[j]->path);
+                maxtpath = MAX(maxtpath, pathtlen);
         }
+
+        if (arg_cpu_type == CPU_PERCENT)
+                xsprintf(buffer, "%6s", "%CPU");
+        else
+                xsprintf(buffer, "%*s", maxtcpu, "CPU Time");
 
         rows = lines();
         if (rows <= 10)
@@ -636,25 +634,21 @@ static void display(Hashmap *a) {
 
         if (on_tty()) {
                 const char *on, *off;
-                int cpu_len = arg_cpu_type == CPU_PERCENT ? 6 : maxtcpu;
 
-                path_columns = columns() - 36 - cpu_len;
+                path_columns = columns() - 36 - strlen(buffer);
                 if (path_columns < 10)
                         path_columns = 10;
 
                 on = ansi_highlight_underline();
                 off = ansi_underline();
 
-                printf("%s%s%-*s%s %s%7s%s %s%*s%s %s%8s%s %s%8s%s %s%8s%s%s\n",
+                printf("%s%s%-*s%s %s%7s%s %s%s%s %s%8s%s %s%8s%s %s%8s%s%s\n",
                        ansi_underline(),
-                       arg_order == ORDER_PATH ? on : "", path_columns, "CGroup",
+                       arg_order == ORDER_PATH ? on : "", path_columns, "Control Group",
                        arg_order == ORDER_PATH ? off : "",
-                       arg_order == ORDER_TASKS ? on : "",
-                       arg_count == COUNT_PIDS ? "Tasks" : arg_count == COUNT_USERSPACE_PROCESSES ? "Procs" : "Proc+",
+                       arg_order == ORDER_TASKS ? on : "", arg_count == COUNT_PIDS ? "Tasks" : arg_count == COUNT_USERSPACE_PROCESSES ? "Procs" : "Proc+",
                        arg_order == ORDER_TASKS ? off : "",
-                       arg_order == ORDER_CPU ? on : "",
-                       cpu_len,
-                       arg_cpu_type == CPU_PERCENT ? "%CPU" : "CPU Time",
+                       arg_order == ORDER_CPU ? on : "", buffer,
                        arg_order == ORDER_CPU ? off : "",
                        arg_order == ORDER_MEMORY ? on : "", "Memory",
                        arg_order == ORDER_MEMORY ? off : "",
@@ -666,7 +660,7 @@ static void display(Hashmap *a) {
         } else
                 path_columns = maxtpath;
 
-        for (unsigned j = 0; j < n; j++) {
+        for (j = 0; j < n; j++) {
                 _cleanup_free_ char *ellipsized = NULL;
                 const char *path;
 
@@ -690,13 +684,11 @@ static void display(Hashmap *a) {
                         else
                                 fputs("      -", stdout);
                 } else
-                        printf(" %*s",
-                               (int) maxtcpu,
-                               MAYBE_FORMAT_TIMESPAN((usec_t) (g->cpu_usage / NSEC_PER_USEC), 0));
+                        printf(" %*s", maxtcpu, maybe_format_timespan(buffer, sizeof(buffer), (usec_t) (g->cpu_usage / NSEC_PER_USEC), 0));
 
-                printf(" %8s", MAYBE_FORMAT_BYTES(g->memory_valid, g->memory));
-                printf(" %8s", MAYBE_FORMAT_BYTES(g->io_valid, g->io_input_bps));
-                printf(" %8s", MAYBE_FORMAT_BYTES(g->io_valid, g->io_output_bps));
+                printf(" %8s", maybe_format_bytes(buffer, sizeof(buffer), g->memory_valid, g->memory));
+                printf(" %8s", maybe_format_bytes(buffer, sizeof(buffer), g->io_valid, g->io_input_bps));
+                printf(" %8s", maybe_format_bytes(buffer, sizeof(buffer), g->io_valid, g->io_output_bps));
 
                 putchar('\n');
         }
@@ -891,7 +883,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (optind == argc - 1)
@@ -912,21 +904,52 @@ static const char* counting_what(void) {
                 return "userspace processes (excl. kernel)";
 }
 
-static int loop(const char *root) {
+DEFINE_PRIVATE_HASH_OPS_WITH_VALUE_DESTRUCTOR(group_hash_ops, char, path_hash_func, path_compare, Group, group_free);
+
+static int run(int argc, char *argv[]) {
         _cleanup_hashmap_free_ Hashmap *a = NULL, *b = NULL;
         unsigned iteration = 0;
         usec_t last_refresh = 0;
-        bool immediate_refresh = false;
+        bool quit = false, immediate_refresh = false;
+        _cleanup_free_ char *root = NULL;
+        CGroupMask mask;
         int r;
+
+        log_setup();
+
+        r = parse_argv(argc, argv);
+        if (r <= 0)
+                return r;
+
+        r = cg_mask_supported(&mask);
+        if (r < 0)
+                return log_error_errno(r, "Failed to determine supported controllers: %m");
+
+        arg_count = (mask & CGROUP_MASK_PIDS) ? COUNT_PIDS : COUNT_USERSPACE_PROCESSES;
+
+        if (arg_recursive_unset && arg_count == COUNT_PIDS)
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                       "Non-recursive counting is only supported when counting processes, not tasks. Use -P or -k.");
+
+        r = show_cgroup_get_path_and_warn(arg_machine, arg_root, &root);
+        if (r < 0)
+                return log_error_errno(r, "Failed to get root control group path: %m");
+        log_debug("CGroup path: %s", root);
 
         a = hashmap_new(&group_hash_ops);
         b = hashmap_new(&group_hash_ops);
         if (!a || !b)
                 return log_oom();
 
-        for (;;) {
+        signal(SIGWINCH, columns_lines_cache_reset);
+
+        if (arg_iterations == UINT_MAX)
+                arg_iterations = on_tty() ? 0 : 1;
+
+        while (!quit) {
                 usec_t t;
                 char key;
+                char h[FORMAT_TIMESPAN_MAX];
 
                 t = now(CLOCK_MONOTONIC);
 
@@ -946,14 +969,14 @@ static int loop(const char *root) {
                 display(b);
 
                 if (arg_iterations && iteration >= arg_iterations)
-                        return 0;
+                        break;
 
                 if (!on_tty()) /* non-TTY: Empty newline as delimiter between polls */
                         fputs("\n", stdout);
                 fflush(stdout);
 
                 if (arg_batch)
-                        (void) usleep_safe(usec_add(usec_sub_unsigned(last_refresh, t), arg_delay));
+                        (void) usleep(usec_add(usec_sub_unsigned(last_refresh, t), arg_delay));
                 else {
                         r = read_one_char(stdin, &key, usec_add(usec_sub_unsigned(last_refresh, t), arg_delay), NULL);
                         if (r == -ETIMEDOUT)
@@ -977,7 +1000,8 @@ static int loop(const char *root) {
                         break;
 
                 case 'q':
-                        return 0;
+                        quit = true;
+                        break;
 
                 case 'p':
                         arg_order = ORDER_PATH;
@@ -1031,7 +1055,7 @@ static int loop(const char *root) {
                 case '+':
                         arg_delay = usec_add(arg_delay, arg_delay < USEC_PER_SEC ? USEC_PER_MSEC * 250 : USEC_PER_SEC);
 
-                        fprintf(stdout, "\nIncreased delay to %s.", FORMAT_TIMESPAN(arg_delay, 0));
+                        fprintf(stdout, "\nIncreased delay to %s.", format_timespan(h, sizeof(h), arg_delay, 0));
                         fflush(stdout);
                         sleep(1);
                         break;
@@ -1042,7 +1066,7 @@ static int loop(const char *root) {
                         else
                                 arg_delay = usec_sub_unsigned(arg_delay, arg_delay < USEC_PER_MSEC * 1250 ? USEC_PER_MSEC * 250 : USEC_PER_SEC);
 
-                        fprintf(stdout, "\nDecreased delay to %s.", FORMAT_TIMESPAN(arg_delay, 0));
+                        fprintf(stdout, "\nDecreased delay to %s.", format_timespan(h, sizeof(h), arg_delay, 0));
                         fflush(stdout);
                         sleep(1);
                         break;
@@ -1062,7 +1086,7 @@ static int loop(const char *root) {
 
                 default:
                         if (key < ' ')
-                                fprintf(stdout, "\nUnknown key '\\x%x'. Ignoring.", (unsigned) key);
+                                fprintf(stdout, "\nUnknown key '\\x%x'. Ignoring.", key);
                         else
                                 fprintf(stdout, "\nUnknown key '%c'. Ignoring.", key);
                         fflush(stdout);
@@ -1070,42 +1094,8 @@ static int loop(const char *root) {
                         break;
                 }
         }
-}
 
-static int run(int argc, char *argv[]) {
-        _cleanup_free_ char *root = NULL;
-        CGroupMask mask;
-        int r;
-
-        log_setup();
-
-        r = parse_argv(argc, argv);
-        if (r <= 0)
-                return r;
-
-        r = cg_mask_supported(&mask);
-        if (r < 0)
-                return log_error_errno(r, "Failed to determine supported controllers: %m");
-
-        /* honor user selection unless pids controller is unavailable */
-        PidsCount possible_count = (mask & CGROUP_MASK_PIDS) ? COUNT_PIDS : COUNT_ALL_PROCESSES;
-        arg_count = MIN(possible_count, arg_count);
-
-        if (arg_recursive_unset && arg_count == COUNT_PIDS)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                       "Non-recursive counting is only supported when counting processes, not tasks. Use -P or -k.");
-
-        r = show_cgroup_get_path_and_warn(arg_machine, arg_root, &root);
-        if (r < 0)
-                return log_error_errno(r, "Failed to get root control group path: %m");
-        log_debug("CGroup path: %s", root);
-
-        signal(SIGWINCH, columns_lines_cache_reset);
-
-        if (arg_iterations == UINT_MAX)
-                arg_iterations = on_tty() ? 0 : 1;
-
-        return loop(root);
+        return 0;
 }
 
 DEFINE_MAIN_FUNCTION(run);

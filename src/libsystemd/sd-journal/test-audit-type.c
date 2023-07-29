@@ -4,7 +4,6 @@
 #include <linux/audit.h>
 
 #include "audit-type.h"
-#include "tests.h"
 
 static void print_audit_label(int i) {
         const char *name;
@@ -14,11 +13,14 @@ static void print_audit_label(int i) {
         printf("%i → %s → %s\n", i, audit_type_to_string(i), name);
 }
 
-TEST(audit_type) {
+static void test_audit_type(void) {
         int i;
 
         for (i = 0; i <= AUDIT_KERNEL; i++)
                 print_audit_label(i);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char **argv) {
+        test_audit_type();
+        return 0;
+}

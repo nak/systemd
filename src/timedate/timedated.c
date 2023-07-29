@@ -20,7 +20,7 @@
 #include "bus-polkit.h"
 #include "clock-util.h"
 #include "conf-files.h"
-#include "constants.h"
+#include "def.h"
 #include "fd-util.h"
 #include "fileio-label.h"
 #include "fileio.h"
@@ -102,17 +102,14 @@ static void unit_status_info_clear(UnitStatusInfo *p) {
         p->active_state = mfree(p->active_state);
 }
 
-static UnitStatusInfo *unit_status_info_free(UnitStatusInfo *p) {
-        if (!p)
-                return NULL;
+static void unit_status_info_free(UnitStatusInfo *p) {
+        assert(p);
 
         unit_status_info_clear(p);
         free(p->name);
         free(p->path);
-        return mfree(p);
+        free(p);
 }
-
-DEFINE_TRIVIAL_CLEANUP_FUNC(UnitStatusInfo*, unit_status_info_free);
 
 static void context_clear(Context *c) {
         UnitStatusInfo *p;
@@ -132,11 +129,7 @@ static void context_clear(Context *c) {
 }
 
 static int context_add_ntp_service(Context *c, const char *s, const char *source) {
-        _cleanup_(unit_status_info_freep) UnitStatusInfo *unit = NULL;
-
-        assert(c);
-        assert(s);
-        assert(source);
+        UnitStatusInfo *u;
 
         if (!unit_name_is_valid(s, UNIT_NAME_PLAIN))
                 return -EINVAL;
@@ -146,17 +139,18 @@ static int context_add_ntp_service(Context *c, const char *s, const char *source
                 if (streq(u->name, s))
                         return 0;
 
-        unit = new0(UnitStatusInfo, 1);
-        if (!unit)
+        u = new0(UnitStatusInfo, 1);
+        if (!u)
                 return -ENOMEM;
 
-        unit->name = strdup(s);
-        if (!unit->name)
+        u->name = strdup(s);
+        if (!u->name) {
+                free(u);
                 return -ENOMEM;
+        }
 
-        LIST_APPEND(units, c->units, unit);
-        log_unit_debug(unit, "added from %s.", source);
-        TAKE_PTR(unit);
+        LIST_APPEND(units, c->units, u);
+        log_unit_debug(u, "added from %s.", source);
 
         return 0;
 }
@@ -196,6 +190,7 @@ static int context_parse_ntp_services_from_environment(Context *c) {
 
 static int context_parse_ntp_services_from_disk(Context *c) {
         _cleanup_strv_free_ char **files = NULL;
+        char **f;
         int r;
 
         r = conf_files_list_strv(&files, ".list", NULL, CONF_FILES_FILTER_MASKED, UNIT_LIST_DIRS);
@@ -249,6 +244,7 @@ static int context_parse_ntp_services(Context *c) {
 }
 
 static int context_ntp_service_is_active(Context *c) {
+        UnitStatusInfo *info;
         int count = 0;
 
         assert(c);
@@ -262,6 +258,7 @@ static int context_ntp_service_is_active(Context *c) {
 }
 
 static int context_ntp_service_exists(Context *c) {
+        UnitStatusInfo *info;
         int count = 0;
 
         assert(c);
@@ -293,9 +290,30 @@ static int context_read_data(Context *c) {
         return 0;
 }
 
+/* Hack for Ubuntu phone: check if path is an existing symlink to
+ * /etc/writable; if it is, update that instead */
+static const char* writable_filename(const char *path) {
+        ssize_t r;
+        static char realfile_buf[PATH_MAX];
+        _cleanup_free_ char *realfile = NULL;
+        const char *result = path;
+        int orig_errno = errno;
+
+        r = readlink_and_make_absolute(path, &realfile);
+        if (r >= 0 && startswith(realfile, "/etc/writable")) {
+                snprintf(realfile_buf, sizeof(realfile_buf), "%s", realfile);
+                result = realfile_buf;
+        }
+
+        errno = orig_errno;
+        return result;
+}
+
 static int context_write_data_timezone(Context *c) {
         _cleanup_free_ char *p = NULL;
         const char *source;
+        int r = 0;
+        struct stat st;
 
         assert(c);
 
@@ -308,22 +326,35 @@ static int context_write_data_timezone(Context *c) {
 
                 if (access("/usr/share/zoneinfo/UTC", F_OK) < 0) {
 
-                        if (unlink("/etc/localtime") < 0 && errno != ENOENT)
-                                return -errno;
+                        if (unlink(writable_filename("/etc/localtime")) < 0 && errno != ENOENT)
+                                r = -errno;
 
-                        return 0;
+                        if (unlink(writable_filename("/etc/timezone")) < 0 && errno != ENOENT)
+                                r = -errno;
+
+                        return r;
                 }
 
-                source = "../usr/share/zoneinfo/UTC";
+                source = "/usr/share/zoneinfo/UTC";
         } else {
-                p = path_join("../usr/share/zoneinfo", c->zone);
+                p = path_join("/usr/share/zoneinfo", c->zone);
                 if (!p)
                         return -ENOMEM;
 
                 source = p;
         }
 
-        return symlink_atomic(source, "/etc/localtime");
+        r = symlink_atomic(source, writable_filename("/etc/localtime"));
+        if (r < 0)
+                return r;
+
+        if (stat(writable_filename("/etc/timezone"), &st) == 0 && S_ISREG(st.st_mode)) {
+                r = write_string_file(writable_filename("/etc/timezone"), c->zone, WRITE_STRING_FILE_CREATE|WRITE_STRING_FILE_ATOMIC);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
 }
 
 static int context_write_data_local_rtc(Context *c) {
@@ -384,7 +415,7 @@ static int context_write_data_local_rtc(Context *c) {
                 *(char*) mempcpy(stpcpy(stpcpy(mempcpy(w, s, a), prepend), c->local_rtc ? "LOCAL" : "UTC"), e, b) = 0;
 
                 if (streq(w, NULL_ADJTIME_UTC)) {
-                        if (unlink("/etc/adjtime") < 0)
+                        if (unlink(writable_filename("/etc/adjtime")) < 0)
                                 if (errno != ENOENT)
                                         return -errno;
 
@@ -392,7 +423,7 @@ static int context_write_data_local_rtc(Context *c) {
                 }
         }
 
-        r = mac_init();
+        r = mac_selinux_init();
         if (r < 0)
                 return r;
 
@@ -406,6 +437,7 @@ static int context_update_ntp_status(Context *c, sd_bus *bus, sd_bus_message *m)
                 { "UnitFileState", "s", NULL, offsetof(UnitStatusInfo, unit_file_state) },
                 {}
         };
+        UnitStatusInfo *u;
         int r;
 
         assert(c);
@@ -447,11 +479,13 @@ static int context_update_ntp_status(Context *c, sd_bus *bus, sd_bus_message *m)
 }
 
 static int match_job_removed(sd_bus_message *m, void *userdata, sd_bus_error *error) {
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
+        UnitStatusInfo *u;
         const char *path;
         unsigned n = 0;
         int r;
 
+        assert(c);
         assert(m);
 
         r = sd_bus_message_read(m, "uoss", NULL, &path, NULL, NULL);
@@ -607,9 +641,10 @@ static int property_get_can_ntp(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
         int r;
 
+        assert(c);
         assert(bus);
         assert(property);
         assert(reply);
@@ -635,9 +670,10 @@ static int property_get_ntp(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
         int r;
 
+        assert(c);
         assert(bus);
         assert(property);
         assert(reply);
@@ -655,11 +691,12 @@ static int property_get_ntp(
 }
 
 static int method_set_timezone(sd_bus_message *m, void *userdata, sd_bus_error *error) {
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
         int interactive, r;
         const char *z;
 
         assert(m);
+        assert(c);
 
         r = sd_bus_message_read(m, "sb", &z, &interactive);
         if (r < 0)
@@ -733,11 +770,12 @@ static int method_set_timezone(sd_bus_message *m, void *userdata, sd_bus_error *
 
 static int method_set_local_rtc(sd_bus_message *m, void *userdata, sd_bus_error *error) {
         int lrtc, fix_system, interactive;
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
         struct timespec ts;
         int r;
 
         assert(m);
+        assert(c);
 
         r = sd_bus_message_read(m, "bbb", &lrtc, &fix_system, &interactive);
         if (r < 0)
@@ -821,13 +859,14 @@ static int method_set_time(sd_bus_message *m, void *userdata, sd_bus_error *erro
         sd_bus *bus = sd_bus_message_get_bus(m);
         char buf[FORMAT_TIMESTAMP_MAX];
         int relative, interactive, r;
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
         int64_t utc;
         struct timespec ts;
         usec_t start;
         struct tm tm;
 
         assert(m);
+        assert(c);
 
         if (c->slot_job_removed)
                 return sd_bus_error_set(error, BUS_ERROR_AUTOMATIC_TIME_SYNC_ENABLED, "Previous request is not finished, refusing.");
@@ -912,12 +951,14 @@ static int method_set_time(sd_bus_message *m, void *userdata, sd_bus_error *erro
 static int method_set_ntp(sd_bus_message *m, void *userdata, sd_bus_error *error) {
         _cleanup_(sd_bus_slot_unrefp) sd_bus_slot *slot = NULL;
         sd_bus *bus = sd_bus_message_get_bus(m);
-        Context *c = ASSERT_PTR(userdata);
+        Context *c = userdata;
+        UnitStatusInfo *u;
         const UnitStatusInfo *selected = NULL;
         int enable, interactive, q, r;
 
         assert(m);
         assert(bus);
+        assert(c);
 
         r = sd_bus_message_read(m, "bb", &enable, &interactive);
         if (r < 0)
@@ -1042,31 +1083,42 @@ static const sd_bus_vtable timedate_vtable[] = {
         SD_BUS_PROPERTY("TimeUSec", "t", property_get_time, 0, 0),
         SD_BUS_PROPERTY("RTCTimeUSec", "t", property_get_rtc_time, 0, 0),
 
-        SD_BUS_METHOD_WITH_ARGS("SetTime",
-                                SD_BUS_ARGS("x", usec_utc, "b", relative, "b", interactive),
-                                SD_BUS_NO_RESULT,
-                                method_set_time,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("SetTimezone",
-                                SD_BUS_ARGS("s", timezone, "b", interactive),
-                                SD_BUS_NO_RESULT,
-                                method_set_timezone,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("SetLocalRTC",
-                                SD_BUS_ARGS("b", local_rtc, "b", fix_system, "b", interactive),
-                                SD_BUS_NO_RESULT,
-                                method_set_local_rtc,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("SetNTP",
-                                SD_BUS_ARGS("b", use_ntp, "b", interactive),
-                                SD_BUS_NO_RESULT,
-                                method_set_ntp,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("ListTimezones",
-                                SD_BUS_NO_ARGS,
-                                SD_BUS_RESULT("as", timezones),
-                                method_list_timezones,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("SetTime",
+                                 "xbb",
+                                 SD_BUS_PARAM(usec_utc)
+                                 SD_BUS_PARAM(relative)
+                                 SD_BUS_PARAM(interactive),
+                                 NULL,,
+                                 method_set_time,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("SetTimezone",
+                                 "sb",
+                                 SD_BUS_PARAM(timezone)
+                                 SD_BUS_PARAM(interactive),
+                                 NULL,,
+                                 method_set_timezone,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("SetLocalRTC",
+                                 "bbb",
+                                 SD_BUS_PARAM(local_rtc)
+                                 SD_BUS_PARAM(fix_system)
+                                 SD_BUS_PARAM(interactive),
+                                 NULL,,
+                                 method_set_local_rtc,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("SetNTP",
+                                 "bb",
+                                 SD_BUS_PARAM(use_ntp)
+                                 SD_BUS_PARAM(interactive),
+                                 NULL,,
+                                 method_set_ntp,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("ListTimezones",
+                                 NULL,,
+                                 "as",
+                                 SD_BUS_PARAM(timezones),
+                                 method_list_timezones,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
 
         SD_BUS_VTABLE_END,
 };

@@ -52,9 +52,7 @@ class SysvGeneratorTest(unittest.TestCase):
         parsed generated units.
         '''
         env = os.environ.copy()
-        # We might debug log about errors that aren't actually fatal so let's bump the log level to info to
-        # prevent those logs from interfering with the test.
-        env['SYSTEMD_LOG_LEVEL'] = 'info'
+        env['SYSTEMD_LOG_LEVEL'] = 'debug'
         env['SYSTEMD_LOG_TARGET'] = 'console'
         env['SYSTEMD_SYSVINIT_PATH'] = self.init_d_dir
         env['SYSTEMD_SYSVRCND_PATH'] = self.rcnd_dir
@@ -82,7 +80,7 @@ class SysvGeneratorTest(unittest.TestCase):
                 cp = RawConfigParser(dict_type=MultiDict)
             cp.optionxform = lambda o: o  # don't lower-case option names
             with open(service) as f:
-                cp.read_file(f)
+                cp.readfp(f)
             results[os.path.basename(service)] = cp
 
         return (err, results)

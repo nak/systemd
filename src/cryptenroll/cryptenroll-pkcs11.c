@@ -21,7 +21,6 @@ int enroll_pkcs11(
         size_t decrypted_key_size, encrypted_key_size;
         _cleanup_free_ void *encrypted_key = NULL;
         _cleanup_(X509_freep) X509 *cert = NULL;
-        ssize_t base64_encoded_size;
         const char *node;
         EVP_PKEY *pkey;
         int keyslot, r;
@@ -51,7 +50,7 @@ int enroll_pkcs11(
         if (!decrypted_key)
                 return log_oom();
 
-        r = crypto_random_bytes(decrypted_key, decrypted_key_size);
+        r = genuine_random_bytes(decrypted_key, decrypted_key_size, RANDOM_BLOCK);
         if (r < 0)
                 return log_error_errno(r, "Failed to generate random key: %m");
 
@@ -61,9 +60,9 @@ int enroll_pkcs11(
 
         /* Let's base64 encode the key to use, for compat with homed (and it's easier to type it in by
          * keyboard, if that might ever end up being necessary.) */
-        base64_encoded_size = base64mem(decrypted_key, decrypted_key_size, &base64_encoded);
-        if (base64_encoded_size < 0)
-                return log_error_errno(base64_encoded_size, "Failed to base64 encode secret key: %m");
+        r = base64mem(decrypted_key, decrypted_key_size, &base64_encoded);
+        if (r < 0)
+                return log_error_errno(r, "Failed to base64 encode secret key: %m");
 
         r = cryptsetup_set_minimal_pbkdf(cd);
         if (r < 0)
@@ -75,7 +74,7 @@ int enroll_pkcs11(
                         volume_key,
                         volume_key_size,
                         base64_encoded,
-                        base64_encoded_size);
+                        strlen(base64_encoded));
         if (keyslot < 0)
                 return log_error_errno(keyslot, "Failed to add new PKCS#11 key to %s: %m", node);
 
@@ -84,7 +83,7 @@ int enroll_pkcs11(
 
         r = json_build(&v,
                        JSON_BUILD_OBJECT(
-                                       JSON_BUILD_PAIR("type", JSON_BUILD_CONST_STRING("systemd-pkcs11")),
+                                       JSON_BUILD_PAIR("type", JSON_BUILD_STRING("systemd-pkcs11")),
                                        JSON_BUILD_PAIR("keyslots", JSON_BUILD_ARRAY(JSON_BUILD_STRING(keyslot_as_string))),
                                        JSON_BUILD_PAIR("pkcs11-uri", JSON_BUILD_STRING(uri)),
                                        JSON_BUILD_PAIR("pkcs11-key", JSON_BUILD_BASE64(encrypted_key, encrypted_key_size))));

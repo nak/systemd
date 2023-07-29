@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
+#!/bin/bash
 
 set -ex
 
@@ -9,9 +8,10 @@ success() { echo >&2 -e "\033[32;1m$1\033[0m"; }
 
 ARGS=(
     "--optimization=0"
+    "--optimization=2"
     "--optimization=s"
-    "--optimization=3 -Db_lto=true -Ddns-over-tls=false"
-    "--optimization=3 -Db_lto=false -Dtpm2=false -Dlibfido2=false -Dp11kit=false"
+    "--optimization=3 -Db_lto=true"
+    "--optimization=3 -Db_lto=false"
     "--optimization=3 -Ddns-over-tls=openssl"
     "--optimization=3 -Dfexecve=true -Dstandalone-binaries=true -Dstatic-libsystemd=true -Dstatic-libudev=true"
     "-Db_ndebug=true"
@@ -26,7 +26,6 @@ PACKAGES=(
     itstool
     kbd
     libblkid-dev
-    libbpf-dev
     libcap-dev
     libcurl4-gnutls-dev
     libfdisk-dev
@@ -41,19 +40,16 @@ PACKAGES=(
     libqrencode-dev
     libssl-dev
     libtss2-dev
-    libxen-dev
     libxkbcommon-dev
     libxtables-dev
     libzstd-dev
-    mold
     mount
     net-tools
+    perl
     python3-evdev
-    python3-jinja2
     python3-lxml
-    python3-pefile
+    python3-jinja2
     python3-pip
-    python3-pyelftools
     python3-pyparsing
     python3-setuptools
     quota
@@ -64,8 +60,6 @@ PACKAGES=(
 )
 COMPILER="${COMPILER:?}"
 COMPILER_VERSION="${COMPILER_VERSION:?}"
-LINKER="${LINKER:?}"
-CRYPTOLIB="${CRYPTOLIB:?}"
 RELEASE="$(lsb_release -cs)"
 
 bash -c "echo 'deb-src http://archive.ubuntu.com/ubuntu/ $RELEASE main restricted universe multiverse' >>/etc/apt/sources.list"
@@ -78,28 +72,25 @@ if [[ "$COMPILER" == clang ]]; then
     CXX="clang++-$COMPILER_VERSION"
     AR="llvm-ar-$COMPILER_VERSION"
 
-    # Prefer the distro version if available
+    # ATTOW llvm-11 got into focal-updates, which conflicts with llvm-11
+    # provided by the apt.llvm.org repositories. Let's use the system
+    # llvm package if available in such cases to avoid that.
     if ! apt install --dry-run "llvm-$COMPILER_VERSION" >/dev/null; then
         # Latest LLVM stack deb packages provided by https://apt.llvm.org/
         # Following snippet was partly borrowed from https://apt.llvm.org/llvm.sh
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --yes --dearmor --output /usr/share/keyrings/apt-llvm-org.gpg
         printf "deb [signed-by=/usr/share/keyrings/apt-llvm-org.gpg] http://apt.llvm.org/%s/   llvm-toolchain-%s-%s  main\n" \
                "$RELEASE" "$RELEASE" "$COMPILER_VERSION" >/etc/apt/sources.list.d/llvm-toolchain.list
+        PACKAGES+=("clang-$COMPILER_VERSION" "lldb-$COMPILER_VERSION" "lld-$COMPILER_VERSION" "clangd-$COMPILER_VERSION")
     fi
-
-    PACKAGES+=("clang-$COMPILER_VERSION" "lldb-$COMPILER_VERSION" "lld-$COMPILER_VERSION" "clangd-$COMPILER_VERSION")
 elif [[ "$COMPILER" == gcc ]]; then
     CC="gcc-$COMPILER_VERSION"
     CXX="g++-$COMPILER_VERSION"
     AR="gcc-ar-$COMPILER_VERSION"
-
-    if ! apt install --dry-run "gcc-$COMPILER_VERSION" >/dev/null; then
-        # Latest gcc stack deb packages provided by
-        # https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test
-        add-apt-repository -y ppa:ubuntu-toolchain-r/test
-    fi
-
-    PACKAGES+=("gcc-$COMPILER_VERSION" "gcc-$COMPILER_VERSION-multilib")
+    # Latest gcc stack deb packages provided by
+    # https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test
+    PACKAGES+=(gcc-$COMPILER_VERSION)
 else
     fatal "Unknown compiler: $COMPILER"
 fi
@@ -109,11 +100,11 @@ add-apt-repository -y ppa:upstream-systemd-ci/systemd-ci
 apt-get -y update
 apt-get -y build-dep systemd
 apt-get -y install "${PACKAGES[@]}"
-# Install more or less recent meson and ninja with pip, since the distro versions don't
-# always support all the features we need (like --optimization=). Since the build-dep
+# Install the latest meson and ninja form pip, since the distro versions don't
+# support all the features we need (like --optimization=). Since the build-dep
 # command above installs the distro versions, let's install the pip ones just
 # locally and add the local bin directory to the $PATH.
-pip3 install --user -r .github/workflows/requirements.txt --require-hashes
+pip3 install --user -U meson ninja
 export PATH="$HOME/.local/bin:$PATH"
 
 $CC --version
@@ -123,40 +114,16 @@ ninja --version
 for args in "${ARGS[@]}"; do
     SECONDS=0
 
-    # mold < 1.1 does not support LTO.
-    if dpkg --compare-versions "$(dpkg-query --showformat='${Version}' --show mold)" ge 1.1; then
-        fatal "Newer mold version detected, please remove this workaround."
-    elif [[ "$args" == *"-Db_lto=true"* ]]; then
-        LD="gold"
-    else
-        LD="$LINKER"
-    fi
-
     info "Checking build with $args"
-    # shellcheck disable=SC2086
-    if ! AR="$AR" \
-         CC="$CC" CC_LD="$LD" CFLAGS="-Werror" \
-         CXX="$CXX" CXX_LD="$LD" CXXFLAGS="-Werror" \
-         meson setup \
-               -Dtests=unsafe -Dslow-tests=true -Dfuzz-tests=true --werror \
-               -Dnobody-group=nogroup -Dcryptolib="${CRYPTOLIB:?}" \
-               $args build; then
-
-        cat build/meson-logs/meson-log.txt
+    if ! AR="$AR" CC="$CC" CXX="$CXX" CFLAGS="-Werror" CXXFLAGS="-Werror" meson -Dtests=unsafe -Dslow-tests=true -Dfuzz-tests=true --werror $args build; then
         fatal "meson failed with $args"
     fi
 
-    if ! meson compile -C build -v; then
-        fatal "'meson compile' failed with '$args'"
+    if ! meson compile -C build; then
+        fatal "'meson compile' failed with $args"
     fi
-
-    for loader in build/src/boot/efi/*{.efi,.efi.stub}; do
-        if [[ "$(sbverify --list "$loader" 2>&1)" != "No signature table present" ]]; then
-            fatal "$loader: Gaps found in section table"
-        fi
-    done
 
     git clean -dxf
 
-    success "Build with '$args' passed in $SECONDS seconds"
+    success "Build with $args passed in $SECONDS seconds"
 done

@@ -2,7 +2,6 @@
 
 #include "group-record.h"
 #include "strv.h"
-#include "uid-alloc-range.h"
 #include "user-util.h"
 
 GroupRecord* group_record_new(void) {
@@ -60,6 +59,7 @@ static int dispatch_binding(const char *name, JsonVariant *variant, JsonDispatch
                 {},
         };
 
+        char smid[SD_ID128_STRING_MAX];
         JsonVariant *m;
         sd_id128_t mid;
         int r;
@@ -74,7 +74,7 @@ static int dispatch_binding(const char *name, JsonVariant *variant, JsonDispatch
         if (r < 0)
                 return json_log(variant, flags, r, "Failed to determine machine ID: %m");
 
-        m = json_variant_by_key(variant, SD_ID128_TO_STRING(mid));
+        m = json_variant_by_key(variant, sd_id128_to_string(mid, smid));
         if (!m)
                 return 0;
 
@@ -146,6 +146,7 @@ static int dispatch_status(const char *name, JsonVariant *variant, JsonDispatchF
                 {},
         };
 
+        char smid[SD_ID128_STRING_MAX];
         JsonVariant *m;
         sd_id128_t mid;
         int r;
@@ -160,7 +161,7 @@ static int dispatch_status(const char *name, JsonVariant *variant, JsonDispatchF
         if (r < 0)
                 return json_log(variant, flags, r, "Failed to determine machine ID: %m");
 
-        m = json_variant_by_key(variant, SD_ID128_TO_STRING(mid));
+        m = json_variant_by_key(variant, sd_id128_to_string(mid, smid));
         if (!m)
                 return 0;
 

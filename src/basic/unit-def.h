@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "errno-list.h"
-#include "glyph-util.h"
+#include "locale-util.h"
 #include "macro.h"
 
 /* The enum order is used to order unit jobs in the job queue
@@ -97,7 +97,6 @@ typedef enum MountState {
         MOUNT_REMOUNTING_SIGKILL,
         MOUNT_UNMOUNTING_SIGTERM,
         MOUNT_UNMOUNTING_SIGKILL,
-        MOUNT_UNMOUNTING_CATCHUP,
         MOUNT_FAILED,
         MOUNT_CLEANING,
         _MOUNT_STATE_MAX,
@@ -115,7 +114,6 @@ typedef enum PathState {
 
 typedef enum ScopeState {
         SCOPE_DEAD,
-        SCOPE_START_CHOWN,
         SCOPE_RUNNING,
         SCOPE_ABANDONED,
         SCOPE_STOP_SIGTERM,
@@ -133,9 +131,7 @@ typedef enum ServiceState {
         SERVICE_START_POST,
         SERVICE_RUNNING,
         SERVICE_EXITED,            /* Nothing is running anymore, but RemainAfterExit is true hence this is OK */
-        SERVICE_RELOAD,            /* Reloading via ExecReload= */
-        SERVICE_RELOAD_SIGNAL,     /* Reloading via SIGHUP requested */
-        SERVICE_RELOAD_NOTIFY,     /* Waiting for READY=1 after RELOADING=1 notify */
+        SERVICE_RELOAD,
         SERVICE_STOP,              /* No STOP_PRE state, instead just register multiple STOP executables */
         SERVICE_STOP_WATCHDOG,
         SERVICE_STOP_SIGTERM,
@@ -145,11 +141,7 @@ typedef enum ServiceState {
         SERVICE_FINAL_SIGTERM,     /* In case the STOP_POST executable hangs, we shoot that down, too */
         SERVICE_FINAL_SIGKILL,
         SERVICE_FAILED,
-        SERVICE_DEAD_BEFORE_AUTO_RESTART,
-        SERVICE_FAILED_BEFORE_AUTO_RESTART,
-        SERVICE_DEAD_RESOURCES_PINNED,  /* Like SERVICE_DEAD, but with pinned resources */
         SERVICE_AUTO_RESTART,
-        SERVICE_AUTO_RESTART_QUEUED,
         SERVICE_CLEANING,
         _SERVICE_STATE_MAX,
         _SERVICE_STATE_INVALID = -EINVAL,

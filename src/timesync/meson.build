@@ -2,14 +2,17 @@
 
 sources = files(
         'timesyncd-conf.c',
+        'timesyncd-conf.h',
         'timesyncd-manager.c',
+        'timesyncd-manager.h',
+        'timesyncd-ntp-message.h',
         'timesyncd-server.c',
-)
+        'timesyncd-server.h')
 
 systemd_timesyncd_sources = files(
         'timesyncd.c',
         'timesyncd-bus.c',
-)
+        'timesyncd-bus.h')
 
 sources += custom_target(
         'timesyncd-gperf.c',
@@ -29,15 +32,14 @@ libtimesyncd_core = static_library(
         'timesyncd-core',
         sources,
         include_directories : includes,
-        dependencies : userspace,
-        link_with : timesyncd_link_with,
-        build_by_default : false)
+        link_with : [timesyncd_link_with])
 
 custom_target(
         'timesyncd.conf',
         input : 'timesyncd.conf.in',
         output : 'timesyncd.conf',
-        command : [jinja2_cmdline, '@INPUT@', '@OUTPUT@'],
+        command : [meson_render_jinja2, config_h, '@INPUT@'],
+        capture : true,
         install : conf.get('ENABLE_TIMESYNCD') == 1 and install_sysconfdir_samples,
         install_dir : pkgsysconfdir)
 
@@ -48,19 +50,13 @@ if conf.get('ENABLE_TIMESYNCD') == 1
                      install_dir : dbussystemservicedir)
         install_data('80-systemd-timesync.list',
                      install_dir : ntpservicelistdir)
-        install_data('org.freedesktop.timesync1.policy',
-                     install_dir : polkitpolicydir)
 endif
 
 ############################################################
 
 tests += [
-        {
-                'sources' : files('test-timesync.c'),
-                'link_with' : [
-                        libshared,
-                        libtimesyncd_core,
-                ],
-                'dependencies' : libm,
-        },
+        [['src/timesync/test-timesync.c'],
+         [libtimesyncd_core,
+          libshared],
+         [libm]],
 ]

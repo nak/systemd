@@ -12,7 +12,6 @@
 #include "systemctl-compat-halt.h"
 #include "systemctl-compat-telinit.h"
 #include "systemctl-logind.h"
-#include "systemctl-start-unit.h"
 #include "systemctl-util.h"
 #include "systemctl.h"
 #include "terminal-util.h"
@@ -26,11 +25,6 @@ static int halt_help(void) {
         if (r < 0)
                 return log_oom();
 
-        /* Note: if you are tempted to add new command line switches here, please do not. Let this
-         * compatibility command rest in peace. Its interface is not even owned by us as much as it is by
-         * sysvinit. If you add something new, add it to "systemctl halt", "systemctl reboot", "systemctl
-         * poweroff" instead. */
-
         printf("%s [OPTIONS...]%s\n"
                "\n%s%s the system.%s\n"
                "\nOptions:\n"
@@ -42,16 +36,14 @@ static int halt_help(void) {
                "  -w --wtmp-only Don't halt/power-off/reboot, just write wtmp record\n"
                "  -d --no-wtmp   Don't write wtmp record\n"
                "     --no-wall   Don't send wall message before halt/power-off/reboot\n"
-               "\n%sThis is a compatibility interface, please use the more powerful 'systemctl %s' command instead.%s\n"
                "\nSee the %s for details.\n",
                program_invocation_short_name,
                arg_action == ACTION_REBOOT ? " [ARG]" : "",
-               ansi_highlight(), arg_action == ACTION_REBOOT   ? "Reboot" :
-                                 arg_action == ACTION_POWEROFF ? "Power off" :
-                                                                 "Halt", ansi_normal(),
-               ansi_highlight_red(), arg_action == ACTION_REBOOT   ? "reboot" :
-                                     arg_action == ACTION_POWEROFF ? "poweroff" :
-                                                                     "halt", ansi_normal(),
+               ansi_highlight(),
+               arg_action == ACTION_REBOOT           ? "Reboot" :
+                       arg_action == ACTION_POWEROFF ? "Power off" :
+                                                       "Halt",
+               ansi_normal(),
                link);
 
         return 0;
@@ -83,7 +75,6 @@ int halt_parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
-        /* called in sysvinit system as last command in shutdown/reboot so this is always forceful */
         if (utmp_get_runlevel(&runlevel, NULL) >= 0)
                 if (IN_SET(runlevel, '0', '6'))
                         arg_force = 2;
@@ -136,7 +127,7 @@ int halt_parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (arg_action == ACTION_REBOOT && (argc == optind || argc == optind + 1)) {
@@ -153,37 +144,44 @@ int halt_parse_argv(int argc, char *argv[]) {
 int halt_main(void) {
         int r;
 
-        if (arg_force == 0) {
-                /* always try logind first */
-                if (arg_when > 0)
-                        r = logind_schedule_shutdown(arg_action);
-                else {
-                        r = logind_check_inhibitors(arg_action);
-                        if (r < 0)
+        r = logind_check_inhibitors(arg_action);
+        if (r < 0)
+                return r;
+
+        /* Delayed shutdown requested */
+        if (arg_when > 0)
+                return logind_schedule_shutdown();
+
+        /* No delay, or logind is not at all available */
+        if (geteuid() != 0) {
+                if (arg_dry_run || arg_force > 0) {
+                        (void) must_be_root();
+                        return -EPERM;
+                }
+
+                /* Try logind if we are a normal user and no special mode applies. Maybe polkit allows us to
+                 * shutdown the machine. */
+                if (IN_SET(arg_action, ACTION_POWEROFF, ACTION_REBOOT, ACTION_KEXEC, ACTION_HALT)) {
+                        r = logind_reboot(arg_action);
+                        if (r >= 0)
+                                return r;
+                        if (IN_SET(r, -EOPNOTSUPP, -EINPROGRESS))
+                                /* Requested operation is not supported on the local system or already in
+                                 * progress */
                                 return r;
 
-                        r = logind_reboot(arg_action);
+                        /* on all other errors, try low-level operation */
                 }
-                if (r >= 0)
-                        return r;
-                if (IN_SET(r, -EACCES, -EOPNOTSUPP, -EINPROGRESS))
-                        /* Requested operation requires auth, is not supported on the local system or already in
-                         * progress */
-                        return r;
-                /* on all other errors, try low-level operation */
-
-                /* In order to minimize the difference between operation with and without logind, we explicitly
-                 * enable non-blocking mode for this, as logind's shutdown operations are always non-blocking. */
-                arg_no_block = true;
-
-                if (!arg_dry_run)
-                        return start_with_fallback();
         }
 
-        if (geteuid() != 0) {
-                (void) must_be_root();
-                return -EPERM;
-        }
+        /* In order to minimize the difference between operation with and without logind, we explicitly
+         * enable non-blocking mode for this, as logind's shutdown operations are always non-blocking. */
+        arg_no_block = true;
+
+        if (!arg_dry_run && !arg_force)
+                return start_with_fallback();
+
+        assert(geteuid() == 0);
 
         if (!arg_no_wtmp) {
                 if (sd_booted() > 0)
@@ -199,5 +197,5 @@ int halt_main(void) {
                 return 0;
 
         r = halt_now(arg_action);
-        return log_error_errno(r, "Failed to %s: %m", action_table[arg_action].verb);
+        return log_error_errno(r, "Failed to reboot: %m");
 }

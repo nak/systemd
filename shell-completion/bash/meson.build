@@ -4,9 +4,9 @@ bashcompletiondir = get_option('bashcompletiondir')
 if bashcompletiondir == ''
         bash_completion = dependency('bash-completion', required : false)
         if bash_completion.found()
-                bashcompletiondir = bash_completion.get_variable(pkgconfig : 'completionsdir')
+                bashcompletiondir = bash_completion.get_pkgconfig_variable('completionsdir')
         else
-                bashcompletiondir = datadir / 'bash-completion/completions'
+                bashcompletiondir = join_paths(datadir, 'bash-completion/completions')
         endif
 endif
 
@@ -14,7 +14,8 @@ custom_target(
         'systemctl',
         input : 'systemctl.in',
         output : 'systemctl',
-        command : [jinja2_cmdline, '@INPUT@', '@OUTPUT@'],
+        command : [meson_render_jinja2, config_h, '@INPUT@'],
+        capture : true,
         install : bashcompletiondir != 'no',
         install_dir : bashcompletiondir)
 
@@ -31,22 +32,18 @@ items = [['busctl',              ''],
          ['systemd-path',        ''],
          ['systemd-run',         ''],
          ['udevadm',             ''],
-         ['bootctl',             'ENABLE_BOOTLOADER'],
+         ['kernel-install',      ''],
+         ['bootctl',             'ENABLE_EFI'],
          ['coredumpctl',         'ENABLE_COREDUMP'],
          ['homectl',             'ENABLE_HOMED'],
          ['hostnamectl',         'ENABLE_HOSTNAMED'],
-         ['kernel-install',      'ENABLE_KERNEL_INSTALL'],
          ['localectl',           'ENABLE_LOCALED'],
          ['loginctl',            'ENABLE_LOGIND'],
          ['machinectl',          'ENABLE_MACHINED'],
          ['networkctl',          'ENABLE_NETWORKD'],
-         ['oomctl',              'ENABLE_OOMD'],
          ['portablectl',         'ENABLE_PORTABLED'],
          ['resolvectl',          'ENABLE_RESOLVE'],
-         ['systemd-cryptenroll', 'HAVE_LIBCRYPTSETUP'],
-         ['systemd-dissect',     'HAVE_BLKID'],
          ['systemd-resolve',     'ENABLE_RESOLVE'],
-         ['systemd-sysext',      'ENABLE_SYSEXT'],
          ['timedatectl',         'ENABLE_TIMEDATED']]
 
 foreach item : items

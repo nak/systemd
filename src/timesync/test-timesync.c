@@ -7,7 +7,7 @@
 #include "timesyncd-conf.h"
 #include "tests.h"
 
-TEST(manager_parse_string) {
+static void test_manager_parse_string(void) {
         /* Make sure that NTP_SERVERS is configured to something
          * that we can actually parse successfully. */
 
@@ -25,4 +25,10 @@ TEST(manager_parse_string) {
         assert_se(manager_parse_server_string(m, SERVER_LINK, "time1.foobar.com time2.foobar.com axrfav.,avf..ra 12345..123") == 0);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_manager_parse_string();
+
+        return 0;
+}

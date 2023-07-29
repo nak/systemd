@@ -18,6 +18,6 @@ After=network.target
 [Service]
 Type=forking
 ExecStart={{RC_LOCAL_PATH}} start
-TimeoutSec=infinity
+TimeoutSec=0
 RemainAfterExit=yes
 GuessMainPID=no

@@ -31,20 +31,19 @@
 static int icmp6_bind_router_message(const struct icmp6_filter *filter,
                                      const struct ipv6_mreq *mreq) {
         int ifindex = mreq->ipv6mr_interface;
-        _cleanup_close_ int s = -EBADF;
+        _cleanup_close_ int s = -1;
         int r;
-
-        assert(filter);
-        assert(mreq);
 
         s = socket(AF_INET6, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, IPPROTO_ICMPV6);
         if (s < 0)
                 return -errno;
 
-        if (setsockopt(s, IPPROTO_ICMPV6, ICMP6_FILTER, filter, sizeof(*filter)) < 0)
+        r = setsockopt(s, IPPROTO_ICMPV6, ICMP6_FILTER, filter, sizeof(*filter));
+        if (r < 0)
                 return -errno;
 
-        if (setsockopt(s, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, mreq, sizeof(*mreq)) < 0)
+        r = setsockopt(s, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, mreq, sizeof(*mreq));
+        if (r < 0)
                 return -errno;
 
         /* RFC 3315, section 6.7, bullet point 2 may indicate that an
@@ -132,13 +131,15 @@ int icmp6_send_router_solicitation(int s, const struct ether_addr *ether_addr) {
                 .msg_iov = &iov,
                 .msg_iovlen = 1,
         };
+        int r;
 
         assert(s >= 0);
         assert(ether_addr);
 
         rs.rs_opt_mac = *ether_addr;
 
-        if (sendmsg(s, &msg, 0) < 0)
+        r = sendmsg(s, &msg, 0);
+        if (r < 0)
                 return -errno;
 
         return 0;
@@ -192,18 +193,16 @@ int icmp6_receive(int fd, void *buffer, size_t size, struct in6_addr *ret_dst,
                 if (cmsg->cmsg_level == SOL_IPV6 &&
                     cmsg->cmsg_type == IPV6_HOPLIMIT &&
                     cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
-                        int hops = *CMSG_TYPED_DATA(cmsg, int);
+                        int hops = *(int*) CMSG_DATA(cmsg);
 
                         if (hops != 255)
                                 return -EMULTIHOP;
                 }
 
                 if (cmsg->cmsg_level == SOL_SOCKET &&
-                    cmsg->cmsg_type == SCM_TIMESTAMP &&
-                    cmsg->cmsg_len == CMSG_LEN(sizeof(struct timeval))) {
-                        struct timeval *tv = memcpy(&(struct timeval) {}, CMSG_DATA(cmsg), sizeof(struct timeval));
-                        triple_timestamp_from_realtime(&t, timeval_load(tv));
-                }
+                    cmsg->cmsg_type == SO_TIMESTAMP &&
+                    cmsg->cmsg_len == CMSG_LEN(sizeof(struct timeval)))
+                        triple_timestamp_from_realtime(&t, timeval_load((struct timeval*) CMSG_DATA(cmsg)));
         }
 
         if (!triple_timestamp_is_set(&t))

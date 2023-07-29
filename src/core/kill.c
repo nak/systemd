@@ -3,6 +3,7 @@
 #include "kill.h"
 #include "signal-util.h"
 #include "string-table.h"
+#include "util.h"
 
 void kill_context_init(KillContext *c) {
         assert(c);

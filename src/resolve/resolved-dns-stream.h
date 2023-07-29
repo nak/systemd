@@ -15,18 +15,6 @@ typedef struct DnsStubListenerExtra DnsStubListenerExtra;
 #include "resolved-dns-packet.h"
 #include "resolved-dnstls.h"
 
-/* Various timeouts for establishing TCP connections. First the default time-out for that. */
-#define DNS_STREAM_DEFAULT_TIMEOUT_USEC (10 * USEC_PER_SEC)
-
-/* In the DNS stub, be more friendly for incoming connections, than we are to ourselves for outgoing ones */
-#define DNS_STREAM_STUB_TIMEOUT_USEC (30 * USEC_PER_SEC)
-
-/* In opportunistic TLS mode, lower timeouts */
-#define DNS_STREAM_OPPORTUNISTIC_TLS_TIMEOUT_USEC (3 * USEC_PER_SEC)
-
-/* Once connections are established apply this timeout once nothing happens anymore */
-#define DNS_STREAM_ESTABLISHED_TIMEOUT_USEC (10 * USEC_PER_SEC)
-
 typedef enum DnsStreamType {
         DNS_STREAM_LOOKUP,        /* Outgoing connection to a classic DNS server */
         DNS_STREAM_LLMNR_SEND,    /* Outgoing LLMNR TCP lookup */
@@ -60,8 +48,6 @@ struct DnsStream {
         int ifindex;
         uint32_t ttl;
         bool identified;
-        bool packet_received; /* At least one packet is received. Used by LLMNR. */
-        uint32_t requested_events;
 
         /* only when using TCP fast open */
         union sockaddr_union tfo_address;
@@ -69,7 +55,7 @@ struct DnsStream {
 
 #if ENABLE_DNS_OVER_TLS
         DnsTlsStreamData dnstls_data;
-        uint32_t dnstls_events;
+        int dnstls_events;
 #endif
 
         sd_event_source *io_event_source;
@@ -80,7 +66,7 @@ struct DnsStream {
         size_t n_written, n_read;
         OrderedSet *write_queue;
 
-        int (*on_packet)(DnsStream *s, DnsPacket *p);
+        int (*on_packet)(DnsStream *s);
         int (*complete)(DnsStream *s, int error);
 
         LIST_HEAD(DnsTransaction, transactions); /* when used by the transaction logic */
@@ -95,16 +81,7 @@ struct DnsStream {
         LIST_FIELDS(DnsStream, streams);
 };
 
-int dns_stream_new(
-                Manager *m,
-                DnsStream **ret,
-                DnsStreamType type,
-                DnsProtocol protocol,
-                int fd,
-                const union sockaddr_union *tfo_address,
-                int (on_packet)(DnsStream*, DnsPacket*),
-                int (complete)(DnsStream*, int), /* optional */
-                usec_t connect_timeout_usec);
+int dns_stream_new(Manager *m, DnsStream **s, DnsStreamType type, DnsProtocol protocol, int fd, const union sockaddr_union *tfo_address);
 #if ENABLE_DNS_OVER_TLS
 int dns_stream_connect_tls(DnsStream *s, void *tls_session);
 #endif
@@ -124,5 +101,7 @@ static inline bool DNS_STREAM_QUEUED(DnsStream *s) {
 
         return !!s->write_packet;
 }
+
+DnsPacket *dns_stream_take_read_packet(DnsStream *s);
 
 void dns_stream_detach(DnsStream *s);

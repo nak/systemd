@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <malloc.h>
 #include <stddef.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -20,10 +21,8 @@
 #include "alloc-util.h"
 #include "errno-util.h"
 #include "fd-util.h"
-#include "label.h"
 #include "log.h"
 #include "macro.h"
-#include "mallinfo-util.h"
 #include "path-util.h"
 #include "selinux-util.h"
 #include "stdio-util.h"
@@ -55,15 +54,6 @@ static bool have_status_page = false;
                         : -ERRNO_VALUE(_e);                             \
                 _enforcing ? _r : 0;                                    \
         })
-
-static int mac_selinux_label_pre(int dir_fd, const char *path, mode_t mode) {
-        return mac_selinux_create_file_prepare_at(dir_fd, path, mode);
-}
-
-static int mac_selinux_label_post(int dir_fd, const char *path) {
-        mac_selinux_create_file_clear();
-        return 0;
-}
 #endif
 
 bool mac_selinux_use(void) {
@@ -102,9 +92,30 @@ void mac_selinux_retest(void) {
 }
 
 #if HAVE_SELINUX
+#  if HAVE_MALLINFO2
+#    define HAVE_GENERIC_MALLINFO 1
+typedef struct mallinfo2 generic_mallinfo;
+static generic_mallinfo generic_mallinfo_get(void) {
+        return mallinfo2();
+}
+#  elif HAVE_MALLINFO
+#    define HAVE_GENERIC_MALLINFO 1
+typedef struct mallinfo generic_mallinfo;
+static generic_mallinfo generic_mallinfo_get(void) {
+        /* glibc has deprecated mallinfo(), let's suppress the deprecation warning if mallinfo2() doesn't
+         * exist yet. */
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
+        return mallinfo();
+REENABLE_WARNING
+}
+#  else
+#    define HAVE_GENERIC_MALLINFO 0
+#  endif
+
 static int open_label_db(void) {
         struct selabel_handle *hnd;
         usec_t before_timestamp, after_timestamp;
+        char timespan[FORMAT_TIMESPAN_MAX];
 
 #  if HAVE_GENERIC_MALLINFO
         generic_mallinfo before_mallinfo = generic_mallinfo_get();
@@ -120,11 +131,11 @@ static int open_label_db(void) {
         generic_mallinfo after_mallinfo = generic_mallinfo_get();
         size_t l = LESS_BY((size_t) after_mallinfo.uordblks, (size_t) before_mallinfo.uordblks);
         log_debug("Successfully loaded SELinux database in %s, size on heap is %zuK.",
-                  FORMAT_TIMESPAN(after_timestamp - before_timestamp, 0),
+                  format_timespan(timespan, sizeof(timespan), after_timestamp - before_timestamp, 0),
                   DIV_ROUND_UP(l, 1024));
 #  else
         log_debug("Successfully loaded SELinux database in %s.",
-                  FORMAT_TIMESPAN(after_timestamp - before_timestamp, 0));
+                  format_timespan(timespan, sizeof(timespan), after_timestamp - before_timestamp, 0));
 #  endif
 
         /* release memory after measurement */
@@ -138,10 +149,6 @@ static int open_label_db(void) {
 
 int mac_selinux_init(void) {
 #if HAVE_SELINUX
-        static const LabelOps label_ops = {
-                .pre = mac_selinux_label_pre,
-                .post = mac_selinux_label_post,
-        };
         int r;
 
         if (initialized)
@@ -165,10 +172,6 @@ int mac_selinux_init(void) {
                 selinux_status_close();
                 return r;
         }
-
-        r = label_ops_set(&label_ops);
-        if (r < 0)
-                return r;
 
         /* Save the current policyload sequence number, so mac_selinux_maybe_reload() does not trigger on
          * first call without any actual change. */
@@ -231,19 +234,47 @@ static int mac_selinux_reload(int seqno) {
 }
 #endif
 
-#if HAVE_SELINUX
-static int selinux_fix_fd(
-                int fd,
-                const char *label_path,
-                LabelFixFlags flags) {
+int mac_selinux_fix_container(const char *path, const char *inside_path, LabelFixFlags flags) {
 
+        assert(path);
+        assert(inside_path);
+
+#if HAVE_SELINUX
+        _cleanup_close_ int fd = -1;
+
+        /* if mac_selinux_init() wasn't called before we are a NOOP */
+        if (!label_hnd)
+                return 0;
+
+        /* Open the file as O_PATH, to pin it while we determine and adjust the label */
+        fd = open(path, O_NOFOLLOW|O_CLOEXEC|O_PATH);
+        if (fd < 0) {
+                if ((flags & LABEL_IGNORE_ENOENT) && errno == ENOENT)
+                        return 0;
+
+                return -errno;
+        }
+
+        return mac_selinux_fix_container_fd(fd, path, inside_path, flags);
+#endif
+
+        return 0;
+}
+
+int mac_selinux_fix_container_fd(int fd, const char *path, const char *inside_path, LabelFixFlags flags) {
+
+        assert(fd >= 0);
+        assert(inside_path);
+
+#if HAVE_SELINUX
+        char procfs_path[STRLEN("/proc/self/fd/") + DECIMAL_STR_MAX(int)];
         _cleanup_freecon_ char* fcon = NULL;
         struct stat st;
         int r;
 
-        assert(fd >= 0);
-        assert(label_path);
-        assert(path_is_absolute(label_path));
+        /* if mac_selinux_init() wasn't called before we are a NOOP */
+        if (!label_hnd)
+                return 0;
 
         if (fstat(fd, &st) < 0)
                 return -errno;
@@ -253,85 +284,43 @@ static int selinux_fix_fd(
         if (!label_hnd)
                 return 0;
 
-        if (selabel_lookup_raw(label_hnd, &fcon, label_path, st.st_mode) < 0) {
+        if (selabel_lookup_raw(label_hnd, &fcon, inside_path, st.st_mode) < 0) {
                 /* If there's no label to set, then exit without warning */
                 if (errno == ENOENT)
                         return 0;
 
-                return log_enforcing_errno(errno, "Unable to lookup intended SELinux security context of %s: %m", label_path);
+                r = -errno;
+                goto fail;
         }
 
-        if (setfilecon_raw(FORMAT_PROC_FD_PATH(fd), fcon) < 0) {
+        xsprintf(procfs_path, "/proc/self/fd/%i", fd);
+        if (setfilecon_raw(procfs_path, fcon) < 0) {
                 _cleanup_freecon_ char *oldcon = NULL;
 
-                r = -errno;
-
                 /* If the FS doesn't support labels, then exit without warning */
-                if (ERRNO_IS_NOT_SUPPORTED(r))
+                if (ERRNO_IS_NOT_SUPPORTED(errno))
                         return 0;
 
                 /* It the FS is read-only and we were told to ignore failures caused by that, suppress error */
-                if (r == -EROFS && (flags & LABEL_IGNORE_EROFS))
+                if (errno == EROFS && (flags & LABEL_IGNORE_EROFS))
                         return 0;
+
+                r = -errno;
 
                 /* If the old label is identical to the new one, suppress any kind of error */
-                if (getfilecon_raw(FORMAT_PROC_FD_PATH(fd), &oldcon) >= 0 && streq_ptr(fcon, oldcon))
+                if (getfilecon_raw(procfs_path, &oldcon) >= 0 && streq(fcon, oldcon))
                         return 0;
 
-                return log_enforcing_errno(r, "Unable to fix SELinux security context of %s: %m", label_path);
+                goto fail;
         }
 
         return 0;
-}
+
+fail:
+        return log_enforcing_errno(r, "Unable to fix SELinux security context of %s (%s): %m", strna(path), strna(inside_path));
 #endif
 
-int mac_selinux_fix_full(
-                int atfd,
-                const char *inode_path,
-                const char *label_path,
-                LabelFixFlags flags) {
-
-        assert(atfd >= 0 || atfd == AT_FDCWD);
-        assert(atfd >= 0 || inode_path);
-
-#if HAVE_SELINUX
-        _cleanup_close_ int opened_fd = -EBADF;
-        _cleanup_free_ char *p = NULL;
-        int inode_fd, r;
-
-        /* if mac_selinux_init() wasn't called before we are a NOOP */
-        if (!label_hnd)
-                return 0;
-
-        if (inode_path) {
-                opened_fd = openat(atfd, inode_path, O_NOFOLLOW|O_CLOEXEC|O_PATH);
-                if (opened_fd < 0) {
-                        if ((flags & LABEL_IGNORE_ENOENT) && errno == ENOENT)
-                                return 0;
-
-                        return -errno;
-                }
-
-                inode_fd = opened_fd;
-        } else
-                inode_fd = atfd;
-
-        if (!label_path) {
-                if (path_is_absolute(inode_path))
-                        label_path = inode_path;
-                else {
-                        r = fd_get_path(inode_fd, &p);
-                        if (r < 0)
-                                return r;
-
-                        label_path = p;
-                }
-        }
-
-        return selinux_fix_fd(inode_fd, label_path, flags);
-#else
         return 0;
-#endif
 }
 
 int mac_selinux_apply(const char *path, const char *label) {
@@ -355,12 +344,16 @@ int mac_selinux_apply_fd(int fd, const char *path, const char *label) {
         assert(fd >= 0);
 
 #if HAVE_SELINUX
+        char procfs_path[STRLEN("/proc/self/fd/") + DECIMAL_STR_MAX(int) + 1];
+
         if (!mac_selinux_use())
                 return 0;
 
         assert(label);
 
-        if (setfilecon(FORMAT_PROC_FD_PATH(fd), label) < 0)
+        xsprintf(procfs_path, "/proc/self/fd/%i", fd);
+
+        if (setfilecon(procfs_path, label) < 0)
                 return log_enforcing_errno(errno, "Failed to set SELinux security context %s on path %s: %m", label, strna(path));
 #endif
         return 0;
@@ -370,6 +363,7 @@ int mac_selinux_get_create_label_from_exe(const char *exe, char **label) {
 #if HAVE_SELINUX
         _cleanup_freecon_ char *mycon = NULL, *fcon = NULL;
         security_class_t sclass;
+        int r;
 
         assert(exe);
         assert(label);
@@ -377,75 +371,76 @@ int mac_selinux_get_create_label_from_exe(const char *exe, char **label) {
         if (!mac_selinux_use())
                 return -EOPNOTSUPP;
 
-        if (getcon_raw(&mycon) < 0)
+        r = getcon_raw(&mycon);
+        if (r < 0)
                 return -errno;
-        if (!mycon)
-                return -EOPNOTSUPP;
 
-        if (getfilecon_raw(exe, &fcon) < 0)
+        r = getfilecon_raw(exe, &fcon);
+        if (r < 0)
                 return -errno;
-        if (!fcon)
-                return -EOPNOTSUPP;
 
         sclass = string_to_security_class("process");
         if (sclass == 0)
                 return -ENOSYS;
 
-        return RET_NERRNO(security_compute_create_raw(mycon, fcon, sclass, label));
-#else
-        return -EOPNOTSUPP;
-#endif
-}
-
-int mac_selinux_get_our_label(char **ret) {
-        assert(ret);
-
-#if HAVE_SELINUX
-        if (!mac_selinux_use())
-                return -EOPNOTSUPP;
-
-        _cleanup_freecon_ char *con = NULL;
-        if (getcon_raw(&con) < 0)
+        r = security_compute_create_raw(mycon, fcon, sclass, label);
+        if (r < 0)
                 return -errno;
-        if (!con)
-                return -EOPNOTSUPP;
 
-        *ret = TAKE_PTR(con);
         return 0;
 #else
         return -EOPNOTSUPP;
 #endif
 }
 
-int mac_selinux_get_child_mls_label(int socket_fd, const char *exe, const char *exec_label, char **ret_label) {
+int mac_selinux_get_our_label(char **label) {
 #if HAVE_SELINUX
-        _cleanup_freecon_ char *mycon = NULL, *peercon = NULL, *fcon = NULL;
-        _cleanup_context_free_ context_t pcon = NULL, bcon = NULL;
-        const char *range = NULL, *bcon_str = NULL;
-        security_class_t sclass;
+        int r;
 
-        assert(socket_fd >= 0);
-        assert(exe);
-        assert(ret_label);
+        assert(label);
 
         if (!mac_selinux_use())
                 return -EOPNOTSUPP;
 
-        if (getcon_raw(&mycon) < 0)
+        r = getcon_raw(label);
+        if (r < 0)
                 return -errno;
-        if (!mycon)
+
+        return 0;
+#else
+        return -EOPNOTSUPP;
+#endif
+}
+
+int mac_selinux_get_child_mls_label(int socket_fd, const char *exe, const char *exec_label, char **label) {
+#if HAVE_SELINUX
+        _cleanup_freecon_ char *mycon = NULL, *peercon = NULL, *fcon = NULL;
+        _cleanup_context_free_ context_t pcon = NULL, bcon = NULL;
+        security_class_t sclass;
+        const char *range = NULL;
+        int r;
+
+        assert(socket_fd >= 0);
+        assert(exe);
+        assert(label);
+
+        if (!mac_selinux_use())
                 return -EOPNOTSUPP;
 
-        if (getpeercon_raw(socket_fd, &peercon) < 0)
+        r = getcon_raw(&mycon);
+        if (r < 0)
                 return -errno;
-        if (!peercon)
-                return -EOPNOTSUPP;
 
-        if (!exec_label) { /* If there is no context set for next exec let's use context of target executable */
-                if (getfilecon_raw(exe, &fcon) < 0)
+        r = getpeercon_raw(socket_fd, &peercon);
+        if (r < 0)
+                return -errno;
+
+        if (!exec_label) {
+                /* If there is no context set for next exec let's use context
+                   of target executable */
+                r = getfilecon_raw(exe, &fcon);
+                if (r < 0)
                         return -errno;
-                if (!fcon)
-                        return -EOPNOTSUPP;
         }
 
         bcon = context_new(mycon);
@@ -460,18 +455,24 @@ int mac_selinux_get_child_mls_label(int socket_fd, const char *exe, const char *
         if (!range)
                 return -errno;
 
-        if (context_range_set(bcon, range) != 0)
+        r = context_range_set(bcon, range);
+        if (r)
                 return -errno;
 
-        bcon_str = context_str(bcon);
-        if (!bcon_str)
+        freecon(mycon);
+        mycon = strdup(context_str(bcon));
+        if (!mycon)
                 return -ENOMEM;
 
         sclass = string_to_security_class("process");
         if (sclass == 0)
                 return -ENOSYS;
 
-        return RET_NERRNO(security_compute_create_raw(bcon_str, fcon, sclass, ret_label));
+        r = security_compute_create_raw(mycon, fcon, sclass, label);
+        if (r < 0)
+                return -errno;
+
+        return 0;
 #else
         return -EOPNOTSUPP;
 #endif
@@ -517,30 +518,25 @@ static int selinux_create_file_prepare_abspath(const char *abspath, mode_t mode)
 }
 #endif
 
-int mac_selinux_create_file_prepare_at(
-                int dir_fd,
-                const char *path,
-                mode_t mode) {
-
+int mac_selinux_create_file_prepare_at(int dirfd, const char *path, mode_t mode) {
 #if HAVE_SELINUX
         _cleanup_free_ char *abspath = NULL;
         int r;
 
-        if (dir_fd < 0 && dir_fd != AT_FDCWD)
-                return -EBADF;
+        assert(path);
 
         if (!label_hnd)
                 return 0;
 
-        if (isempty(path) || !path_is_absolute(path)) {
-                if (dir_fd == AT_FDCWD)
+        if (!path_is_absolute(path)) {
+                if (dirfd == AT_FDCWD)
                         r = safe_getcwd(&abspath);
                 else
-                        r = fd_get_path(dir_fd, &abspath);
+                        r = fd_get_path(dirfd, &abspath);
                 if (r < 0)
                         return r;
 
-                if (!isempty(path) && !path_extend(&abspath, path))
+                if (!path_extend(&abspath, path))
                         return -ENOMEM;
 
                 path = abspath;
@@ -552,19 +548,25 @@ int mac_selinux_create_file_prepare_at(
 #endif
 }
 
-int mac_selinux_create_file_prepare_label(const char *path, const char *label) {
+int mac_selinux_create_file_prepare(const char *path, mode_t mode) {
 #if HAVE_SELINUX
+        int r;
 
-        if (!label)
+        _cleanup_free_ char *abspath = NULL;
+
+        assert(path);
+
+        if (!label_hnd)
                 return 0;
 
-        if (!mac_selinux_use())
-                return 0;
+        r = path_make_absolute_cwd(path, &abspath);
+        if (r < 0)
+                return r;
 
-        if (setfscreatecon_raw(label) < 0)
-                return log_enforcing_errno(errno, "Failed to set specified SELinux security context '%s' for '%s': %m", label, strna(path));
-#endif
+        return selinux_create_file_prepare_abspath(abspath, mode);
+#else
         return 0;
+#endif
 }
 
 void mac_selinux_create_file_clear(void) {
@@ -614,7 +616,6 @@ int mac_selinux_bind(int fd, const struct sockaddr *addr, socklen_t addrlen) {
         _cleanup_freecon_ char *fcon = NULL;
         const struct sockaddr_un *un;
         bool context_changed = false;
-        size_t sz;
         char *path;
         int r;
 
@@ -638,10 +639,7 @@ int mac_selinux_bind(int fd, const struct sockaddr *addr, socklen_t addrlen) {
         if (un->sun_path[0] == 0)
                 goto skipped;
 
-        sz = addrlen - offsetof(struct sockaddr_un, sun_path);
-        if (sz > PATH_MAX)
-                goto skipped;
-        path = strndupa_safe(un->sun_path, sz);
+        path = strndupa(un->sun_path, addrlen - offsetof(struct sockaddr_un, sun_path));
 
         /* Check for policy reload so 'label_hnd' is kept up-to-date by callbacks */
         mac_selinux_maybe_reload();
@@ -677,7 +675,7 @@ int mac_selinux_bind(int fd, const struct sockaddr *addr, socklen_t addrlen) {
                         context_changed = true;
         }
 
-        r = RET_NERRNO(bind(fd, addr, addrlen));
+        r = bind(fd, addr, addrlen) < 0 ? -errno : 0;
 
         if (context_changed)
                 (void) setfscreatecon_raw(NULL);
@@ -686,5 +684,8 @@ int mac_selinux_bind(int fd, const struct sockaddr *addr, socklen_t addrlen) {
 
 skipped:
 #endif
-        return RET_NERRNO(bind(fd, addr, addrlen));
+        if (bind(fd, addr, addrlen) < 0)
+                return -errno;
+
+        return 0;
 }

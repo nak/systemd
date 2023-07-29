@@ -3,12 +3,11 @@
 
 #include "sd-bus.h"
 
-#include "bus-object.h"
 #include "macro.h"
 
 typedef struct Link Link;
 
-extern const BusObjectImplementation link_object;
+extern const sd_bus_vtable link_vtable[];
 
 char *link_bus_path(Link *link);
 int link_node_enumerator(sd_bus *bus, const char *path, void *userdata, char ***nodes, sd_bus_error *error);

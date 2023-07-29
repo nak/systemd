@@ -1,15 +1,35 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -eux
 set -o pipefail
 
-# shellcheck source=test/units/test-control.sh
-. "$(dirname "$0")"/test-control.sh
+: >/failed
 
-# Issue: https://github.com/systemd/systemd/issues/2730
-# See TEST-07-PID1/test.sh for the first "half" of the test
-mountpoint /issue2730
+cat >/lib/systemd/system/my.service <<EOF
+[Service]
+Type=oneshot
+ExecStart=/bin/echo Timer runs me
+EOF
 
-run_subtests
+cat >/lib/systemd/system/my.timer <<EOF
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec=1h
+EOF
+
+systemctl unmask my.timer
+
+systemctl start my.timer
+
+mkdir -p /etc/systemd/system/my.timer.d/
+cat >/etc/systemd/system/my.timer.d/override.conf <<EOF
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec=1h
+EOF
+
+systemctl daemon-reload
+
+systemctl mask my.timer
 
 touch /testok
+rm /failed

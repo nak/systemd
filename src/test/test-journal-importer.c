@@ -20,7 +20,7 @@ static void assert_iovec_entry(const struct iovec *iovec, const char* content) {
         "COREDUMP_PROC_CGROUP=1:name=systemd:/\n"                       \
         "0::/user.slice/user-1002.slice/user@1002.service/gnome-terminal-server.service\n"
 
-TEST(basic_parsing) {
+static void test_basic_parsing(void) {
         _cleanup_(journal_importer_cleanup) JournalImporter imp = JOURNAL_IMPORTER_INIT(-1);
         _cleanup_free_ char *journal_data_path = NULL;
         int r;
@@ -51,7 +51,7 @@ TEST(basic_parsing) {
         assert_se(journal_importer_eof(&imp));
 }
 
-TEST(bad_input) {
+static void test_bad_input(void) {
         _cleanup_(journal_importer_cleanup) JournalImporter imp = JOURNAL_IMPORTER_INIT(-1);
         _cleanup_free_ char *journal_data_path = NULL;
         int r;
@@ -68,4 +68,11 @@ TEST(bad_input) {
         assert_se(journal_importer_eof(&imp));
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_basic_parsing();
+        test_bad_input();
+
+        return 0;
+}

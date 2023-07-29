@@ -13,7 +13,6 @@
 #include "fd-util.h"
 #include "fileio.h"
 #include "fs-util.h"
-#include "hostname-util.h"
 #include "import-common.h"
 #include "os-util.h"
 #include "process-util.h"
@@ -21,9 +20,61 @@
 #include "signal-util.h"
 #include "stat-util.h"
 #include "tmpfile-util.h"
+#include "util.h"
+
+int import_make_read_only_fd(int fd) {
+        struct stat st;
+        int r;
+
+        assert(fd >= 0);
+
+        /* First, let's make this a read-only subvolume if it refers
+         * to a subvolume */
+        r = btrfs_subvol_set_read_only_fd(fd, true);
+        if (r >= 0)
+                return 0;
+
+        if (!ERRNO_IS_NOT_SUPPORTED(r) && !IN_SET(r, -ENOTDIR, -EINVAL))
+                return log_error_errno(r, "Failed to make subvolume read-only: %m");
+
+        /* This doesn't refer to a subvolume, or the file system isn't even btrfs. In that, case fall back to
+         * chmod()ing */
+
+        r = fstat(fd, &st);
+        if (r < 0)
+                return log_error_errno(errno, "Failed to stat image: %m");
+
+        if (S_ISDIR(st.st_mode)) {
+                /* For directories set the immutable flag on the dir itself */
+
+                r = chattr_fd(fd, FS_IMMUTABLE_FL, FS_IMMUTABLE_FL, NULL);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set +i attribute on directory image: %m");
+
+        } else if (S_ISREG(st.st_mode)) {
+                /* For regular files drop "w" flags */
+
+                if ((st.st_mode & 0222) != 0)
+                        if (fchmod(fd, st.st_mode & 07555) < 0)
+                                return log_error_errno(errno, "Failed to chmod() image: %m");
+        } else
+                return log_error_errno(SYNTHETIC_ERRNO(EBADFD), "Image of unexpected type");
+
+        return 0;
+}
+
+int import_make_read_only(const char *path) {
+        _cleanup_close_ int fd = 1;
+
+        fd = open(path, O_RDONLY|O_NOCTTY|O_CLOEXEC);
+        if (fd < 0)
+                return log_error_errno(errno, "Failed to open %s: %m", path);
+
+        return import_make_read_only_fd(fd);
+}
 
 int import_fork_tar_x(const char *path, pid_t *ret) {
-        _cleanup_close_pair_ int pipefd[2] = PIPE_EBADF;
+        _cleanup_close_pair_ int pipefd[2] = { -1, -1 };
         bool use_selinux;
         pid_t pid;
         int r;
@@ -36,10 +87,7 @@ int import_fork_tar_x(const char *path, pid_t *ret) {
 
         use_selinux = mac_selinux_use();
 
-        r = safe_fork_full("(tar)",
-                           (int[]) { pipefd[0], -EBADF, STDERR_FILENO },
-                           NULL, 0,
-                           FORK_RESET_SIGNALS|FORK_CLOSE_ALL_FDS|FORK_DEATHSIG|FORK_REARRANGE_STDIO|FORK_LOG, &pid);
+        r = safe_fork("(tar)", FORK_RESET_SIGNALS|FORK_DEATHSIG|FORK_LOG, &pid);
         if (r < 0)
                 return r;
         if (r == 0) {
@@ -48,8 +96,7 @@ int import_fork_tar_x(const char *path, pid_t *ret) {
                        "--ignore-zeros",
                        "--numeric-owner",
                        "-C", path,
-                       "-pxf",
-                       "-",
+                       "-px",
                        "--xattrs",
                        "--xattrs-include=*",
                        use_selinux ? "--selinux" : "--no-selinux",
@@ -65,6 +112,14 @@ int import_fork_tar_x(const char *path, pid_t *ret) {
                         (1ULL << CAP_DAC_OVERRIDE);
 
                 /* Child */
+
+                pipefd[1] = safe_close(pipefd[1]);
+
+                r = rearrange_stdio(pipefd[0], -1, STDERR_FILENO);
+                if (r < 0) {
+                        log_error_errno(r, "Failed to rearrange stdin/stdout: %m");
+                        _exit(EXIT_FAILURE);
+                }
 
                 if (unshare(CLONE_NEWNET) < 0)
                         log_warning_errno(errno, "Failed to lock tar into network namespace, ignoring: %m");
@@ -92,7 +147,7 @@ int import_fork_tar_x(const char *path, pid_t *ret) {
 }
 
 int import_fork_tar_c(const char *path, pid_t *ret) {
-        _cleanup_close_pair_ int pipefd[2] = PIPE_EBADF;
+        _cleanup_close_pair_ int pipefd[2] = { -1, -1 };
         bool use_selinux;
         pid_t pid;
         int r;
@@ -105,10 +160,7 @@ int import_fork_tar_c(const char *path, pid_t *ret) {
 
         use_selinux = mac_selinux_use();
 
-        r = safe_fork_full("(tar)",
-                           (int[]) { -EBADF, pipefd[1], STDERR_FILENO },
-                           NULL, 0,
-                           FORK_RESET_SIGNALS|FORK_CLOSE_ALL_FDS|FORK_DEATHSIG|FORK_REARRANGE_STDIO|FORK_LOG, &pid);
+        r = safe_fork("(tar)", FORK_RESET_SIGNALS|FORK_DEATHSIG|FORK_LOG, &pid);
         if (r < 0)
                 return r;
         if (r == 0) {
@@ -126,6 +178,14 @@ int import_fork_tar_c(const char *path, pid_t *ret) {
                 uint64_t retain = (1ULL << CAP_DAC_OVERRIDE);
 
                 /* Child */
+
+                pipefd[0] = safe_close(pipefd[0]);
+
+                r = rearrange_stdio(-1, pipefd[1], STDERR_FILENO);
+                if (r < 0) {
+                        log_error_errno(r, "Failed to rearrange stdin/stdout: %m");
+                        _exit(EXIT_FAILURE);
+                }
 
                 if (unshare(CLONE_NEWNET) < 0)
                         log_error_errno(errno, "Failed to lock tar into network namespace, ignoring: %m");
@@ -149,7 +209,7 @@ int import_fork_tar_c(const char *path, pid_t *ret) {
 int import_mangle_os_tree(const char *path) {
         _cleanup_free_ char *child = NULL, *t = NULL, *joined = NULL;
         _cleanup_closedir_ DIR *d = NULL, *cd = NULL;
-        struct dirent *dent;
+        struct dirent *de;
         struct stat st;
         int r;
 
@@ -173,8 +233,8 @@ int import_mangle_os_tree(const char *path) {
                 return log_error_errno(r, "Failed to open directory '%s': %m", path);
 
         errno = 0;
-        dent = readdir_no_dot(d);
-        if (!dent) {
+        de = readdir_no_dot(d);
+        if (!de) {
                 if (errno != 0)
                         return log_error_errno(errno, "Failed to iterate through directory '%s': %m", path);
 
@@ -182,13 +242,13 @@ int import_mangle_os_tree(const char *path) {
                 return 0;
         }
 
-        child = strdup(dent->d_name);
+        child = strdup(de->d_name);
         if (!child)
                 return log_oom();
 
         errno = 0;
-        dent = readdir_no_dot(d);
-        if (dent) {
+        de = readdir_no_dot(d);
+        if (de) {
                 if (errno != 0)
                         return log_error_errno(errno, "Failed to iterate through directory '%s': %m", path);
 
@@ -265,40 +325,5 @@ int import_mangle_os_tree(const char *path) {
 
         log_info("Successfully rearranged OS tree.");
 
-        return 0;
-}
-
-bool import_validate_local(const char *name, ImportFlags flags) {
-
-        /* By default we insist on a valid hostname for naming images. But optionally we relax that, in which
-         * case it can be any path name */
-
-        if (FLAGS_SET(flags, IMPORT_DIRECT))
-                return path_is_valid(name);
-
-        return hostname_is_valid(name, 0);
-}
-
-static int interrupt_signal_handler(sd_event_source *s, const struct signalfd_siginfo *si, void *userdata) {
-        log_notice("Transfer aborted.");
-        sd_event_exit(sd_event_source_get_event(s), EINTR);
-        return 0;
-}
-
-int import_allocate_event_with_signals(sd_event **ret) {
-        _cleanup_(sd_event_unrefp) sd_event *event = NULL;
-        int r;
-
-        assert(ret);
-
-        r = sd_event_default(&event);
-        if (r < 0)
-                return log_error_errno(r, "Failed to allocate event loop: %m");
-
-        assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGTERM, SIGINT, -1) >= 0);
-        (void) sd_event_add_signal(event, NULL, SIGTERM, interrupt_signal_handler,  NULL);
-        (void) sd_event_add_signal(event, NULL, SIGINT, interrupt_signal_handler, NULL);
-
-        *ret = TAKE_PTR(event);
         return 0;
 }

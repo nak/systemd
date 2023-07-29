@@ -4,7 +4,7 @@
 #include "tests.h"
 #include "time-util.h"
 
-TEST(parse_percent) {
+static void test_parse_percent(void) {
         assert_se(parse_percent("") == -EINVAL);
         assert_se(parse_percent("foo") == -EINVAL);
         assert_se(parse_percent("0") == -EINVAL);
@@ -24,12 +24,12 @@ TEST(parse_percent) {
         assert_se(parse_percent("3.2%") == -EINVAL);
 }
 
-TEST(parse_percent_unbounded) {
+static void test_parse_percent_unbounded(void) {
         assert_se(parse_percent_unbounded("101%") == 101);
         assert_se(parse_percent_unbounded("400%") == 400);
 }
 
-TEST(parse_permille) {
+static void test_parse_permille(void) {
         assert_se(parse_permille("") == -EINVAL);
         assert_se(parse_permille("foo") == -EINVAL);
         assert_se(parse_permille("0") == -EINVAL);
@@ -67,7 +67,7 @@ TEST(parse_permille) {
         assert_se(parse_permille("0.1%") == 1);
 }
 
-TEST(parse_permille_unbounded) {
+static void test_parse_permille_unbounded(void) {
         assert_se(parse_permille_unbounded("1001‰") == 1001);
         assert_se(parse_permille_unbounded("4000‰") == 4000);
         assert_se(parse_permille_unbounded("2147483647‰") == 2147483647);
@@ -83,7 +83,7 @@ TEST(parse_permille_unbounded) {
         assert_se(parse_permille_unbounded("429496729.6%") == -ERANGE);
 }
 
-TEST(parse_permyriad) {
+static void test_parse_permyriad(void) {
         assert_se(parse_permyriad("") == -EINVAL);
         assert_se(parse_permyriad("foo") == -EINVAL);
         assert_se(parse_permyriad("0") == -EINVAL);
@@ -128,7 +128,7 @@ TEST(parse_permyriad) {
         assert_se(parse_permyriad("3.212%") == -EINVAL);
 }
 
-TEST(parse_permyriad_unbounded) {
+static void test_parse_permyriad_unbounded(void) {
         assert_se(parse_permyriad_unbounded("1001‱") == 1001);
         assert_se(parse_permyriad_unbounded("4000‱") == 4000);
         assert_se(parse_permyriad_unbounded("2147483647‱") == 2147483647);
@@ -151,7 +151,7 @@ TEST(parse_permyriad_unbounded) {
         assert_se(parse_permyriad_unbounded("42949672.96%") == -ERANGE);
 }
 
-TEST(scale) {
+static void test_scale(void) {
         /* Check some fixed values */
         assert_se(UINT32_SCALE_FROM_PERCENT(0) == 0);
         assert_se(UINT32_SCALE_FROM_PERCENT(50) == UINT32_MAX/2+1);
@@ -196,4 +196,16 @@ TEST(scale) {
         }
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_parse_percent();
+        test_parse_percent_unbounded();
+        test_parse_permille();
+        test_parse_permille_unbounded();
+        test_parse_permyriad();
+        test_parse_permyriad_unbounded();
+        test_scale();
+
+        return 0;
+}

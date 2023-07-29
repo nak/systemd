@@ -1,7 +1,8 @@
 #!/bin/bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
 #
 # Basic tests for types creating fifos
+#
+
 set -eux
 set -o pipefail
 

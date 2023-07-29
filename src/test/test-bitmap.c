@@ -10,7 +10,8 @@ int main(int argc, const char *argv[]) {
         assert_se(b);
 
         assert_se(bitmap_ensure_allocated(&b) == 0);
-        b = bitmap_free(b);
+        bitmap_free(b);
+        b = NULL;
         assert_se(bitmap_ensure_allocated(&b) == 0);
 
         assert_se(bitmap_isset(b, 0) == false);
@@ -45,7 +46,7 @@ int main(int argc, const char *argv[]) {
         bitmap_unset(b, 32);
 
         BITMAP_FOREACH(n, NULL)
-                assert_not_reached();
+                assert_not_reached("NULL bitmap");
 
         assert_se(bitmap_set(b, 0) == 0);
         assert_se(bitmap_set(b, 1) == 0);
@@ -88,11 +89,13 @@ int main(int argc, const char *argv[]) {
         bitmap_clear(b);
         assert_se(bitmap_isclear(b) == true);
         assert_se(bitmap_equal(b, b2) == false);
-        b2 = bitmap_free(b2);
+        bitmap_free(b2);
+        b2 = NULL;
 
         assert_se(bitmap_set(b, UINT_MAX) == -ERANGE);
 
-        b = bitmap_free(b);
+        bitmap_free(b);
+        b = NULL;
         assert_se(bitmap_ensure_allocated(&b) == 0);
         assert_se(bitmap_ensure_allocated(&b2) == 0);
 

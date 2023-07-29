@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
+#include <ftw.h>
 #include <getopt.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "sd-bus.h"
 
-#include "build.h"
 #include "bus-error.h"
 #include "bus-locator.h"
 #include "bus-map-properties.h"
 #include "fd-util.h"
 #include "fileio.h"
-#include "format-table.h"
 #include "kbd-util.h"
-#include "locale-setup.h"
+#include "locale-util.h"
 #include "main-func.h"
 #include "memory-util.h"
 #include "pager.h"
@@ -52,97 +52,71 @@ static void status_info_clear(StatusInfo *info) {
         }
 }
 
-static int print_status_info(StatusInfo *i) {
-        _cleanup_strv_free_ char **kernel_locale = NULL;
-        _cleanup_(table_unrefp) Table *table = NULL;
-        TableCell *cell;
+static void print_overridden_variables(void) {
+        _cleanup_(locale_variables_freep) char *variables[_VARIABLE_LC_MAX] = {};
+        bool print_warning = true;
         int r;
 
+        if (arg_transport != BUS_TRANSPORT_LOCAL)
+                return;
+
+        r = proc_cmdline_get_key_many(
+                        PROC_CMDLINE_STRIP_RD_PREFIX,
+                        "locale.LANG",              &variables[VARIABLE_LANG],
+                        "locale.LANGUAGE",          &variables[VARIABLE_LANGUAGE],
+                        "locale.LC_CTYPE",          &variables[VARIABLE_LC_CTYPE],
+                        "locale.LC_NUMERIC",        &variables[VARIABLE_LC_NUMERIC],
+                        "locale.LC_TIME",           &variables[VARIABLE_LC_TIME],
+                        "locale.LC_COLLATE",        &variables[VARIABLE_LC_COLLATE],
+                        "locale.LC_MONETARY",       &variables[VARIABLE_LC_MONETARY],
+                        "locale.LC_MESSAGES",       &variables[VARIABLE_LC_MESSAGES],
+                        "locale.LC_PAPER",          &variables[VARIABLE_LC_PAPER],
+                        "locale.LC_NAME",           &variables[VARIABLE_LC_NAME],
+                        "locale.LC_ADDRESS",        &variables[VARIABLE_LC_ADDRESS],
+                        "locale.LC_TELEPHONE",      &variables[VARIABLE_LC_TELEPHONE],
+                        "locale.LC_MEASUREMENT",    &variables[VARIABLE_LC_MEASUREMENT],
+                        "locale.LC_IDENTIFICATION", &variables[VARIABLE_LC_IDENTIFICATION]);
+        if (r < 0 && r != -ENOENT) {
+                log_warning_errno(r, "Failed to read /proc/cmdline: %m");
+                return;
+        }
+
+        for (LocaleVariable j = 0; j < _VARIABLE_LC_MAX; j++)
+                if (variables[j]) {
+                        if (print_warning) {
+                                log_warning("Warning: Settings on kernel command line override system locale settings in /etc/locale.conf.\n"
+                                            "    Command Line: %s=%s", locale_variable_to_string(j), variables[j]);
+
+                                print_warning = false;
+                        } else
+                                log_warning("                  %s=%s", locale_variable_to_string(j), variables[j]);
+                }
+}
+
+static void print_status_info(StatusInfo *i) {
         assert(i);
 
-        if (arg_transport == BUS_TRANSPORT_LOCAL) {
-                _cleanup_(locale_context_clear) LocaleContext c = {};
+        if (strv_isempty(i->locale))
+                puts("   System Locale: n/a");
+        else {
+                char **j;
 
-                r = locale_context_load(&c, LOCALE_LOAD_PROC_CMDLINE);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to read /proc/cmdline: %m");
-
-                r = locale_context_build_env(&c, &kernel_locale, NULL);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to build locale settings from kernel command line: %m");
+                printf("   System Locale: %s\n", i->locale[0]);
+                STRV_FOREACH(j, i->locale + 1)
+                        printf("                  %s\n", *j);
         }
 
-        table = table_new_vertical();
-        if (!table)
-                return log_oom();
+        printf("       VC Keymap: %s\n", strna(i->vconsole_keymap));
+        if (!isempty(i->vconsole_keymap_toggle))
+                printf("VC Toggle Keymap: %s\n", i->vconsole_keymap_toggle);
 
-        assert_se(cell = table_get_cell(table, 0, 0));
-        (void) table_set_ellipsize_percent(table, cell, 100);
-
-        table_set_ersatz_string(table, TABLE_ERSATZ_UNSET);
-
-        if (!strv_isempty(kernel_locale)) {
-                log_warning("Warning: Settings on kernel command line override system locale settings in /etc/locale.conf.");
-                r = table_add_many(table,
-                                   TABLE_FIELD, "Command Line",
-                                   TABLE_SET_COLOR, ansi_highlight_yellow(),
-                                   TABLE_STRV, kernel_locale,
-                                   TABLE_SET_COLOR, ansi_highlight_yellow());
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = table_add_many(table,
-                           TABLE_FIELD, "System Locale",
-                           TABLE_STRV, i->locale,
-                           TABLE_FIELD, "VC Keymap",
-                           TABLE_STRING, i->vconsole_keymap);
-        if (r < 0)
-                return table_log_add_error(r);
-
-        if (!isempty(i->vconsole_keymap_toggle)) {
-                r = table_add_many(table,
-                                   TABLE_FIELD, "VC Toggle Keymap",
-                                   TABLE_STRING, i->vconsole_keymap_toggle);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = table_add_many(table,
-                           TABLE_FIELD, "X11 Layout",
-                           TABLE_STRING, i->x11_layout);
-        if (r < 0)
-                return table_log_add_error(r);
-
-        if (!isempty(i->x11_model)) {
-                r = table_add_many(table,
-                                   TABLE_FIELD, "X11 Model",
-                                   TABLE_STRING, i->x11_model);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        if (!isempty(i->x11_variant)) {
-                r = table_add_many(table,
-                                   TABLE_FIELD, "X11 Variant",
-                                   TABLE_STRING, i->x11_variant);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        if (!isempty(i->x11_options)) {
-                r = table_add_many(table,
-                                   TABLE_FIELD, "X11 Options",
-                                   TABLE_STRING, i->x11_options);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = table_print(table, NULL);
-        if (r < 0)
-                return table_log_print_error(r);
-
-        return 0;
+        printf("      X11 Layout: %s\n", strna(i->x11_layout));
+        if (!isempty(i->x11_model))
+                printf("       X11 Model: %s\n", i->x11_model);
+        if (!isempty(i->x11_variant))
+                printf("     X11 Variant: %s\n", i->x11_variant);
+        if (!isempty(i->x11_options))
+                printf("     X11 Options: %s\n", i->x11_options);
 }
 
 static int show_status(int argc, char **argv, void *userdata) {
@@ -160,8 +134,10 @@ static int show_status(int argc, char **argv, void *userdata) {
 
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         r = bus_map_all_properties(bus,
                                    "org.freedesktop.locale1",
@@ -174,14 +150,19 @@ static int show_status(int argc, char **argv, void *userdata) {
         if (r < 0)
                 return log_error_errno(r, "Could not get properties: %s", bus_error_message(&error, r));
 
-        return print_status_info(&info);
+        print_overridden_variables();
+        print_status_info(&info);
+
+        return r;
 }
 
 static int set_locale(int argc, char **argv, void *userdata) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -213,7 +194,7 @@ static int list_locales(int argc, char **argv, void *userdata) {
         if (r < 0)
                 return log_error_errno(r, "Failed to read list of locales: %m");
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
         strv_print(l);
 
         return 0;
@@ -222,8 +203,10 @@ static int list_locales(int argc, char **argv, void *userdata) {
 static int set_vconsole_keymap(int argc, char **argv, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         const char *map, *toggle_map;
-        sd_bus *bus = ASSERT_PTR(userdata);
+        sd_bus *bus = userdata;
         int r;
+
+        assert(bus);
 
         polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
 
@@ -251,7 +234,7 @@ static int list_vconsole_keymaps(int argc, char **argv, void *userdata) {
         if (r < 0)
                 return log_error_errno(r, "Failed to read list of keymaps: %m");
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         strv_print(l);
 
@@ -310,7 +293,7 @@ static int list_x11_keymaps(int argc, char **argv, void *userdata) {
         else if (streq(argv[0], "list-x11-keymap-options"))
                 look_for = OPTIONS;
         else
-                assert_not_reached();
+                assert_not_reached("Wrong parameter");
 
         for (;;) {
                 _cleanup_free_ char *line = NULL;
@@ -380,7 +363,7 @@ static int list_x11_keymaps(int argc, char **argv, void *userdata) {
         strv_sort(list);
         strv_uniq(list);
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         strv_print(list);
         return 0;
@@ -491,7 +474,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         return 1;
@@ -528,9 +511,9 @@ static int run(int argc, char *argv[]) {
         if (r <= 0)
                 return r;
 
-        r = bus_connect_transport(arg_transport, arg_host, RUNTIME_SCOPE_SYSTEM, &bus);
+        r = bus_connect_transport(arg_transport, arg_host, false, &bus);
         if (r < 0)
-                return bus_log_connect_error(r, arg_transport);
+                return bus_log_connect_error(r);
 
         return localectl_main(bus, argc, argv);
 }

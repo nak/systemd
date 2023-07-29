@@ -1,6 +1,5 @@
 ---
 # vi: ts=2 sw=2 et:
-# SPDX-License-Identifier: LGPL-2.1-or-later
 #
 name: Build test
 on:
@@ -12,27 +11,24 @@ on:
       - 'src/**'
       - 'test/fuzz/**'
 
-permissions:
-  contents: read
-
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     concurrency:
-      group: ${{ github.workflow }}-${{ toJSON(matrix.env) }}-${{ github.ref }}
+      group: ${{ github.workflow }}-${{ matrix.env.COMPILER }}-${{ matrix.env.COMPILER_VERSION }}-${{ github.ref }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
         env:
-          - { COMPILER: "gcc",   COMPILER_VERSION: "11", LINKER: "bfd",  CRYPTOLIB: "gcrypt"  }
-          - { COMPILER: "gcc",   COMPILER_VERSION: "13", LINKER: "gold", CRYPTOLIB: "openssl" }
-          - { COMPILER: "clang", COMPILER_VERSION: "14", LINKER: "mold", CRYPTOLIB: "gcrypt"  }
-          - { COMPILER: "clang", COMPILER_VERSION: "15", LINKER: "lld",  CRYPTOLIB: "openssl" }
-          - { COMPILER: "clang", COMPILER_VERSION: "16", LINKER: "bfd",  CRYPTOLIB: "auto"    }
+          - { COMPILER: "gcc",   COMPILER_VERSION: "10" }
+          - { COMPILER: "gcc",   COMPILER_VERSION: "11" }
+          - { COMPILER: "clang", COMPILER_VERSION: "10" }
+          - { COMPILER: "clang", COMPILER_VERSION: "11" }
+          - { COMPILER: "clang", COMPILER_VERSION: "12" }
     env: ${{ matrix.env }}
     steps:
       - name: Repository checkout
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
-      - name: ${{ format('Build check ({0}-{1}-{2}-{3})', env.COMPILER, env.COMPILER_VERSION, env.LINKER, env.CRYPTOLIB) }}
+        uses: actions/checkout@v1
+      - name: Build check (${{ env.COMPILER }}-${{ env.COMPILER_VERSION }})
         run: sudo -E .github/workflows/build_test.sh

@@ -7,7 +7,6 @@
 #include "hashmap.h"
 #include "psi-util.h"
 
-#define DUMP_ON_KILL_COUNT 10
 #define GROWING_SIZE_PERCENTILE 80
 
 extern const struct hash_ops oomd_cgroup_ctx_hash_ops;
@@ -108,16 +107,6 @@ static inline int compare_swap_usage(OomdCGroupContext * const *c1, OomdCGroupCo
  * If `prefix` is not NULL, only include OomdCGroupContexts whose paths start with prefix. Otherwise all paths are sorted.
  * Returns the number of sorted items; negative on error. */
 int oomd_sort_cgroup_contexts(Hashmap *h, oomd_compare_t compare_func, const char *prefix, OomdCGroupContext ***ret);
-
-/* If the cgroup is owned by root, or the cgroups represented by `ctx` and
- * `prefix` are owned by the same user, then set `ctx->preference` using the
- * `user.oomd_avoid` and `user.oomd_omit` xattrs. Otherwise, set
- * `ctx->preference` to MANAGED_OOM_PREFERENCE_NONE.
- *
- * If `prefix` is NULL or the empty string, it is treated as root. If `prefix`
- * does not specify an ancestor cgroup of `ctx`, -EINVAL is returned. Returns
- * negative on all other errors. */
-int oomd_fetch_cgroup_oom_preference(OomdCGroupContext *ctx, const char *prefix);
 
 /* Returns a negative value on error, 0 if no processes were killed, or 1 if processes were killed. */
 int oomd_cgroup_kill(const char *path, bool recurse, bool dry_run);

@@ -1,8 +1,7 @@
 ---
 title: Predictable Network Interface Names
-category: Networking
+category: Concepts
 layout: default
-SPDX-License-Identifier: LGPL-2.1-or-later
 ---
 
 # Predictable Network Interface Names

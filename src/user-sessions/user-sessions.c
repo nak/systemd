@@ -15,7 +15,7 @@
 #include "string-util.h"
 
 static int run(int argc, char *argv[]) {
-        int r;
+        int r, k;
 
         if (argc != 2)
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
@@ -25,15 +25,18 @@ static int run(int argc, char *argv[]) {
 
         umask(0022);
 
-        r = mac_init();
+        r = mac_selinux_init();
         if (r < 0)
                 return r;
 
-        /* We only touch /run/nologin. See create_shutdown_run_nologin_or_warn() for details. */
+        if (streq(argv[1], "start")) {
+                r = unlink_or_warn("/run/nologin");
+                k = unlink_or_warn("/etc/nologin");
+                if (r < 0)
+                        return r;
+                return k;
 
-        if (streq(argv[1], "start"))
-                return unlink_or_warn("/run/nologin");
-        if (streq(argv[1], "stop"))
+        } else if (streq(argv[1], "stop"))
                 return create_shutdown_run_nologin_or_warn();
 
         return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Unknown verb '%s'.", argv[1]);

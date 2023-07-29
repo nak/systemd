@@ -128,7 +128,7 @@ int fw_iptables_add_masquerade(
         mr->rangesize = 1;
 
         /* Create a search mask entry */
-        mask = alloca_safe(sz);
+        mask = alloca(sz);
         memset(mask, 0xFF, sz);
 
         if (add) {

@@ -6,7 +6,9 @@
 #include "stdio-util.h"
 #include "tests.h"
 
-TEST(parse_json_argument) {
+static void test_parse_json_argument(void) {
+        log_info("/* %s */", __func__);
+
         JsonFormatFlags flags = JSON_FORMAT_PRETTY;
 
         assert_se(parse_json_argument("help", &flags) == 0);
@@ -16,7 +18,9 @@ TEST(parse_json_argument) {
         assert_se(flags == JSON_FORMAT_OFF);
 }
 
-TEST(parse_path_argument) {
+static void test_parse_path_argument(void) {
+        log_info("/* %s */", __func__);
+
         _cleanup_free_ char *path = NULL;
 
         assert_se(parse_path_argument("help", false, &path) == 0);
@@ -29,7 +33,9 @@ TEST(parse_path_argument) {
         assert_se(path == NULL);
 }
 
-TEST(parse_signal_argument) {
+static void test_parse_signal_argument(void) {
+        log_info("/* %s */", __func__);
+
         int  signal = -1;
 
         assert_se(parse_signal_argument("help", &signal) == 0);
@@ -50,4 +56,10 @@ TEST(parse_signal_argument) {
         assert_se(signal == SIGABRT);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_INFO);
+
+        test_parse_json_argument();
+        test_parse_path_argument();
+        test_parse_signal_argument();
+}

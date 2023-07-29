@@ -39,6 +39,7 @@ static int test_hash_password(void) {
         /* As a warm-up exercise, check if we can hash passwords. */
 
         bool have_sane_hash = false;
+        const char *hash;
 
         FOREACH_STRING(hash,
                        "ew3bU1.hoKk4o",
@@ -67,6 +68,7 @@ static void test_hash_password_full(void) {
         log_info("/* %s */", __func__);
 
         _cleanup_free_ void *cd_data = NULL;
+        const char *i;
         int cd_size = 0;
 
         log_info("sizeof(struct crypt_data): %zu bytes", sizeof(struct crypt_data));

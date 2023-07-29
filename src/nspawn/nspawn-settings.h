@@ -127,10 +127,9 @@ typedef enum SettingsMask {
         SETTING_CONSOLE_MODE      = UINT64_C(1) << 29,
         SETTING_CREDENTIALS       = UINT64_C(1) << 30,
         SETTING_BIND_USER         = UINT64_C(1) << 31,
-        SETTING_SUPPRESS_SYNC     = UINT64_C(1) << 32,
-        SETTING_RLIMIT_FIRST      = UINT64_C(1) << 33, /* we define one bit per resource limit here */
-        SETTING_RLIMIT_LAST       = UINT64_C(1) << (33 + _RLIMIT_MAX - 1),
-        _SETTINGS_MASK_ALL        = (UINT64_C(1) << (33 + _RLIMIT_MAX)) -1,
+        SETTING_RLIMIT_FIRST      = UINT64_C(1) << 32, /* we define one bit per resource limit here */
+        SETTING_RLIMIT_LAST       = UINT64_C(1) << (32 + _RLIMIT_MAX - 1),
+        _SETTINGS_MASK_ALL        = (UINT64_C(1) << (32 + _RLIMIT_MAX)) -1,
         _SETTING_FORCE_ENUM_WIDTH = UINT64_MAX
 } SettingsMask;
 
@@ -162,7 +161,7 @@ typedef struct OciHook {
 typedef struct Settings {
         /* [Exec] */
         StartMode start_mode;
-        int ephemeral;
+        bool ephemeral;
         char **parameters;
         char **environment;
         char *user;
@@ -177,7 +176,7 @@ typedef struct Settings {
         char *pivot_root_old;
         UserNamespaceMode userns_mode;
         uid_t uid_shift, uid_range;
-        int notify_ready;
+        bool notify_ready;
         char **syscall_allow_list;
         char **syscall_deny_list;
         struct rlimit *rlimit[_RLIMIT_MAX];
@@ -190,7 +189,6 @@ typedef struct Settings {
         LinkJournal link_journal;
         bool link_journal_try;
         TimezoneMode timezone;
-        int suppress_sync;
 
         /* [Files] */
         int read_only;
@@ -242,8 +240,6 @@ Settings* settings_free(Settings *s);
 
 bool settings_network_veth(Settings *s);
 bool settings_private_network(Settings *s);
-bool settings_network_configured(Settings *s);
-
 int settings_allocate_properties(Settings *s);
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(Settings*, settings_free);
@@ -259,14 +255,12 @@ CONFIG_PARSER_PROTOTYPE(config_parse_tmpfs);
 CONFIG_PARSER_PROTOTYPE(config_parse_overlay);
 CONFIG_PARSER_PROTOTYPE(config_parse_inaccessible);
 CONFIG_PARSER_PROTOTYPE(config_parse_veth_extra);
-CONFIG_PARSER_PROTOTYPE(config_parse_network_iface_pair);
-CONFIG_PARSER_PROTOTYPE(config_parse_macvlan_iface_pair);
-CONFIG_PARSER_PROTOTYPE(config_parse_ipvlan_iface_pair);
 CONFIG_PARSER_PROTOTYPE(config_parse_network_zone);
 CONFIG_PARSER_PROTOTYPE(config_parse_boot);
 CONFIG_PARSER_PROTOTYPE(config_parse_pid2);
 CONFIG_PARSER_PROTOTYPE(config_parse_private_users);
 CONFIG_PARSER_PROTOTYPE(config_parse_syscall_filter);
+CONFIG_PARSER_PROTOTYPE(config_parse_hostname);
 CONFIG_PARSER_PROTOTYPE(config_parse_oom_score_adjust);
 CONFIG_PARSER_PROTOTYPE(config_parse_cpu_affinity);
 CONFIG_PARSER_PROTOTYPE(config_parse_resolv_conf);

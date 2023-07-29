@@ -9,23 +9,12 @@
 #include <openssl/x509v3.h>
 
 #include "io-util.h"
-#include "openssl-util.h"
 #include "resolved-dns-stream.h"
 #include "resolved-dnstls.h"
 #include "resolved-manager.h"
 
-static char *dnstls_error_string(int ssl_error, char *buf, size_t count) {
-        assert(buf || count == 0);
-        if (ssl_error == SSL_ERROR_SSL)
-                ERR_error_string_n(ERR_get_error(), buf, count);
-        else
-                snprintf(buf, count, "SSL_get_error()=%d", ssl_error);
-        return buf;
-}
-
-#define DNSTLS_ERROR_BUFSIZE 256
-#define DNSTLS_ERROR_STRING(error) \
-        dnstls_error_string((error), (char[DNSTLS_ERROR_BUFSIZE]){}, DNSTLS_ERROR_BUFSIZE)
+DEFINE_TRIVIAL_CLEANUP_FUNC_FULL(SSL*, SSL_free, NULL);
+DEFINE_TRIVIAL_CLEANUP_FUNC_FULL(BIO*, BIO_free, NULL);
 
 static int dnstls_flush_write_buffer(DnsStream *stream) {
         ssize_t ss;
@@ -110,18 +99,26 @@ int dnstls_stream_connect_tls(DnsStream *stream, DnsServer *server) {
 
         if (server->server_name) {
                 r = SSL_set_tlsext_host_name(s, server->server_name);
-                if (r <= 0)
-                        return log_debug_errno(SYNTHETIC_ERRNO(EINVAL),
-                                               "Failed to set server name: %s", DNSTLS_ERROR_STRING(SSL_ERROR_SSL));
+                if (r <= 0) {
+                        char errbuf[256];
+
+                        error = ERR_get_error();
+                        ERR_error_string_n(error, errbuf, sizeof(errbuf));
+                        return log_debug_errno(SYNTHETIC_ERRNO(EINVAL), "Failed to set server name: %s", errbuf);
+                }
         }
 
         ERR_clear_error();
         stream->dnstls_data.handshake = SSL_do_handshake(s);
         if (stream->dnstls_data.handshake <= 0) {
                 error = SSL_get_error(s, stream->dnstls_data.handshake);
-                if (!IN_SET(error, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE))
+                if (!IN_SET(error, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE)) {
+                        char errbuf[256];
+
+                        ERR_error_string_n(error, errbuf, sizeof(errbuf));
                         return log_debug_errno(SYNTHETIC_ERRNO(ECONNREFUSED),
-                                               "Failed to invoke SSL_do_handshake: %s", DNSTLS_ERROR_STRING(error));
+                                               "Failed to invoke SSL_do_handshake: %s", errbuf);
+                }
         }
 
         stream->encrypted = true;
@@ -182,8 +179,12 @@ int dnstls_stream_on_io(DnsStream *stream, uint32_t revents) {
                         } else if (error == SSL_ERROR_SYSCALL) {
                                 if (errno > 0)
                                         log_debug_errno(errno, "Failed to invoke SSL_shutdown, ignoring: %m");
-                        } else
-                                log_debug("Failed to invoke SSL_shutdown, ignoring: %s", DNSTLS_ERROR_STRING(error));
+                        } else {
+                                char errbuf[256];
+
+                                ERR_error_string_n(error, errbuf, sizeof(errbuf));
+                                log_debug("Failed to invoke SSL_shutdown, ignoring: %s", errbuf);
+                        }
                 }
 
                 stream->dnstls_events = 0;
@@ -207,10 +208,14 @@ int dnstls_stream_on_io(DnsStream *stream, uint32_t revents) {
                                         return r;
 
                                 return -EAGAIN;
-                        } else
+                        } else {
+                                char errbuf[256];
+
+                                ERR_error_string_n(error, errbuf, sizeof(errbuf));
                                 return log_debug_errno(SYNTHETIC_ERRNO(ECONNREFUSED),
                                                        "Failed to invoke SSL_do_handshake: %s",
-                                                       DNSTLS_ERROR_STRING(error));
+                                                       errbuf);
+                        }
                 }
 
                 stream->dnstls_events = 0;
@@ -272,8 +277,12 @@ int dnstls_stream_shutdown(DnsStream *stream, int error) {
                         } else if (ssl_error == SSL_ERROR_SYSCALL) {
                                 if (errno > 0)
                                         log_debug_errno(errno, "Failed to invoke SSL_shutdown, ignoring: %m");
-                        } else
-                                log_debug("Failed to invoke SSL_shutdown, ignoring: %s", DNSTLS_ERROR_STRING(ssl_error));
+                        } else {
+                                char errbuf[256];
+
+                                ERR_error_string_n(ssl_error, errbuf, sizeof(errbuf));
+                                log_debug("Failed to invoke SSL_shutdown, ignoring: %s", errbuf);
+                        }
                 }
 
                 stream->dnstls_events = 0;
@@ -285,9 +294,14 @@ int dnstls_stream_shutdown(DnsStream *stream, int error) {
         return 0;
 }
 
-static ssize_t dnstls_stream_write(DnsStream *stream, const char *buf, size_t count) {
+ssize_t dnstls_stream_write(DnsStream *stream, const char *buf, size_t count) {
         int error, r;
         ssize_t ss;
+
+        assert(stream);
+        assert(stream->encrypted);
+        assert(stream->dnstls_data.ssl);
+        assert(buf);
 
         ERR_clear_error();
         ss = r = SSL_write(stream->dnstls_data.ssl, buf, count);
@@ -300,7 +314,10 @@ static ssize_t dnstls_stream_write(DnsStream *stream, const char *buf, size_t co
                         stream->dnstls_events = 0;
                         ss = 0;
                 } else {
-                        log_debug("Failed to invoke SSL_write: %s", DNSTLS_ERROR_STRING(error));
+                        char errbuf[256];
+
+                        ERR_error_string_n(error, errbuf, sizeof(errbuf));
+                        log_debug("Failed to invoke SSL_write: %s", errbuf);
                         stream->dnstls_events = 0;
                         ss = -EPIPE;
                 }
@@ -312,29 +329,6 @@ static ssize_t dnstls_stream_write(DnsStream *stream, const char *buf, size_t co
                 return r;
 
         return ss;
-}
-
-ssize_t dnstls_stream_writev(DnsStream *stream, const struct iovec *iov, size_t iovcnt) {
-        _cleanup_free_ char *buf = NULL;
-        size_t count;
-
-        assert(stream);
-        assert(stream->encrypted);
-        assert(stream->dnstls_data.ssl);
-        assert(iov);
-        assert(IOVEC_TOTAL_SIZE(iov, iovcnt) > 0);
-
-        if (iovcnt == 1)
-                return dnstls_stream_write(stream, iov[0].iov_base, iov[0].iov_len);
-
-        /* As of now, OpenSSL can not accumulate multiple writes, so join into a
-           single buffer. Suboptimal, but better than multiple SSL_write calls. */
-        count = IOVEC_TOTAL_SIZE(iov, iovcnt);
-        buf = new(char, count);
-        for (size_t i = 0, pos = 0; i < iovcnt; pos += iov[i].iov_len, i++)
-                memcpy(buf + pos, iov[i].iov_base, iov[i].iov_len);
-
-        return dnstls_stream_write(stream, buf, count);
 }
 
 ssize_t dnstls_stream_read(DnsStream *stream, void *buf, size_t count) {
@@ -351,21 +345,16 @@ ssize_t dnstls_stream_read(DnsStream *stream, void *buf, size_t count) {
         if (r <= 0) {
                 error = SSL_get_error(stream->dnstls_data.ssl, r);
                 if (IN_SET(error, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE)) {
-                        /* If we receive SSL_ERROR_WANT_READ here, there are two possible scenarios:
-                           * OpenSSL needs to renegotiate (so we want to get an EPOLLIN event), or
-                           * There is no more application data is available, so we can just return
-                           And apparently there's no nice way to distinguish between the two.
-                           To handle this, never set EPOLLIN and just continue as usual.
-                           If OpenSSL really wants to read due to renegotiation, it will tell us
-                           again on SSL_write (at which point we will request EPOLLIN force a read);
-                           or we will just eventually read data anyway while we wait for a packet */
-                        stream->dnstls_events = error == SSL_ERROR_WANT_READ ? 0 : EPOLLOUT;
+                        stream->dnstls_events = error == SSL_ERROR_WANT_READ ? EPOLLIN : EPOLLOUT;
                         ss = -EAGAIN;
                 } else if (error == SSL_ERROR_ZERO_RETURN) {
                         stream->dnstls_events = 0;
                         ss = 0;
                 } else {
-                        log_debug("Failed to invoke SSL_read: %s", DNSTLS_ERROR_STRING(error));
+                        char errbuf[256];
+
+                        ERR_error_string_n(error, errbuf, sizeof(errbuf));
+                        log_debug("Failed to invoke SSL_read: %s", errbuf);
                         stream->dnstls_events = 0;
                         ss = -EPIPE;
                 }

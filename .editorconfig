@@ -18,9 +18,8 @@ charset = utf-8
 [*.{c,h}]
 indent_style = space
 indent_size = 8
-max_line_length = 109
 
-[*.sh,mkosi.build,mkosi.prepare,mkosi.postinst]
+[*.sh]
 indent_style = space
 indent_size = 4
 
@@ -31,12 +30,3 @@ indent_size = 8
 [man/*.xml]
 indent_size = 2
 indent_style = space
-max_line_length = 109
-
-[docs/**/*.css]
-indent_style = space
-indent_size = 2
-
-[docs/**/*.html]
-indent_style = space
-indent_size = 2

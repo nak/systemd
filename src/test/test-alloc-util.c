@@ -9,7 +9,7 @@
 #include "random-util.h"
 #include "tests.h"
 
-TEST(alloca) {
+static void test_alloca(void) {
         static const uint8_t zero[997] = { };
         char *t;
 
@@ -22,9 +22,9 @@ TEST(alloca) {
         assert_se(!memcmp(t, zero, 997));
 }
 
-TEST(GREEDY_REALLOC) {
-        _cleanup_free_ int *a = NULL, *b = NULL, *c = NULL;
-        size_t i, j, n_c = 0;
+static void test_GREEDY_REALLOC(void) {
+        _cleanup_free_ int *a = NULL, *b = NULL;
+        size_t i, j;
 
         /* Give valgrind a chance to verify our realloc() operations */
 
@@ -53,48 +53,9 @@ TEST(GREEDY_REALLOC) {
 
         for (j = 30; j < i / 2; j += 7)
                 assert_se(b[j] == (int) j);
-
-        size_t n_from = 10;
-        int from[n_from];
-        for (i = 0; i < 2048; i++) {
-                for (j = 0; j < n_from; j++)
-                        from[j] = n_from * i + j;
-
-                _cleanup_free_ int *before = NULL;
-                size_t n_before = 0;
-                assert_se(GREEDY_REALLOC_APPEND(before, n_before, c, n_c));
-                assert_se(before);
-                assert_se(n_before == n_c);
-                assert_se(memcmp_safe(c, before, n_c) == 0);
-
-                assert_se(GREEDY_REALLOC_APPEND(c, n_c, from, n_from));
-                assert_se(n_c == n_before + n_from);
-                assert_se(MALLOC_ELEMENTSOF(c) >= n_c);
-                assert_se(MALLOC_SIZEOF_SAFE(c) >= n_c * sizeof(int));
-                assert_se(memcmp_safe(c, before, n_before) == 0);
-                assert_se(memcmp_safe(&c[n_before], from, n_from) == 0);
-
-                before = mfree(before);
-                assert_se(!before);
-                n_before = 0;
-                assert_se(GREEDY_REALLOC_APPEND(before, n_before, c, n_c));
-                assert_se(before);
-                assert_se(n_before == n_c);
-                assert_se(memcmp_safe(c, before, n_c) == 0);
-
-                assert_se(GREEDY_REALLOC_APPEND(c, n_c, NULL, 0));
-                assert_se(c);
-                assert_se(n_c == n_before);
-                assert_se(MALLOC_ELEMENTSOF(c) >= n_c);
-                assert_se(MALLOC_SIZEOF_SAFE(c) >= n_c * sizeof(int));
-                assert_se(memcmp_safe(c, before, n_c) == 0);
-        }
-
-        for (j = 0; j < i * n_from; j++)
-                assert_se(c[j] == (int) j);
 }
 
-TEST(memdup_multiply_and_greedy_realloc) {
+static void test_memdup_multiply_and_greedy_realloc(void) {
         static const int org[] = { 1, 2, 3 };
         _cleanup_free_ int *dup;
         size_t i;
@@ -129,7 +90,7 @@ TEST(memdup_multiply_and_greedy_realloc) {
                 assert_se(p[i] == 0);
 }
 
-TEST(bool_assign) {
+static void test_bool_assign(void) {
         bool b, c, *cp = &c, d, e, f, g, h;
 
         b = 123;
@@ -164,7 +125,7 @@ static void cleanup3(void *a) {
         assert_se(++cleanup_counter == *(int*) a);
 }
 
-TEST(cleanup_order) {
+static void test_cleanup_order(void) {
         _cleanup_(cleanup1) int x1 = 4, x2 = 3;
         _cleanup_(cleanup3) int z = 2;
         _cleanup_(cleanup2) int y = 1;
@@ -174,7 +135,7 @@ TEST(cleanup_order) {
         log_debug("z: %p", &z);
 }
 
-TEST(auto_erase_memory) {
+static void test_auto_erase_memory(void) {
         _cleanup_(erase_and_freep) uint8_t *p1, *p2;
 
         /* print address of p2, else e.g. clang-11 will optimize it out */
@@ -184,7 +145,7 @@ TEST(auto_erase_memory) {
                                              * end of the allocation, since malloc() enforces alignment */
         assert_se(p2 = new(uint8_t, 4703));
 
-        assert_se(crypto_random_bytes(p1, 4703) == 0);
+        assert_se(genuine_random_bytes(p1, 4703, RANDOM_BLOCK) == 0);
 
         /* before we exit the scope, do something with this data, so that the compiler won't optimize this away */
         memcpy(p2, p1, 4703);
@@ -202,9 +163,9 @@ TEST(auto_erase_memory) {
                 assert_se(MALLOC_SIZEOF_SAFE(f) >= sizeof(*f) * n);     \
                 assert_se(malloc_usable_size(f) >= sizeof(*f) * n);     \
                 assert_se(__builtin_object_size(f, 0) >= sizeof(*f) * n); \
-        } while (false)
+        } while(false)
 
-TEST(malloc_size_safe) {
+static void test_malloc_size_safe(void) {
         _cleanup_free_ uint32_t *f = NULL;
         size_t n = 4711;
 
@@ -230,4 +191,16 @@ TEST(malloc_size_safe) {
         }
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_alloca();
+        test_GREEDY_REALLOC();
+        test_memdup_multiply_and_greedy_realloc();
+        test_bool_assign();
+        test_cleanup_order();
+        test_auto_erase_memory();
+        test_malloc_size_safe();
+
+        return 0;
+}

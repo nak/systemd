@@ -32,13 +32,13 @@ static uint8_t advertisement[] = {
         0x20, 0x01, 0x0d, 0xb8,  0xde, 0xad, 0xbe, 0xef,
         0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
         /* Prefix Information Option */
-        0x03, 0x04, 0x40, 0xc0,  0x00, 0x00, 0x0e, 0x10,
-        0x00, 0x00, 0x07, 0x08,  0x00, 0x00, 0x00, 0x00,
+        0x03, 0x04, 0x40, 0xc0,  0x00, 0x27, 0x8d, 0x00,
+        0x00, 0x09, 0x3a, 0x80,  0x00, 0x00, 0x00, 0x00,
         0x20, 0x01, 0x0d, 0xb8,  0x0b, 0x16, 0xd0, 0x0d,
         0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
         /* Prefix Information Option */
-        0x03, 0x04, 0x30, 0xc0,  0x00, 0x00, 0x0e, 0x10,
-        0x00, 0x00, 0x07, 0x08,  0x00, 0x00, 0x00, 0x00,
+        0x03, 0x04, 0x30, 0xc0,  0x00, 0x27, 0x8d, 0x00,
+        0x00, 0x09, 0x3a, 0x80,  0x00, 0x00, 0x00, 0x00,
         0x20, 0x01, 0x0d, 0xb8,  0xc0, 0x01, 0x0d, 0xad,
         0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
         /* Recursive DNS Server Option */
@@ -51,8 +51,10 @@ static uint8_t advertisement[] = {
         0x72, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
+static sd_event_source *test_hangcheck;
 static bool test_stopped;
 static int test_fd[2];
+static sd_event_source *recv_router_advertisement;
 static struct {
         struct in6_addr address;
         unsigned char prefixlen;
@@ -99,8 +101,17 @@ static const struct in6_addr test_rdnss = { { { 0x20, 0x01, 0x0d, 0xb8,
 static const char *test_dnssl[] = { "lab.intra",
                                     NULL };
 
-TEST(radv_prefix) {
+static int test_rs_hangcheck(sd_event_source *s, uint64_t usec,
+                             void *userdata) {
+        assert_se(false);
+
+        return 0;
+}
+
+static void test_radv_prefix(void) {
         sd_radv_prefix *p;
+
+        printf("* %s\n", __FUNCTION__);
 
         assert_se(sd_radv_prefix_new(&p) >= 0);
 
@@ -112,15 +123,15 @@ TEST(radv_prefix) {
         assert_se(sd_radv_prefix_set_address_autoconfiguration(p, true) >= 0);
         assert_se(sd_radv_prefix_set_address_autoconfiguration(p, false) >= 0);
 
-        assert_se(sd_radv_prefix_set_valid_lifetime(NULL, 1, 1) < 0);
-        assert_se(sd_radv_prefix_set_valid_lifetime(p, 0, 0) >= 0);
-        assert_se(sd_radv_prefix_set_valid_lifetime(p, 300 * USEC_PER_SEC, USEC_INFINITY) >= 0);
-        assert_se(sd_radv_prefix_set_valid_lifetime(p, 300 * USEC_PER_SEC, USEC_PER_YEAR) >= 0);
+        assert_se(sd_radv_prefix_set_valid_lifetime(NULL, true) < 0);
+        assert_se(sd_radv_prefix_set_valid_lifetime(p, ~0) >= 0);
+        assert_se(sd_radv_prefix_set_valid_lifetime(p, 42) >= 0);
+        assert_se(sd_radv_prefix_set_valid_lifetime(p, 0) >= 0);
 
-        assert_se(sd_radv_prefix_set_preferred_lifetime(NULL, 1, 1) < 0);
-        assert_se(sd_radv_prefix_set_preferred_lifetime(p, 0, 0) >= 0);
-        assert_se(sd_radv_prefix_set_preferred_lifetime(p, 300 * USEC_PER_SEC, USEC_INFINITY) >= 0);
-        assert_se(sd_radv_prefix_set_preferred_lifetime(p, 300 * USEC_PER_SEC, USEC_PER_YEAR) >= 0);
+        assert_se(sd_radv_prefix_set_preferred_lifetime(NULL, true) < 0);
+        assert_se(sd_radv_prefix_set_preferred_lifetime(p, ~0) >= 0);
+        assert_se(sd_radv_prefix_set_preferred_lifetime(p, 42) >= 0);
+        assert_se(sd_radv_prefix_set_preferred_lifetime(p, 0) >= 0);
 
         assert_se(sd_radv_prefix_set_prefix(NULL, NULL, 0) < 0);
         assert_se(sd_radv_prefix_set_prefix(p, NULL, 0) < 0);
@@ -139,8 +150,10 @@ TEST(radv_prefix) {
         assert_se(!p);
 }
 
-TEST(radv) {
+static void test_radv(void) {
         sd_radv *ra;
+
+        printf("* %s\n", __FUNCTION__);
 
         assert_se(sd_radv_new(&ra) >= 0);
         assert_se(ra);
@@ -167,9 +180,7 @@ TEST(radv) {
 
         assert_se(sd_radv_set_router_lifetime(NULL, 0) < 0);
         assert_se(sd_radv_set_router_lifetime(ra, 0) >= 0);
-        assert_se(sd_radv_set_router_lifetime(ra, USEC_INFINITY) < 0);
-        assert_se(sd_radv_set_router_lifetime(ra, USEC_PER_YEAR) < 0);
-        assert_se(sd_radv_set_router_lifetime(ra, 300 * USEC_PER_SEC) >= 0);
+        assert_se(sd_radv_set_router_lifetime(ra, ~0) >= 0);
 
         assert_se(sd_radv_set_preference(NULL, 0) < 0);
         assert_se(sd_radv_set_preference(ra, SD_NDISC_PREFERENCE_LOW) >= 0);
@@ -178,7 +189,7 @@ TEST(radv) {
         assert_se(sd_radv_set_preference(ra, ~0) < 0);
 
         assert_se(sd_radv_set_preference(ra, SD_NDISC_PREFERENCE_HIGH) >= 0);
-        assert_se(sd_radv_set_router_lifetime(ra, 300 * USEC_PER_SEC) >= 0);
+        assert_se(sd_radv_set_router_lifetime(ra, 42000) >= 0);
         assert_se(sd_radv_set_router_lifetime(ra, 0) < 0);
         assert_se(sd_radv_set_preference(ra, SD_NDISC_PREFERENCE_MEDIUM) >= 0);
         assert_se(sd_radv_set_router_lifetime(ra, 0) >= 0);
@@ -246,13 +257,13 @@ static int radv_recv(sd_event_source *s, int fd, uint32_t revents, void *userdat
                 advertisement[7] = 0x00;
         }
 
-        printf ("Received Router Advertisement with lifetime %i\n",
+        printf ("Received Router Advertisement with lifetime %u\n",
                 (advertisement[6] << 8) + advertisement[7]);
 
         /* test only up to buf size, rest is not yet implemented */
         for (i = 0; i < sizeof(buf); i++) {
                 if (!(i % 8))
-                        printf("%3zu: ", i);
+                        printf("%3zd: ", i);
 
                 printf("0x%02x", buf[i]);
 
@@ -279,10 +290,12 @@ static int radv_recv(sd_event_source *s, int fd, uint32_t revents, void *userdat
         return 0;
 }
 
-TEST(ra) {
-        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
-        _cleanup_(sd_event_source_unrefp) sd_event_source *recv_router_advertisement = NULL;
-        _cleanup_(sd_radv_unrefp) sd_radv *ra = NULL;
+static void test_ra(void) {
+        sd_event *e;
+        sd_radv *ra;
+        unsigned i;
+
+        printf("* %s\n", __FUNCTION__);
 
         assert_se(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, test_fd) >= 0);
 
@@ -295,14 +308,14 @@ TEST(ra) {
 
         assert_se(sd_radv_set_ifindex(ra, 42) >= 0);
         assert_se(sd_radv_set_mac(ra, &mac_addr) >= 0);
-        assert_se(sd_radv_set_router_lifetime(ra, 180 * USEC_PER_SEC) >= 0);
+        assert_se(sd_radv_set_router_lifetime(ra, 180) >= 0);
         assert_se(sd_radv_set_hop_limit(ra, 64) >= 0);
         assert_se(sd_radv_set_managed_information(ra, true) >= 0);
         assert_se(sd_radv_set_other_information(ra, true) >= 0);
         assert_se(sd_radv_set_rdnss(ra, 60, &test_rdnss, 1) >= 0);
         assert_se(sd_radv_set_dnssl(ra, 60, (char **)test_dnssl) >= 0);
 
-        for (unsigned i = 0; i < ELEMENTSOF(prefix); i++) {
+        for (i = 0; i < ELEMENTSOF(prefix); i++) {
                 sd_radv_prefix *p;
 
                 printf("Test prefix %u\n", i);
@@ -310,29 +323,48 @@ TEST(ra) {
 
                 assert_se(sd_radv_prefix_set_prefix(p, &prefix[i].address,
                                                     prefix[i].prefixlen) >= 0);
-                if (prefix[i].valid > 0)
-                        assert_se(sd_radv_prefix_set_valid_lifetime(p, prefix[i].valid * USEC_PER_SEC, USEC_INFINITY) >= 0);
-                if (prefix[i].preferred > 0)
-                        assert_se(sd_radv_prefix_set_preferred_lifetime(p, prefix[i].preferred * USEC_PER_SEC, USEC_INFINITY) >= 0);
+                if (prefix[i].valid)
+                        assert_se(sd_radv_prefix_set_valid_lifetime(p, prefix[i].valid) >= 0);
+                if (prefix[i].preferred)
+                        assert_se(sd_radv_prefix_set_preferred_lifetime(p, prefix[i].preferred) >= 0);
 
-                assert_se((sd_radv_add_prefix(ra, p) >= 0) == prefix[i].successful);
-                /* If the previous sd_radv_add_prefix() succeeds, then also the second call should also succeed. */
-                assert_se((sd_radv_add_prefix(ra, p) >= 0) == prefix[i].successful);
+                assert_se((sd_radv_add_prefix(ra, p, false) >= 0) == prefix[i].successful);
+                assert_se(sd_radv_add_prefix(ra, p, false) < 0);
 
                 p = sd_radv_prefix_unref(p);
                 assert_se(!p);
         }
 
-        assert_se(sd_event_add_io(e, &recv_router_advertisement, test_fd[0], EPOLLIN, radv_recv, ra) >= 0);
-        assert_se(sd_event_source_set_io_fd_own(recv_router_advertisement, true) >= 0);
+        assert_se(sd_event_add_io(e, &recv_router_advertisement, test_fd[0],
+                                  EPOLLIN, radv_recv, ra) >= 0);
 
-        assert_se(sd_event_add_time_relative(e, NULL, CLOCK_BOOTTIME,
-                                             2 * USEC_PER_SEC, 0,
-                                             NULL, INT_TO_PTR(-ETIMEDOUT)) >= 0);
+        assert_se(sd_event_add_time_relative(
+                                  e, &test_hangcheck, clock_boottime_or_monotonic(),
+                                  2 *USEC_PER_SEC, 0,
+                                  test_rs_hangcheck, NULL) >= 0);
 
         assert_se(sd_radv_start(ra) >= 0);
 
-        assert_se(sd_event_loop(e) >= 0);
+        sd_event_loop(e);
+
+        test_hangcheck = sd_event_source_unref(test_hangcheck);
+
+        ra = sd_radv_unref(ra);
+        assert_se(!ra);
+
+        close(test_fd[0]);
+
+        sd_event_unref(e);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+
+        test_setup_logging(LOG_DEBUG);
+
+        test_radv_prefix();
+        test_radv();
+        test_ra();
+
+        printf("* done\n");
+        return 0;
+}

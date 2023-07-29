@@ -10,21 +10,17 @@
 #include "alloc-util.h"
 #include "conf-files.h"
 #include "conf-parser.h"
-#include "constants.h"
-#include "dns-domain.h"
-#include "escape.h"
+#include "def.h"
 #include "ether-addr-util.h"
 #include "extract-word.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "fs-util.h"
-#include "hostname-util.h"
 #include "in-addr-util.h"
 #include "log.h"
 #include "macro.h"
 #include "missing_network.h"
 #include "nulstr-util.h"
-#include "parse-helpers.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "percent-util.h"
@@ -34,7 +30,6 @@
 #include "set.h"
 #include "signal-util.h"
 #include "socket-util.h"
-#include "stat-util.h"
 #include "string-util.h"
 #include "strv.h"
 #include "syslog-util.h"
@@ -45,18 +40,18 @@ int config_item_table_lookup(
                 const void *table,
                 const char *section,
                 const char *lvalue,
-                ConfigParserCallback *ret_func,
-                int *ret_ltype,
-                void **ret_data,
+                ConfigParserCallback *func,
+                int *ltype,
+                void **data,
                 void *userdata) {
 
         const ConfigTableItem *t;
 
         assert(table);
         assert(lvalue);
-        assert(ret_func);
-        assert(ret_ltype);
-        assert(ret_data);
+        assert(func);
+        assert(ltype);
+        assert(data);
 
         for (t = table; t->lvalue; t++) {
 
@@ -66,15 +61,12 @@ int config_item_table_lookup(
                 if (!streq_ptr(section, t->section))
                         continue;
 
-                *ret_func = t->parse;
-                *ret_ltype = t->ltype;
-                *ret_data = t->data;
+                *func = t->parse;
+                *ltype = t->ltype;
+                *data = t->data;
                 return 1;
         }
 
-        *ret_func = NULL;
-        *ret_ltype = 0;
-        *ret_data = NULL;
         return 0;
 }
 
@@ -82,9 +74,9 @@ int config_item_perf_lookup(
                 const void *table,
                 const char *section,
                 const char *lvalue,
-                ConfigParserCallback *ret_func,
-                int *ret_ltype,
-                void **ret_data,
+                ConfigParserCallback *func,
+                int *ltype,
+                void **data,
                 void *userdata) {
 
         ConfigPerfItemLookup lookup = (ConfigPerfItemLookup) table;
@@ -92,9 +84,9 @@ int config_item_perf_lookup(
 
         assert(table);
         assert(lvalue);
-        assert(ret_func);
-        assert(ret_ltype);
-        assert(ret_data);
+        assert(func);
+        assert(ltype);
+        assert(data);
 
         if (section) {
                 const char *key;
@@ -103,16 +95,12 @@ int config_item_perf_lookup(
                 p = lookup(key, strlen(key));
         } else
                 p = lookup(lvalue, strlen(lvalue));
-        if (!p) {
-                *ret_func = NULL;
-                *ret_ltype = 0;
-                *ret_data = NULL;
+        if (!p)
                 return 0;
-        }
 
-        *ret_func = p->parse;
-        *ret_ltype = p->ltype;
-        *ret_data = (uint8_t*) userdata + p->offset;
+        *func = p->parse;
+        *ltype = p->ltype;
+        *data = (uint8_t*) userdata + p->offset;
         return 1;
 }
 
@@ -145,11 +133,11 @@ static int next_assignment(
         if (r < 0)
                 return r;
         if (r > 0) {
-                if (!func)
-                        return 0;
+                if (func)
+                        return func(unit, filename, line, section, section_line,
+                                    lvalue, ltype, rvalue, data, userdata);
 
-                return func(unit, filename, line, section, section_line,
-                            lvalue, ltype, rvalue, data, userdata);
+                return 0;
         }
 
         /* Warn about unknown non-extension fields. */
@@ -172,7 +160,7 @@ static int parse_line(
                 char **section,
                 unsigned *section_line,
                 bool *section_ignored,
-                char *l, /* is modified */
+                char *l,
                 void *userdata) {
 
         char *e;
@@ -183,18 +171,18 @@ static int parse_line(
         assert(l);
 
         l = strstrip(l);
-        if (isempty(l))
+        if (!*l)
                 return 0;
 
-        if (l[0] == '\n')
+        if (*l == '\n')
                 return 0;
 
         if (!utf8_is_valid(l))
                 return log_syntax_invalid_utf8(unit, LOG_WARNING, filename, line, l);
 
-        if (l[0] == '[') {
-                _cleanup_free_ char *n = NULL;
+        if (*l == '[') {
                 size_t k;
+                char *n;
 
                 k = strlen(l);
                 assert(k > 0);
@@ -206,17 +194,15 @@ static int parse_line(
                 if (!n)
                         return log_oom();
 
-                if (!string_is_safe(n))
-                        return log_syntax(unit, LOG_ERR, filename, line, SYNTHETIC_ERRNO(EBADMSG), "Bad characters in section header '%s'", l);
-
                 if (sections && !nulstr_contains(sections, n)) {
-                        bool ignore;
+                        bool ignore = flags & CONFIG_PARSE_RELAXED;
+                        const char *t;
 
-                        ignore = (flags & CONFIG_PARSE_RELAXED) || startswith(n, "X-");
+                        ignore = ignore || startswith(n, "X-");
 
                         if (!ignore)
                                 NULSTR_FOREACH(t, sections)
-                                        if (streq_ptr(n, startswith(t, "-"))) { /* Ignore sections prefixed with "-" in valid section list */
+                                        if (streq_ptr(n, startswith(t, "-"))) {
                                                 ignore = true;
                                                 break;
                                         }
@@ -224,6 +210,7 @@ static int parse_line(
                         if (!ignore)
                                 log_syntax(unit, LOG_WARNING, filename, line, 0, "Unknown section '%s'. Ignoring.", n);
 
+                        free(n);
                         *section = mfree(*section);
                         *section_line = 0;
                         *section_ignored = true;
@@ -277,17 +264,20 @@ int config_parse(
                 const void *table,
                 ConfigParseFlags flags,
                 void *userdata,
-                struct stat *ret_stat) {
+                usec_t *latest_mtime) {
 
         _cleanup_free_ char *section = NULL, *continuation = NULL;
         _cleanup_fclose_ FILE *ours = NULL;
         unsigned line = 0, section_line = 0;
         bool section_ignored = false, bom_seen = false;
-        struct stat st;
         int r, fd;
+        usec_t mtime;
 
         assert(filename);
         assert(lookup);
+
+        /* latest_mtime is an input-output parameter: it will be updated if the mtime of the file we're
+         * looking at is later than the current *latest_mtime value. */
 
         if (!f) {
                 f = ours = fopen(filename, "re");
@@ -297,28 +287,22 @@ int config_parse(
                         if ((flags & CONFIG_PARSE_WARN) || errno == ENOENT)
                                 log_full_errno(errno == ENOENT ? LOG_DEBUG : LOG_ERR, errno,
                                                "Failed to open configuration file '%s': %m", filename);
-
-                        if (errno == ENOENT) {
-                                if (ret_stat)
-                                        *ret_stat = (struct stat) {};
-
-                                return 0;
-                        }
-
-                        return -errno;
+                        return errno == ENOENT ? 0 : -errno;
                 }
         }
 
         fd = fileno(f);
         if (fd >= 0) { /* stream might not have an fd, let's be careful hence */
+                struct stat st;
 
                 if (fstat(fd, &st) < 0)
                         return log_full_errno(FLAGS_SET(flags, CONFIG_PARSE_WARN) ? LOG_ERR : LOG_DEBUG, errno,
                                               "Failed to fstat(%s): %m", filename);
 
                 (void) stat_warn_permissions(filename, &st);
+                mtime = timespec_load(&st.st_mtim);
         } else
-                st = (struct stat) {};
+                mtime = 0;
 
         for (;;) {
                 _cleanup_free_ char *buf = NULL;
@@ -438,41 +422,10 @@ int config_parse(
                 }
         }
 
-        if (ret_stat)
-                *ret_stat = st;
+        if (latest_mtime)
+                *latest_mtime = MAX(*latest_mtime, mtime);
 
         return 1;
-}
-
-int hashmap_put_stats_by_path(Hashmap **stats_by_path, const char *path, const struct stat *st) {
-        _cleanup_free_ struct stat *st_copy = NULL;
-        _cleanup_free_ char *path_copy = NULL;
-        int r;
-
-        assert(stats_by_path);
-        assert(path);
-        assert(st);
-
-        r = hashmap_ensure_allocated(stats_by_path, &path_hash_ops_free_free);
-        if (r < 0)
-                return r;
-
-        st_copy = newdup(struct stat, st, 1);
-        if (!st_copy)
-                return -ENOMEM;
-
-        path_copy = strdup(path);
-        if (!path)
-                return -ENOMEM;
-
-        r = hashmap_put(*stats_by_path, path_copy, st_copy);
-        if (r < 0)
-                return r;
-
-        assert(r > 0);
-        TAKE_PTR(path_copy);
-        TAKE_PTR(st_copy);
-        return 0;
 }
 
 static int config_parse_many_files(
@@ -483,102 +436,55 @@ static int config_parse_many_files(
                 const void *table,
                 ConfigParseFlags flags,
                 void *userdata,
-                Hashmap **ret_stats_by_path) {
+                usec_t *ret_mtime) {
 
-        _cleanup_hashmap_free_ Hashmap *stats_by_path = NULL;
-        struct stat st;
+        usec_t mtime = 0;
+        char **fn;
         int r;
 
-        if (ret_stats_by_path) {
-                stats_by_path = hashmap_new(&path_hash_ops_free_free);
-                if (!stats_by_path)
-                        return -ENOMEM;
-        }
-
         /* First read the first found main config file. */
-        STRV_FOREACH(fn, conf_files) {
-                r = config_parse(NULL, *fn, NULL, sections, lookup, table, flags, userdata, &st);
+        STRV_FOREACH(fn, (char**) conf_files) {
+                r = config_parse(NULL, *fn, NULL, sections, lookup, table, flags, userdata, &mtime);
                 if (r < 0)
                         return r;
-                if (r == 0)
-                        continue;
-
-                if (ret_stats_by_path) {
-                        r = hashmap_put_stats_by_path(&stats_by_path, *fn, &st);
-                        if (r < 0)
-                                return r;
-                }
-
-                break;
+                if (r > 0)
+                        break;
         }
 
         /* Then read all the drop-ins. */
         STRV_FOREACH(fn, files) {
-                r = config_parse(NULL, *fn, NULL, sections, lookup, table, flags, userdata, &st);
+                r = config_parse(NULL, *fn, NULL, sections, lookup, table, flags, userdata, &mtime);
                 if (r < 0)
                         return r;
-                if (r == 0)
-                        continue;
-
-                if (ret_stats_by_path) {
-                        r = hashmap_put_stats_by_path(&stats_by_path, *fn, &st);
-                        if (r < 0)
-                                return r;
-                }
         }
 
-        if (ret_stats_by_path)
-                *ret_stats_by_path = TAKE_PTR(stats_by_path);
+        if (ret_mtime)
+                *ret_mtime = mtime;
 
         return 0;
 }
 
-/* Parse one main config file located in /etc/systemd and its drop-ins, which is what all systemd daemons
- * do. */
-int config_parse_config_file(
+/* Parse each config file in the directories specified as nulstr. */
+int config_parse_many_nulstr(
                 const char *conf_file,
+                const char *conf_file_dirs,
                 const char *sections,
                 ConfigItemLookup lookup,
                 const void *table,
                 ConfigParseFlags flags,
-                void *userdata) {
+                void *userdata,
+                usec_t *ret_mtime) {
 
-        _cleanup_strv_free_ char **dropins = NULL, **dropin_dirs = NULL;
-        char **conf_paths = CONF_PATHS_STRV("");
+        _cleanup_strv_free_ char **files = NULL;
         int r;
 
-        assert(conf_file);
-
-        /* build the dropin dir list */
-        dropin_dirs = new0(char*, strv_length(conf_paths) + 1);
-        if (!dropin_dirs) {
-                if (flags & CONFIG_PARSE_WARN)
-                        return log_oom();
-                return -ENOMEM;
-        }
-
-        size_t i = 0;
-        STRV_FOREACH(p, conf_paths) {
-                char *d;
-
-                d = strjoin(*p, "systemd/", conf_file, ".d");
-                if (!d) {
-                        if (flags & CONFIG_PARSE_WARN)
-                                return log_oom();
-                        return -ENOMEM;
-                }
-
-                dropin_dirs[i++] = d;
-        }
-
-        r = conf_files_list_strv(&dropins, ".conf", NULL, 0, (const char**) dropin_dirs);
+        r = conf_files_list_nulstr(&files, ".conf", NULL, 0, conf_file_dirs);
         if (r < 0)
                 return r;
 
-        const char *sysconf_file = strjoina(PKGSYSCONFDIR, "/", conf_file);
-
-        return config_parse_many_files(STRV_MAKE_CONST(sysconf_file), dropins,
-                                       sections, lookup, table, flags, userdata, NULL);
+        return config_parse_many_files(STRV_MAKE_CONST(conf_file),
+                                       files, sections, lookup, table, flags, userdata,
+                                       ret_mtime);
 }
 
 /* Parse each config file in the directories specified as strv. */
@@ -586,192 +492,28 @@ int config_parse_many(
                 const char* const* conf_files,
                 const char* const* conf_file_dirs,
                 const char *dropin_dirname,
-                const char *root,
                 const char *sections,
                 ConfigItemLookup lookup,
                 const void *table,
                 ConfigParseFlags flags,
                 void *userdata,
-                Hashmap **ret_stats_by_path,
-                char ***ret_dropin_files) {
+                usec_t *ret_mtime) {
 
+        _cleanup_strv_free_ char **dropin_dirs = NULL;
         _cleanup_strv_free_ char **files = NULL;
+        const char *suffix;
         int r;
 
-        assert(conf_file_dirs);
-        assert(dropin_dirname);
-        assert(sections);
-        assert(table);
-
-        r = conf_files_list_dropins(&files, dropin_dirname, root, conf_file_dirs);
+        suffix = strjoina("/", dropin_dirname);
+        r = strv_extend_strv_concat(&dropin_dirs, (char**) conf_file_dirs, suffix);
         if (r < 0)
                 return r;
 
-        r = config_parse_many_files(conf_files, files, sections, lookup, table, flags, userdata, ret_stats_by_path);
+        r = conf_files_list_strv(&files, ".conf", NULL, 0, (const char* const*) dropin_dirs);
         if (r < 0)
                 return r;
 
-        if (ret_dropin_files)
-                *ret_dropin_files = TAKE_PTR(files);
-
-        return 0;
-}
-
-static int dropins_get_stats_by_path(
-                const char* conf_file,
-                const char* const* conf_file_dirs,
-                Hashmap **stats_by_path) {
-
-        _cleanup_strv_free_ char **files = NULL;
-        _cleanup_free_ char *dropin_dirname = NULL;
-        int r;
-
-        assert(conf_file);
-        assert(conf_file_dirs);
-        assert(stats_by_path);
-
-        r = path_extract_filename(conf_file, &dropin_dirname);
-        if (r < 0)
-                return r;
-        if (r == O_DIRECTORY)
-                return -EINVAL;
-
-        if (!strextend(&dropin_dirname, ".d"))
-                return -ENOMEM;
-
-        r = conf_files_list_dropins(&files, dropin_dirname, /* root = */ NULL, conf_file_dirs);
-        if (r < 0)
-                return r;
-
-        STRV_FOREACH(fn, files) {
-                struct stat st;
-
-                if (stat(*fn, &st) < 0) {
-                        if (errno == ENOENT)
-                                continue;
-
-                        return -errno;
-                }
-
-                r = hashmap_put_stats_by_path(stats_by_path, *fn, &st);
-                if (r < 0)
-                        return r;
-        }
-
-        return 0;
-}
-
-int config_get_stats_by_path(
-                const char *suffix,
-                const char *root,
-                unsigned flags,
-                const char* const* dirs,
-                bool check_dropins,
-                Hashmap **ret) {
-
-        _cleanup_hashmap_free_ Hashmap *stats_by_path = NULL;
-        _cleanup_strv_free_ char **files = NULL;
-        int r;
-
-        assert(suffix);
-        assert(dirs);
-        assert(ret);
-
-        /* Unlike config_parse(), this does not support stream. */
-
-        r = conf_files_list_strv(&files, suffix, root, flags, dirs);
-        if (r < 0)
-                return r;
-
-        STRV_FOREACH(f, files) {
-                struct stat st;
-
-                /* First read the main config file. */
-                if (stat(*f, &st) < 0) {
-                        if (errno == ENOENT)
-                                continue;
-
-                        return -errno;
-                }
-
-                r = hashmap_put_stats_by_path(&stats_by_path, *f, &st);
-                if (r < 0)
-                        return r;
-
-                if (!check_dropins)
-                        continue;
-
-                /* Then read all the drop-ins if requested. */
-                r = dropins_get_stats_by_path(*f, dirs, &stats_by_path);
-                if (r < 0)
-                        return r;
-        }
-
-        *ret = TAKE_PTR(stats_by_path);
-        return 0;
-}
-
-bool stats_by_path_equal(Hashmap *a, Hashmap *b) {
-        struct stat *st_a, *st_b;
-        const char *path;
-
-        if (hashmap_size(a) != hashmap_size(b))
-                return false;
-
-        HASHMAP_FOREACH_KEY(st_a, path, a) {
-                st_b = hashmap_get(b, path);
-                if (!st_b)
-                        return false;
-
-                if (!stat_inode_unmodified(st_a, st_b))
-                        return false;
-        }
-
-        return true;
-}
-
-static void config_section_hash_func(const ConfigSection *c, struct siphash *state) {
-        siphash24_compress_string(c->filename, state);
-        siphash24_compress(&c->line, sizeof(c->line), state);
-}
-
-static int config_section_compare_func(const ConfigSection *x, const ConfigSection *y) {
-        int r;
-
-        r = strcmp(x->filename, y->filename);
-        if (r != 0)
-                return r;
-
-        return CMP(x->line, y->line);
-}
-
-DEFINE_HASH_OPS(config_section_hash_ops, ConfigSection, config_section_hash_func, config_section_compare_func);
-
-int config_section_new(const char *filename, unsigned line, ConfigSection **s) {
-        ConfigSection *cs;
-
-        cs = malloc0(offsetof(ConfigSection, filename) + strlen(filename) + 1);
-        if (!cs)
-                return -ENOMEM;
-
-        strcpy(cs->filename, filename);
-        cs->line = line;
-
-        *s = TAKE_PTR(cs);
-
-        return 0;
-}
-
-unsigned hashmap_find_free_section_line(Hashmap *hashmap) {
-        ConfigSection *cs;
-        unsigned n = 0;
-        void *entry;
-
-        HASHMAP_FOREACH_KEY(entry, cs, hashmap)
-                if (n < cs->line)
-                        n = cs->line;
-
-        return n + 1;
+        return config_parse_many_files(conf_files, files, sections, lookup, table, flags, userdata, ret_mtime);
 }
 
 #define DEFINE_PARSER(type, vartype, conv_func)                         \
@@ -790,7 +532,6 @@ DEFINE_PARSER(nsec, nsec_t, parse_nsec);
 DEFINE_PARSER(sec, usec_t, parse_sec);
 DEFINE_PARSER(sec_def_infinity, usec_t, parse_sec_def_infinity);
 DEFINE_PARSER(mode, mode_t, parse_mode);
-DEFINE_PARSER(pid, pid_t, parse_pid);
 
 int config_parse_iec_size(
                 const char* unit,
@@ -804,13 +545,14 @@ int config_parse_iec_size(
                 void *data,
                 void *userdata) {
 
-        size_t *sz = ASSERT_PTR(data);
+        size_t *sz = data;
         uint64_t v;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = parse_size(rvalue, 1024, &v);
         if (r >= 0 && (uint64_t) (size_t) v != v)
@@ -836,12 +578,13 @@ int config_parse_si_uint64(
                 void *data,
                 void *userdata) {
 
-        uint64_t *sz = ASSERT_PTR(data);
+        uint64_t *sz = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = parse_size(rvalue, 1000, sz);
         if (r < 0)
@@ -862,42 +605,19 @@ int config_parse_iec_uint64(
                 void *data,
                 void *userdata) {
 
-        uint64_t *bytes = ASSERT_PTR(data);
+        uint64_t *bytes = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = parse_size(rvalue, 1024, bytes);
         if (r < 0)
                 log_syntax(unit, LOG_WARNING, filename, line, r, "Failed to parse size value, ignoring: %s", rvalue);
 
         return 0;
-}
-
-int config_parse_iec_uint64_infinity(
-                const char* unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        uint64_t *bytes = ASSERT_PTR(data);
-
-        assert(rvalue);
-
-        if (streq(rvalue, "infinity")) {
-                *bytes = UINT64_MAX;
-                return 0;
-        }
-
-        return config_parse_iec_uint64(unit, filename, line, section, section_line, lvalue, ltype, rvalue, data, userdata);
 }
 
 int config_parse_bool(
@@ -913,12 +633,13 @@ int config_parse_bool(
                 void *userdata) {
 
         int k;
-        bool *b = ASSERT_PTR(data);
+        bool *b = data;
         bool fatal = ltype;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         k = parse_boolean(rvalue);
         if (k < 0) {
@@ -953,12 +674,12 @@ int config_parse_id128(
 
         r = sd_id128_from_string(rvalue, &t);
         if (r < 0) {
-                log_syntax(unit, LOG_WARNING, filename, line, r, "Failed to parse 128-bit ID/UUID, ignoring: %s", rvalue);
+                log_syntax(unit, LOG_WARNING, filename, line, r, "Failed to parse 128bit ID/UUID, ignoring: %s", rvalue);
                 return 0;
         }
 
         if (sd_id128_is_null(t)) {
-                log_syntax(unit, LOG_WARNING, filename, line, 0, "128-bit ID/UUID is all 0, ignoring: %s", rvalue);
+                log_syntax(unit, LOG_WARNING, filename, line, 0, "128bit ID/UUID is all 0, ignoring: %s", rvalue);
                 return 0;
         }
 
@@ -978,11 +699,12 @@ int config_parse_tristate(
                 void *data,
                 void *userdata) {
 
-        int k, *t = ASSERT_PTR(data);
+        int k, *t = data;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         /* A tristate is pretty much a boolean, except that it can also take an empty string,
          * indicating "uninitialized", much like NULL is for a pointer type. */
@@ -1015,108 +737,14 @@ int config_parse_string(
                 void *data,
                 void *userdata) {
 
-        char **s = ASSERT_PTR(data);
+        char **s = data;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
-
-        if (isempty(rvalue)) {
-                *s = mfree(*s);
-                return 0;
-        }
-
-        if (FLAGS_SET(ltype, CONFIG_PARSE_STRING_SAFE) && !string_is_safe(rvalue)) {
-                _cleanup_free_ char *escaped = NULL;
-
-                escaped = cescape(rvalue);
-                log_syntax(unit, LOG_WARNING, filename, line, 0,
-                           "Specified string contains unsafe characters, ignoring: %s", strna(escaped));
-                return 0;
-        }
-
-        if (FLAGS_SET(ltype, CONFIG_PARSE_STRING_ASCII) && !ascii_is_valid(rvalue)) {
-                _cleanup_free_ char *escaped = NULL;
-
-                escaped = cescape(rvalue);
-                log_syntax(unit, LOG_WARNING, filename, line, 0,
-                           "Specified string contains invalid ASCII characters, ignoring: %s", strna(escaped));
-                return 0;
-        }
+        assert(data);
 
         return free_and_strdup_warn(s, empty_to_null(rvalue));
-}
-
-int config_parse_dns_name(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        char **hostname = ASSERT_PTR(data);
-        int r;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        if (isempty(rvalue)) {
-                *hostname = mfree(*hostname);
-                return 0;
-        }
-
-        r = dns_name_is_valid(rvalue);
-        if (r < 0) {
-                log_syntax(unit, LOG_WARNING, filename, line, r,
-                           "Failed to check validity of DNS domain name '%s', ignoring assignment: %m", rvalue);
-                return 0;
-        }
-        if (r == 0) {
-                log_syntax(unit, LOG_WARNING, filename, line, 0,
-                           "Specified invalid DNS domain name, ignoring assignment: %s", rvalue);
-                return 0;
-        }
-
-        return free_and_strdup_warn(hostname, rvalue);
-}
-
-int config_parse_hostname(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        char **hostname = ASSERT_PTR(data);
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        if (isempty(rvalue)) {
-                *hostname = mfree(*hostname);
-                return 0;
-        }
-
-        if (!hostname_is_valid(rvalue, 0)) {
-                log_syntax(unit, LOG_WARNING, filename, line, 0,
-                           "Specified invalid hostname, ignoring assignment: %s", rvalue);
-                return 0;
-        }
-
-        return config_parse_dns_name(unit, filename, line, section, section_line,
-                                     lvalue, ltype, rvalue, data, userdata);
 }
 
 int config_parse_path(
@@ -1133,12 +761,13 @@ int config_parse_path(
 
         _cleanup_free_ char *n = NULL;
         bool fatal = ltype;
-        char **s = ASSERT_PTR(data);
+        char **s = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue))
                 goto finalize;
@@ -1167,12 +796,13 @@ int config_parse_strv(
                 void *data,
                 void *userdata) {
 
-        char ***sv = ASSERT_PTR(data);
+        char ***sv = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *sv = strv_free(*sv);
@@ -1212,7 +842,7 @@ int config_parse_warn_compat(
 
         Disabled reason = ltype;
 
-        switch (reason) {
+        switch(reason) {
 
         case DISABLED_CONFIGURATION:
                 log_syntax(unit, LOG_DEBUG, filename, line, 0,
@@ -1370,12 +1000,13 @@ int config_parse_ifname(
                 void *data,
                 void *userdata) {
 
-        char **s = ASSERT_PTR(data);
+        char **s = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *s = mfree(*s);
@@ -1407,12 +1038,13 @@ int config_parse_ifnames(
                 void *userdata) {
 
         _cleanup_strv_free_ char **names = NULL;
-        char ***s = ASSERT_PTR(data);
+        char ***s = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *s = strv_free(*s);
@@ -1465,13 +1097,14 @@ int config_parse_ip_port(
                 void *data,
                 void *userdata) {
 
-        uint16_t *s = ASSERT_PTR(data);
+        uint16_t *s = data;
         uint16_t port;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *s = 0;
@@ -1501,10 +1134,11 @@ int config_parse_mtu(
                 void *data,
                 void *userdata) {
 
-        uint32_t *mtu = ASSERT_PTR(data);
+        uint32_t *mtu = data;
         int r;
 
         assert(rvalue);
+        assert(mtu);
 
         r = parse_mtu(ltype, rvalue, mtu);
         if (r == -ERANGE) {
@@ -1574,12 +1208,13 @@ int config_parse_permille(
                 void *data,
                 void *userdata) {
 
-        unsigned *permille = ASSERT_PTR(data);
+        unsigned *permille = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(permille);
 
         r = parse_permille(rvalue);
         if (r < 0) {
@@ -1628,99 +1263,7 @@ int config_parse_vlanprotocol(
         return 0;
 }
 
-int config_parse_hw_addr(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        struct hw_addr_data a, *hwaddr = ASSERT_PTR(data);
-        int r;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        if (isempty(rvalue)) {
-                *hwaddr = HW_ADDR_NULL;
-                return 0;
-        }
-
-        r = parse_hw_addr_full(rvalue, ltype, &a);
-        if (r < 0) {
-                log_syntax(unit, LOG_WARNING, filename, line, r,
-                           "Not a valid hardware address, ignoring assignment: %s", rvalue);
-                return 0;
-        }
-
-        *hwaddr = a;
-        return 0;
-}
-
-int config_parse_hw_addrs(
-                const char *unit,
-                const char *filename,
-                unsigned line,
-                const char *section,
-                unsigned section_line,
-                const char *lvalue,
-                int ltype,
-                const char *rvalue,
-                void *data,
-                void *userdata) {
-
-        Set **hwaddrs = ASSERT_PTR(data);
-        int r;
-
-        assert(filename);
-        assert(lvalue);
-        assert(rvalue);
-
-        if (isempty(rvalue)) {
-                /* Empty assignment resets the list */
-                *hwaddrs = set_free(*hwaddrs);
-                return 0;
-        }
-
-        for (const char *p = rvalue;;) {
-                _cleanup_free_ char *word = NULL;
-                _cleanup_free_ struct hw_addr_data *n = NULL;
-
-                r = extract_first_word(&p, &word, NULL, 0);
-                if (r == 0)
-                        return 0;
-                if (r == -ENOMEM)
-                        return log_oom();
-                if (r < 0) {
-                        log_syntax(unit, LOG_WARNING, filename, line, r,
-                                   "Invalid syntax, ignoring: %s", rvalue);
-                        return 0;
-                }
-
-                n = new(struct hw_addr_data, 1);
-                if (!n)
-                        return log_oom();
-
-                r = parse_hw_addr_full(word, ltype, n);
-                if (r < 0) {
-                        log_syntax(unit, LOG_WARNING, filename, line, r,
-                                   "Not a valid hardware address, ignoring: %s", word);
-                        continue;
-                }
-
-                r = set_ensure_consume(hwaddrs, &hw_addr_hash_ops_free, TAKE_PTR(n));
-                if (r < 0)
-                        return log_oom();
-        }
-}
-
-int config_parse_ether_addr(
+int config_parse_hwaddr(
                 const char *unit,
                 const char *filename,
                 unsigned line,
@@ -1733,12 +1276,13 @@ int config_parse_ether_addr(
                 void *userdata) {
 
         _cleanup_free_ struct ether_addr *n = NULL;
-        struct ether_addr **hwaddr = ASSERT_PTR(data);
+        struct ether_addr **hwaddr = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 *hwaddr = mfree(*hwaddr);
@@ -1749,7 +1293,7 @@ int config_parse_ether_addr(
         if (!n)
                 return log_oom();
 
-        r = parse_ether_addr(rvalue, n);
+        r = ether_addr_from_string(rvalue, n);
         if (r < 0) {
                 log_syntax(unit, LOG_WARNING, filename, line, r,
                            "Not a valid MAC address, ignoring assignment: %s", rvalue);
@@ -1761,7 +1305,7 @@ int config_parse_ether_addr(
         return 0;
 }
 
-int config_parse_ether_addrs(
+int config_parse_hwaddrs(
                 const char *unit,
                 const char *filename,
                 unsigned line,
@@ -1773,16 +1317,17 @@ int config_parse_ether_addrs(
                 void *data,
                 void *userdata) {
 
-        Set **hwaddrs = ASSERT_PTR(data);
+        Set **hwaddrs = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (isempty(rvalue)) {
                 /* Empty assignment resets the list */
-                *hwaddrs = set_free(*hwaddrs);
+                *hwaddrs = set_free_free(*hwaddrs);
                 return 0;
         }
 
@@ -1805,16 +1350,18 @@ int config_parse_ether_addrs(
                 if (!n)
                         return log_oom();
 
-                r = parse_ether_addr(word, n);
+                r = ether_addr_from_string(word, n);
                 if (r < 0) {
                         log_syntax(unit, LOG_WARNING, filename, line, r,
                                    "Not a valid MAC address, ignoring: %s", word);
                         continue;
                 }
 
-                r = set_ensure_consume(hwaddrs, &ether_addr_hash_ops_free, TAKE_PTR(n));
+                r = set_ensure_put(hwaddrs, &ether_addr_hash_ops, n);
                 if (r < 0)
                         return log_oom();
+                if (r > 0)
+                        TAKE_PTR(n); /* avoid cleanup */
         }
 }
 
@@ -1831,14 +1378,15 @@ int config_parse_in_addr_non_null(
                 void *userdata) {
 
         /* data must be a pointer to struct in_addr or in6_addr, and the type is determined by ltype. */
-        struct in_addr *ipv4 = ASSERT_PTR(data);
-        struct in6_addr *ipv6 = ASSERT_PTR(data);
+        struct in_addr *ipv4 = data;
+        struct in6_addr *ipv6 = data;
         union in_addr_union a;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
         assert(IN_SET(ltype, AF_INET, AF_INET6));
 
         if (isempty(rvalue)) {
@@ -1871,4 +1419,3 @@ int config_parse_in_addr_non_null(
 
 DEFINE_CONFIG_PARSE(config_parse_percent, parse_percent, "Failed to parse percent value");
 DEFINE_CONFIG_PARSE(config_parse_permyriad, parse_permyriad, "Failed to parse permyriad value");
-DEFINE_CONFIG_PARSE_PTR(config_parse_sec_fix_0, parse_sec_fix_0, usec_t, "Failed to parse time value");

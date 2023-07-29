@@ -45,12 +45,12 @@
 #include <getopt.h>
 
 #include "alloc-util.h"
-#include "build.h"
 #include "fileio.h"
 #include "main-func.h"
 #include "string-util.h"
 #include "udev-util.h"
 #include "unaligned.h"
+#include "version.h"
 
 #define SUPPORTED_SMBIOS_VER 0x030300
 
@@ -86,7 +86,7 @@ static bool verify_checksum(const uint8_t *buf, size_t len) {
 }
 
 /*
- * Type-independent Stuff
+ * Type-independant Stuff
  */
 
 static const char *dmi_string(const struct dmi_header *dm, uint8_t s) {
@@ -117,7 +117,7 @@ static void dmi_print_memory_size(
                 code <<= 10;
 
         if (slot_num >= 0)
-                printf("%s_%i_%s=%"PRIu64"\n", attr_prefix, slot_num, attr_suffix, code);
+                printf("%s_%u_%s=%"PRIu64"\n", attr_prefix, slot_num, attr_suffix, code);
         else
                 printf("%s_%s=%"PRIu64"\n", attr_prefix, attr_suffix, code);
 }
@@ -183,7 +183,7 @@ static void dmi_memory_device_string(
                 const struct dmi_header *h, uint8_t s) {
         char *str;
 
-        str = strdupa_safe(dmi_string(h, s));
+        str = strdupa(dmi_string(h, s));
         str = strstrip(str);
         if (!isempty(str))
                 printf("MEMORY_DEVICE_%u_%s=%s\n", slot_num, attr_suffix, str);
@@ -638,10 +638,9 @@ static int legacy_decode(const uint8_t *buf, const char *devmem, bool no_file_of
 }
 
 static int help(void) {
-        printf("%s [OPTIONS...]\n\n"
-               "  -F --from-dump FILE  Read DMI information from a binary file\n"
-               "  -h --help            Show this help text\n"
-               "     --version         Show package version\n",
+        printf("Usage: %s [options]\n"
+               " -F,--from-dump FILE   read DMI information from a binary file\n"
+               " -h,--help             print this help text\n\n",
                program_invocation_short_name);
         return 0;
 }
@@ -651,7 +650,6 @@ static int parse_argv(int argc, char * const *argv) {
                 { "from-dump", required_argument, NULL, 'F' },
                 { "version",   no_argument,       NULL, 'V' },
                 { "help",      no_argument,       NULL, 'h' },
-                { "version",   no_argument,       NULL, 'v' },
                 {}
         };
         int c;
@@ -662,15 +660,14 @@ static int parse_argv(int argc, char * const *argv) {
                         arg_source_file = optarg;
                         break;
                 case 'V':
-                        return version();
+                        printf("%s\n", GIT_VERSION);
+                        return 0;
                 case 'h':
                         return help();
                 case '?':
                         return -EINVAL;
-                case 'v':
-                        return version();
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option");
                 }
 
         return 1;

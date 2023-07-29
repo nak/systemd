@@ -21,9 +21,6 @@ DEFINE_PUBLIC_TRIVIAL_REF_UNREF_FUNC(sd_ndisc_router, sd_ndisc_router, mfree);
 sd_ndisc_router *ndisc_router_new(size_t raw_size) {
         sd_ndisc_router *rt;
 
-        if (raw_size > SIZE_MAX - ALIGN(sizeof(sd_ndisc_router)))
-                return NULL;
-
         rt = malloc0(ALIGN(sizeof(sd_ndisc_router)) + raw_size);
         if (!rt)
                 return NULL;
@@ -34,7 +31,28 @@ sd_ndisc_router *ndisc_router_new(size_t raw_size) {
         return rt;
 }
 
-int sd_ndisc_router_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
+_public_ int sd_ndisc_router_from_raw(sd_ndisc_router **ret, const void *raw, size_t raw_size) {
+        _cleanup_(sd_ndisc_router_unrefp) sd_ndisc_router *rt = NULL;
+        int r;
+
+        assert_return(ret, -EINVAL);
+        assert_return(raw || raw_size <= 0, -EINVAL);
+
+        rt = ndisc_router_new(raw_size);
+        if (!rt)
+                return -ENOMEM;
+
+        memcpy(NDISC_ROUTER_RAW(rt), raw, raw_size);
+        r = ndisc_router_parse(NULL, rt);
+        if (r < 0)
+                return r;
+
+        *ret = TAKE_PTR(rt);
+
+        return r;
+}
+
+_public_ int sd_ndisc_router_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
         assert_return(rt, -EINVAL);
         assert_return(ret_addr, -EINVAL);
 
@@ -45,7 +63,7 @@ int sd_ndisc_router_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) 
         return 0;
 }
 
-int sd_ndisc_router_get_timestamp(sd_ndisc_router *rt, clockid_t clock, uint64_t *ret) {
+_public_ int sd_ndisc_router_get_timestamp(sd_ndisc_router *rt, clockid_t clock, uint64_t *ret) {
         assert_return(rt, -EINVAL);
         assert_return(TRIPLE_TIMESTAMP_HAS_CLOCK(clock), -EOPNOTSUPP);
         assert_return(clock_supported(clock), -EOPNOTSUPP);
@@ -58,7 +76,7 @@ int sd_ndisc_router_get_timestamp(sd_ndisc_router *rt, clockid_t clock, uint64_t
         return 0;
 }
 
-int sd_ndisc_router_get_raw(sd_ndisc_router *rt, const void **ret, size_t *size) {
+_public_ int sd_ndisc_router_get_raw(sd_ndisc_router *rt, const void **ret, size_t *size) {
         assert_return(rt, -EINVAL);
         assert_return(ret, -EINVAL);
         assert_return(size, -EINVAL);
@@ -81,7 +99,7 @@ int ndisc_router_parse(sd_ndisc *nd, sd_ndisc_router *rt) {
                 return log_ndisc_errno(nd, SYNTHETIC_ERRNO(EBADMSG),
                                        "Too small to be a router advertisement, ignoring.");
 
-        /* Router advertisement packets are neatly aligned to 64-bit boundaries, hence we can access them directly */
+        /* Router advertisement packets are neatly aligned to 64bit boundaries, hence we can access them directly */
         a = NDISC_ROUTER_RAW(rt);
 
         if (a->nd_ra_type != ND_ROUTER_ADVERT)
@@ -93,7 +111,7 @@ int ndisc_router_parse(sd_ndisc *nd, sd_ndisc_router *rt) {
                                        "Received ND packet with wrong RA code, ignoring.");
 
         rt->hop_limit = a->nd_ra_curhoplimit;
-        rt->flags = a->nd_ra_flags_reserved; /* the first 8 bits */
+        rt->flags = a->nd_ra_flags_reserved; /* the first 8bit */
         rt->lifetime = be16toh(a->nd_ra_router_lifetime);
 
         rt->preference = (rt->flags >> 3) & 3;
@@ -213,7 +231,7 @@ int ndisc_router_parse(sd_ndisc *nd, sd_ndisc_router *rt) {
         return 0;
 }
 
-int sd_ndisc_router_get_hop_limit(sd_ndisc_router *rt, uint8_t *ret) {
+_public_ int sd_ndisc_router_get_hop_limit(sd_ndisc_router *rt, uint8_t *ret) {
         assert_return(rt, -EINVAL);
         assert_return(ret, -EINVAL);
 
@@ -221,7 +239,7 @@ int sd_ndisc_router_get_hop_limit(sd_ndisc_router *rt, uint8_t *ret) {
         return 0;
 }
 
-int sd_ndisc_router_get_flags(sd_ndisc_router *rt, uint64_t *ret_flags) {
+_public_ int sd_ndisc_router_get_flags(sd_ndisc_router *rt, uint64_t *ret_flags) {
         assert_return(rt, -EINVAL);
         assert_return(ret_flags, -EINVAL);
 
@@ -229,7 +247,7 @@ int sd_ndisc_router_get_flags(sd_ndisc_router *rt, uint64_t *ret_flags) {
         return 0;
 }
 
-int sd_ndisc_router_get_lifetime(sd_ndisc_router *rt, uint16_t *ret_lifetime) {
+_public_ int sd_ndisc_router_get_lifetime(sd_ndisc_router *rt, uint16_t *ret_lifetime) {
         assert_return(rt, -EINVAL);
         assert_return(ret_lifetime, -EINVAL);
 
@@ -237,7 +255,7 @@ int sd_ndisc_router_get_lifetime(sd_ndisc_router *rt, uint16_t *ret_lifetime) {
         return 0;
 }
 
-int sd_ndisc_router_get_preference(sd_ndisc_router *rt, unsigned *ret) {
+_public_ int sd_ndisc_router_get_preference(sd_ndisc_router *rt, unsigned *ret) {
         assert_return(rt, -EINVAL);
         assert_return(ret, -EINVAL);
 
@@ -245,7 +263,7 @@ int sd_ndisc_router_get_preference(sd_ndisc_router *rt, unsigned *ret) {
         return 0;
 }
 
-int sd_ndisc_router_get_mtu(sd_ndisc_router *rt, uint32_t *ret) {
+_public_ int sd_ndisc_router_get_mtu(sd_ndisc_router *rt, uint32_t *ret) {
         assert_return(rt, -EINVAL);
         assert_return(ret, -EINVAL);
 
@@ -256,7 +274,7 @@ int sd_ndisc_router_get_mtu(sd_ndisc_router *rt, uint32_t *ret) {
         return 0;
 }
 
-int sd_ndisc_router_option_rewind(sd_ndisc_router *rt) {
+_public_ int sd_ndisc_router_option_rewind(sd_ndisc_router *rt) {
         assert_return(rt, -EINVAL);
 
         assert(rt->raw_size >= sizeof(struct nd_router_advert));
@@ -265,7 +283,7 @@ int sd_ndisc_router_option_rewind(sd_ndisc_router *rt) {
         return rt->rindex < rt->raw_size;
 }
 
-int sd_ndisc_router_option_next(sd_ndisc_router *rt) {
+_public_ int sd_ndisc_router_option_next(sd_ndisc_router *rt) {
         size_t length;
 
         assert_return(rt, -EINVAL);
@@ -284,7 +302,7 @@ int sd_ndisc_router_option_next(sd_ndisc_router *rt) {
         return rt->rindex < rt->raw_size;
 }
 
-int sd_ndisc_router_option_get_type(sd_ndisc_router *rt, uint8_t *ret) {
+_public_ int sd_ndisc_router_option_get_type(sd_ndisc_router *rt, uint8_t *ret) {
         assert_return(rt, -EINVAL);
         assert_return(ret, -EINVAL);
 
@@ -298,7 +316,7 @@ int sd_ndisc_router_option_get_type(sd_ndisc_router *rt, uint8_t *ret) {
         return 0;
 }
 
-int sd_ndisc_router_option_is_type(sd_ndisc_router *rt, uint8_t type) {
+_public_ int sd_ndisc_router_option_is_type(sd_ndisc_router *rt, uint8_t type) {
         uint8_t k;
         int r;
 
@@ -311,7 +329,7 @@ int sd_ndisc_router_option_is_type(sd_ndisc_router *rt, uint8_t type) {
         return type == k;
 }
 
-int sd_ndisc_router_option_get_raw(sd_ndisc_router *rt, const void **ret, size_t *size) {
+_public_ int sd_ndisc_router_option_get_raw(sd_ndisc_router *rt, const void **ret, size_t *size) {
         size_t length;
 
         assert_return(rt, -EINVAL);
@@ -359,7 +377,7 @@ static int get_prefix_info(sd_ndisc_router *rt, struct nd_opt_prefix_info **ret)
         return 0;
 }
 
-int sd_ndisc_router_prefix_get_valid_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
+_public_ int sd_ndisc_router_prefix_get_valid_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
         struct nd_opt_prefix_info *ri;
         int r;
 
@@ -374,7 +392,7 @@ int sd_ndisc_router_prefix_get_valid_lifetime(sd_ndisc_router *rt, uint32_t *ret
         return 0;
 }
 
-int sd_ndisc_router_prefix_get_preferred_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
+_public_ int sd_ndisc_router_prefix_get_preferred_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
         struct nd_opt_prefix_info *pi;
         int r;
 
@@ -389,7 +407,7 @@ int sd_ndisc_router_prefix_get_preferred_lifetime(sd_ndisc_router *rt, uint32_t 
         return 0;
 }
 
-int sd_ndisc_router_prefix_get_flags(sd_ndisc_router *rt, uint8_t *ret) {
+_public_ int sd_ndisc_router_prefix_get_flags(sd_ndisc_router *rt, uint8_t *ret) {
         struct nd_opt_prefix_info *pi;
         uint8_t flags;
         int r;
@@ -412,7 +430,7 @@ int sd_ndisc_router_prefix_get_flags(sd_ndisc_router *rt, uint8_t *ret) {
         return 0;
 }
 
-int sd_ndisc_router_prefix_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
+_public_ int sd_ndisc_router_prefix_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
         struct nd_opt_prefix_info *pi;
         int r;
 
@@ -427,7 +445,7 @@ int sd_ndisc_router_prefix_get_address(sd_ndisc_router *rt, struct in6_addr *ret
         return 0;
 }
 
-int sd_ndisc_router_prefix_get_prefixlen(sd_ndisc_router *rt, unsigned *ret) {
+_public_ int sd_ndisc_router_prefix_get_prefixlen(sd_ndisc_router *rt, unsigned *ret) {
         struct nd_opt_prefix_info *pi;
         int r;
 
@@ -472,7 +490,7 @@ static int get_route_info(sd_ndisc_router *rt, uint8_t **ret) {
         return 0;
 }
 
-int sd_ndisc_router_route_get_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
+_public_ int sd_ndisc_router_route_get_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
         uint8_t *ri;
         int r;
 
@@ -487,7 +505,7 @@ int sd_ndisc_router_route_get_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
         return 0;
 }
 
-int sd_ndisc_router_route_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
+_public_ int sd_ndisc_router_route_get_address(sd_ndisc_router *rt, struct in6_addr *ret_addr) {
         uint8_t *ri;
         int r;
 
@@ -504,7 +522,7 @@ int sd_ndisc_router_route_get_address(sd_ndisc_router *rt, struct in6_addr *ret_
         return 0;
 }
 
-int sd_ndisc_router_route_get_prefixlen(sd_ndisc_router *rt, unsigned *ret) {
+_public_ int sd_ndisc_router_route_get_prefixlen(sd_ndisc_router *rt, unsigned *ret) {
         uint8_t *ri;
         int r;
 
@@ -519,7 +537,7 @@ int sd_ndisc_router_route_get_prefixlen(sd_ndisc_router *rt, unsigned *ret) {
         return 0;
 }
 
-int sd_ndisc_router_route_get_preference(sd_ndisc_router *rt, unsigned *ret) {
+_public_ int sd_ndisc_router_route_get_preference(sd_ndisc_router *rt, unsigned *ret) {
         uint8_t *ri;
         int r;
 
@@ -558,7 +576,7 @@ static int get_rdnss_info(sd_ndisc_router *rt, uint8_t **ret) {
         return 0;
 }
 
-int sd_ndisc_router_rdnss_get_addresses(sd_ndisc_router *rt, const struct in6_addr **ret) {
+_public_ int sd_ndisc_router_rdnss_get_addresses(sd_ndisc_router *rt, const struct in6_addr **ret) {
         uint8_t *ri;
         int r;
 
@@ -573,7 +591,7 @@ int sd_ndisc_router_rdnss_get_addresses(sd_ndisc_router *rt, const struct in6_ad
         return (NDISC_ROUTER_OPTION_LENGTH(rt) - 8) / 16;
 }
 
-int sd_ndisc_router_rdnss_get_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
+_public_ int sd_ndisc_router_rdnss_get_lifetime(sd_ndisc_router *rt, uint32_t *ret) {
         uint8_t *ri;
         int r;
 
@@ -609,7 +627,7 @@ static int get_dnssl_info(sd_ndisc_router *rt, uint8_t **ret) {
         return 0;
 }
 
-int sd_ndisc_router_dnssl_get_domains(sd_ndisc_router *rt, char ***ret) {
+_public_ int sd_ndisc_router_dnssl_get_domains(sd_ndisc_router *rt, char ***ret) {
         _cleanup_strv_free_ char **l = NULL;
         _cleanup_free_ char *e = NULL;
         size_t n = 0, left;
@@ -701,7 +719,7 @@ int sd_ndisc_router_dnssl_get_domains(sd_ndisc_router *rt, char ***ret) {
         return k;
 }
 
-int sd_ndisc_router_dnssl_get_lifetime(sd_ndisc_router *rt, uint32_t *ret_sec) {
+_public_ int sd_ndisc_router_dnssl_get_lifetime(sd_ndisc_router *rt, uint32_t *ret_sec) {
         uint8_t *ri;
         int r;
 
@@ -713,47 +731,5 @@ int sd_ndisc_router_dnssl_get_lifetime(sd_ndisc_router *rt, uint32_t *ret_sec) {
                 return r;
 
         *ret_sec = be32toh(*(uint32_t*) (ri + 4));
-        return 0;
-}
-
-int sd_ndisc_router_captive_portal_get_uri(sd_ndisc_router *rt, const char **ret_uri, size_t *ret_size) {
-        int r;
-        const char *nd_opt_captive_portal;
-        size_t length;
-
-        assert_return(rt, -EINVAL);
-        assert_return(ret_uri, -EINVAL);
-
-        r = sd_ndisc_router_option_is_type(rt, SD_NDISC_OPTION_CAPTIVE_PORTAL);
-        if (r < 0)
-                return r;
-        if (r == 0)
-                return -EMEDIUMTYPE;
-
-        r = sd_ndisc_router_option_get_raw(rt, (void *)&nd_opt_captive_portal, &length);
-        if (r < 0)
-                return r;
-
-        /* The length field has units of 8 octets */
-        assert(length % 8 == 0);
-        if (length == 0)
-                return -EBADMSG;
-
-        /* Check that the message is not truncated by an embedded NUL.
-         * NUL padding to a multiple of 8 is expected. */
-        size_t size = strnlen(nd_opt_captive_portal + 2, length - 2);
-        if (DIV_ROUND_UP(size + 2, 8) != length / 8)
-                return -EBADMSG;
-
-        /* Let's not return an empty buffer */
-        if (size == 0) {
-                *ret_uri = NULL;
-                *ret_size = 0;
-                return 0;
-        }
-
-        *ret_uri = nd_opt_captive_portal + 2;
-        *ret_size = size;
-
         return 0;
 }

@@ -7,7 +7,6 @@
 #include "sd-id128.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "discover-image.h"
 #include "export-raw.h"
 #include "export-tar.h"
@@ -63,7 +62,7 @@ static int export_tar(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_event_unrefp) sd_event *event = NULL;
         _cleanup_(image_unrefp) Image *image = NULL;
         const char *path = NULL, *local = NULL;
-        _cleanup_close_ int open_fd = -EBADF;
+        _cleanup_close_ int open_fd = -1;
         int r, fd;
 
         if (hostname_is_valid(argv[1], 0)) {
@@ -139,7 +138,7 @@ static int export_raw(int argc, char *argv[], void *userdata) {
         _cleanup_(sd_event_unrefp) sd_event *event = NULL;
         _cleanup_(image_unrefp) Image *image = NULL;
         const char *path = NULL, *local = NULL;
-        _cleanup_close_ int open_fd = -EBADF;
+        _cleanup_close_ int open_fd = -1;
         int r, fd;
 
         if (hostname_is_valid(argv[1], 0)) {
@@ -262,7 +261,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         return 1;

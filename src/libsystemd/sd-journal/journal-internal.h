@@ -14,10 +14,6 @@
 #include "list.h"
 #include "set.h"
 
-#define JOURNAL_FILES_MAX 7168u
-
-#define JOURNAL_LOG_RATELIMIT ((const RateLimit) { .interval = 60 * USEC_PER_SEC, .burst = 3 })
-
 typedef struct Match Match;
 typedef struct Location Location;
 typedef struct Directory Directory;
@@ -78,7 +74,6 @@ struct sd_journal {
         OrderedHashmap *files;
         IteratedCache *files_cache;
         MMapCache *mmap;
-        Hashmap *newest_by_boot_id; /* key: boot_id, value: prioq, ordered by monotonic timestamp of last update */
 
         Location current_location;
 
@@ -87,7 +82,7 @@ struct sd_journal {
 
         Match *level0, *level1, *level2;
 
-        uint64_t origin_id;
+        pid_t original_pid;
 
         int inotify_fd;
         unsigned current_invalidate_counter, last_invalidate_counter;

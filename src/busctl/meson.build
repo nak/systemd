@@ -2,14 +2,5 @@
 
 busctl_sources = files(
         'busctl-introspect.c',
-        'busctl.c',
-)
-
-tests += [
-        {
-                'sources' : files(
-                        'test-busctl-introspect.c',
-                        'busctl-introspect.c',
-                )
-        },
-]
+        'busctl-introspect.h',
+        'busctl.c')

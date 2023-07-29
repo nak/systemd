@@ -8,9 +8,7 @@
 #include "sd-device.h"
 
 #include "alloc-util.h"
-#include "battery-util.h"
 #include "bus-error.h"
-#include "bus-locator.h"
 #include "bus-util.h"
 #include "cgroup-util.h"
 #include "conf-parser.h"
@@ -41,18 +39,12 @@ void manager_reset_config(Manager *m) {
         m->user_stop_delay = 10 * USEC_PER_SEC;
 
         m->handle_power_key = HANDLE_POWEROFF;
-        m->handle_power_key_long_press = HANDLE_IGNORE;
-        m->handle_reboot_key = HANDLE_REBOOT;
-        m->handle_reboot_key_long_press = HANDLE_POWEROFF;
         m->handle_suspend_key = HANDLE_SUSPEND;
-        m->handle_suspend_key_long_press = HANDLE_HIBERNATE;
         m->handle_hibernate_key = HANDLE_HIBERNATE;
-        m->handle_hibernate_key_long_press = HANDLE_IGNORE;
-
         m->handle_lid_switch = HANDLE_SUSPEND;
         m->handle_lid_switch_ep = _HANDLE_ACTION_INVALID;
         m->handle_lid_switch_docked = HANDLE_IGNORE;
-
+        m->handle_reboot_key = HANDLE_REBOOT;
         m->power_key_ignore_inhibited = false;
         m->suspend_key_ignore_inhibited = false;
         m->hibernate_key_ignore_inhibited = false;
@@ -73,16 +65,18 @@ void manager_reset_config(Manager *m) {
 
         m->kill_only_users = strv_free(m->kill_only_users);
         m->kill_exclude_users = strv_free(m->kill_exclude_users);
-
-        m->stop_idle_session_usec = USEC_INFINITY;
 }
 
 int manager_parse_config_file(Manager *m) {
         assert(m);
 
-        return config_parse_config_file("logind.conf", "Login\0",
-                                        config_item_perf_lookup, logind_gperf_lookup,
-                                        CONFIG_PARSE_WARN, m);
+        return config_parse_many_nulstr(
+                        PKGSYSCONFDIR "/logind.conf",
+                        CONF_PATHS_NULSTR("systemd/logind.conf.d"),
+                        "Login\0",
+                        config_item_perf_lookup, logind_gperf_lookup,
+                        CONFIG_PARSE_WARN, m,
+                        NULL);
 }
 
 int manager_add_device(Manager *m, const char *sysfs, bool master, Device **ret_device) {
@@ -324,11 +318,15 @@ int manager_process_button_device(Manager *m, sd_device *d) {
                 return r;
 
         if (device_for_action(d, SD_DEVICE_REMOVE) ||
-            sd_device_has_current_tag(d, "power-switch") <= 0)
+            sd_device_has_current_tag(d, "power-switch") <= 0) {
 
-                button_free(hashmap_get(m->buttons, sysname));
+                b = hashmap_get(m->buttons, sysname);
+                if (!b)
+                        return 0;
 
-        else {
+                button_free(b);
+
+        } else {
                 const char *sn;
 
                 r = manager_add_button(m, sysname, &b);
@@ -458,13 +456,14 @@ int config_parse_n_autovts(
                 void *data,
                 void *userdata) {
 
-        unsigned *n = ASSERT_PTR(data);
+        unsigned *n = data;
         unsigned o;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = safe_atou(rvalue, &o);
         if (r < 0) {
@@ -486,7 +485,7 @@ int config_parse_n_autovts(
 static int vt_is_busy(unsigned vtnr) {
         struct vt_stat vt_stat;
         int r;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         assert(vtnr >= 1);
 
@@ -536,7 +535,15 @@ int manager_spawn_autovt(Manager *m, unsigned vtnr) {
         }
 
         xsprintf(name, "autovt@tty%u.service", vtnr);
-        r = bus_call_method(m->bus, bus_systemd_mgr, "StartUnit", &error, NULL, "ss", name, "fail");
+        r = sd_bus_call_method(
+                        m->bus,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
+                        "StartUnit",
+                        &error,
+                        NULL,
+                        "ss", name, "fail");
         if (r < 0)
                 return log_error_errno(r, "Failed to start %s: %s", name, bus_error_message(&error, r));
 
@@ -565,6 +572,7 @@ static bool manager_is_docked(Manager *m) {
 
 static int manager_count_external_displays(Manager *m) {
         _cleanup_(sd_device_enumerator_unrefp) sd_device_enumerator *e = NULL;
+        sd_device *d;
         int r, n = 0;
 
         r = sd_device_enumerator_new(&e);
@@ -662,25 +670,17 @@ bool manager_all_buttons_ignored(Manager *m) {
 
         if (m->handle_power_key != HANDLE_IGNORE)
                 return false;
-        if (m->handle_power_key_long_press != HANDLE_IGNORE)
-                return false;
         if (m->handle_suspend_key != HANDLE_IGNORE)
                 return false;
-        if (m->handle_suspend_key_long_press != HANDLE_IGNORE)
-                return false;
         if (m->handle_hibernate_key != HANDLE_IGNORE)
-                return false;
-        if (m->handle_hibernate_key_long_press != HANDLE_IGNORE)
-                return false;
-        if (m->handle_reboot_key != HANDLE_IGNORE)
-                return false;
-        if (m->handle_reboot_key_long_press != HANDLE_IGNORE)
                 return false;
         if (m->handle_lid_switch != HANDLE_IGNORE)
                 return false;
         if (!IN_SET(m->handle_lid_switch_ep, _HANDLE_ACTION_INVALID, HANDLE_IGNORE))
                 return false;
         if (m->handle_lid_switch_docked != HANDLE_IGNORE)
+                return false;
+        if (m->handle_reboot_key != HANDLE_IGNORE)
                 return false;
 
         return true;
@@ -765,7 +765,9 @@ int manager_read_utmp(Manager *m) {
 
 #if ENABLE_UTMP
 static int manager_dispatch_utmp(sd_event_source *s, const struct inotify_event *event, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
+
+        assert(m);
 
         /* If there's indication the file itself might have been removed or became otherwise unavailable, then let's
          * reestablish the watch on whatever there's now. */

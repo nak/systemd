@@ -6,7 +6,6 @@
 #include "hashmap.h"
 #include "journald-rate-limit.h"
 #include "list.h"
-#include "logarithm.h"
 #include "random-util.h"
 #include "string-util.h"
 #include "time-util.h"
@@ -163,7 +162,7 @@ static unsigned burst_modulate(unsigned burst, uint64_t available) {
         /* Modulates the burst rate a bit with the amount of available
          * disk space */
 
-        k = log2u64(available);
+        k = u64log2(available);
 
         /* 1MB */
         if (k <= 20)
@@ -186,10 +185,10 @@ static unsigned burst_modulate(unsigned burst, uint64_t available) {
 }
 
 int journal_ratelimit_test(JournalRateLimit *r, const char *id, usec_t rl_interval, unsigned rl_burst, int priority, uint64_t available) {
-        JournalRateLimitGroup *g, *found = NULL;
+        uint64_t h;
+        JournalRateLimitGroup *g;
         JournalRateLimitPool *p;
         unsigned burst;
-        uint64_t h;
         usec_t ts;
 
         assert(id);
@@ -209,25 +208,23 @@ int journal_ratelimit_test(JournalRateLimit *r, const char *id, usec_t rl_interv
         h = siphash24_string(id, r->hash_key);
         g = r->buckets[h % BUCKETS_MAX];
 
-        LIST_FOREACH(bucket, i, g)
-                if (streq(i->id, id)) {
-                        found = i;
+        LIST_FOREACH(bucket, g, g)
+                if (streq(g->id, id))
                         break;
-                }
 
-        if (!found) {
-                found = journal_ratelimit_group_new(r, id, rl_interval, ts);
-                if (!found)
+        if (!g) {
+                g = journal_ratelimit_group_new(r, id, rl_interval, ts);
+                if (!g)
                         return -ENOMEM;
         } else
-                found->interval = rl_interval;
+                g->interval = rl_interval;
 
         if (rl_interval == 0 || rl_burst == 0)
                 return 1;
 
         burst = burst_modulate(rl_burst, available);
 
-        p = &found->pools[priority_map[priority]];
+        p = &g->pools[priority_map[priority]];
 
         if (p->begin <= 0) {
                 p->suppressed = 0;

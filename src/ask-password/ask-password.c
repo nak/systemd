@@ -6,8 +6,7 @@
 #include <unistd.h>
 
 #include "ask-password-api.h"
-#include "build.h"
-#include "constants.h"
+#include "def.h"
 #include "log.h"
 #include "macro.h"
 #include "main-func.h"
@@ -38,14 +37,14 @@ static int help(void) {
                 return log_oom();
 
         printf("%1$s [OPTIONS...] MESSAGE\n\n"
-               "%3$sQuery the user for a system passphrase, via the TTY or a UI agent.%4$s\n\n"
+               "%3$sQuery the user for a system passphrase, via the TTY or an UI agent.%4$s\n\n"
                "  -h --help           Show this help\n"
                "     --icon=NAME      Icon name\n"
                "     --id=ID          Query identifier (e.g. \"cryptsetup:/dev/sda5\")\n"
                "     --keyname=NAME   Kernel key name for caching passwords (e.g. \"cryptsetup\")\n"
                "     --credential=NAME\n"
-               "                      Credential name for ImportCredential=, LoadCredential= or\n"
-               "                      SetCredential= credentials\n"
+               "                      Credential name for LoadCredential=/SetCredential=\n"
+               "                      credentials\n"
                "     --timeout=SEC    Timeout in seconds\n"
                "     --echo=yes|no|masked\n"
                "                      Control whether to show password while typing (echo)\n"
@@ -108,10 +107,6 @@ static int parse_argv(int argc, char *argv[]) {
 
         /* Note the asymmetry: the long option --echo= allows an optional argument, the short option does
          * not. */
-
-        /* Resetting to 0 forces the invocation of an internal initialization routine of getopt_long()
-         * that checks for GNU extensions in optstring ('-' or '+' at the beginning). */
-        optind = 0;
         while ((c = getopt_long(argc, argv, "+hen", options, NULL)) >= 0)
 
                 switch (c) {
@@ -142,12 +137,14 @@ static int parse_argv(int argc, char *argv[]) {
                                 /* Empty argument or explicit string "masked" for default behaviour. */
                                 arg_flags &= ~(ASK_PASSWORD_ECHO|ASK_PASSWORD_SILENT);
                         else {
-                                r = parse_boolean_argument("--echo=", optarg, NULL);
+                                bool b;
+
+                                r = parse_boolean_argument("--echo=", optarg, &b);
                                 if (r < 0)
                                         return r;
 
-                                SET_FLAG(arg_flags, ASK_PASSWORD_ECHO, r);
-                                SET_FLAG(arg_flags, ASK_PASSWORD_SILENT, !r);
+                                SET_FLAG(arg_flags, ASK_PASSWORD_ECHO, b);
+                                SET_FLAG(arg_flags, ASK_PASSWORD_SILENT, !b);
                         }
                         break;
 
@@ -191,17 +188,19 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (isempty(emoji) || streq(emoji, "auto"))
                 SET_FLAG(arg_flags, ASK_PASSWORD_HIDE_EMOJI, FLAGS_SET(arg_flags, ASK_PASSWORD_ECHO));
         else {
-                r = parse_boolean_argument("--emoji=", emoji, NULL);
+                bool b;
+
+                r = parse_boolean_argument("--emoji=", emoji, &b);
                 if (r < 0)
                          return r;
 
-                SET_FLAG(arg_flags, ASK_PASSWORD_HIDE_EMOJI, !r);
+                SET_FLAG(arg_flags, ASK_PASSWORD_HIDE_EMOJI, !b);
         }
 
         if (argc > optind) {
@@ -224,6 +223,7 @@ static int parse_argv(int argc, char *argv[]) {
 static int run(int argc, char *argv[]) {
         _cleanup_strv_free_erase_ char **l = NULL;
         usec_t timeout;
+        char **p;
         int r;
 
         log_show_color(true);

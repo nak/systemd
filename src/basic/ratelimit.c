@@ -20,41 +20,19 @@ bool ratelimit_below(RateLimit *r) {
 
         if (r->begin <= 0 ||
             usec_sub_unsigned(ts, r->begin) > r->interval) {
-                r->begin = ts;  /* Start a new time window */
-                r->num = 1;     /* Reset counter */
-                return true;
+                r->begin = ts;
+
+                /* Reset counter */
+                r->num = 0;
+                goto good;
         }
 
-        if (_unlikely_(r->num == UINT_MAX))
-                return false;
+        if (r->num < r->burst)
+                goto good;
 
+        return false;
+
+good:
         r->num++;
-        return r->num <= r->burst;
-}
-
-unsigned ratelimit_num_dropped(RateLimit *r) {
-        assert(r);
-
-        if (r->num == UINT_MAX) /* overflow, return as special case */
-                return UINT_MAX;
-
-        return LESS_BY(r->num, r->burst);
-}
-
-usec_t ratelimit_end(const RateLimit *rl) {
-        assert(rl);
-
-        if (rl->begin == 0)
-                return 0;
-
-        return usec_add(rl->begin, rl->interval);
-}
-
-usec_t ratelimit_left(const RateLimit *rl) {
-        assert(rl);
-
-        if (rl->begin == 0)
-                return 0;
-
-        return usec_sub_unsigned(ratelimit_end(rl), now(CLOCK_MONOTONIC));
+        return true;
 }

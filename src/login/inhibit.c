@@ -9,9 +9,7 @@
 #include "sd-bus.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "bus-error.h"
-#include "bus-locator.h"
 #include "bus-util.h"
 #include "fd-util.h"
 #include "format-table.h"
@@ -24,6 +22,7 @@
 #include "strv.h"
 #include "terminal-util.h"
 #include "user-util.h"
+#include "util.h"
 
 static const char* arg_what = "idle:sleep:shutdown";
 static const char* arg_who = NULL;
@@ -42,7 +41,15 @@ static int inhibit(sd_bus *bus, sd_bus_error *error) {
         int r;
         int fd;
 
-        r = bus_call_method(bus, bus_login_mgr, "Inhibit", error, &reply, "ssss", arg_what, arg_who, arg_why, arg_mode);
+        r = sd_bus_call_method(
+                        bus,
+                        "org.freedesktop.login1",
+                        "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager",
+                        "Inhibit",
+                        error,
+                        &reply,
+                        "ssss", arg_what, arg_who, arg_why, arg_mode);
         if (r < 0)
                 return r;
 
@@ -50,7 +57,11 @@ static int inhibit(sd_bus *bus, sd_bus_error *error) {
         if (r < 0)
                 return r;
 
-        return RET_NERRNO(fcntl(fd, F_DUPFD_CLOEXEC, 3));
+        r = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+        if (r < 0)
+                return -errno;
+
+        return r;
 }
 
 static int print_inhibitors(sd_bus *bus) {
@@ -59,9 +70,17 @@ static int print_inhibitors(sd_bus *bus) {
         _cleanup_(table_unrefp) Table *table = NULL;
         int r;
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
-        r = bus_call_method(bus, bus_login_mgr, "ListInhibitors", &error, &reply, NULL);
+        r = sd_bus_call_method(
+                        bus,
+                        "org.freedesktop.login1",
+                        "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager",
+                        "ListInhibitors",
+                        &error,
+                        &reply,
+                        "");
         if (r < 0)
                 return log_error_errno(r, "Could not get active inhibitors: %s", bus_error_message(&error, r));
 
@@ -195,9 +214,6 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
-        /* Resetting to 0 forces the invocation of an internal initialization routine of getopt_long()
-         * that checks for GNU extensions in optstring ('-' or '+' at the beginning). */
-        optind = 0;
         while ((c = getopt_long(argc, argv, "+h", options, NULL)) >= 0)
 
                 switch (c) {
@@ -240,7 +256,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (arg_action == ACTION_INHIBIT && optind == argc)
@@ -267,7 +283,7 @@ static int run(int argc, char *argv[]) {
 
         r = sd_bus_default_system(&bus);
         if (r < 0)
-                return bus_log_connect_error(r, BUS_TRANSPORT_LOCAL);
+                return bus_log_connect_error(r);
 
         if (arg_action == ACTION_LIST)
                 return print_inhibitors(bus);
@@ -275,7 +291,7 @@ static int run(int argc, char *argv[]) {
                 _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
                 _cleanup_strv_free_ char **arguments = NULL;
                 _cleanup_free_ char *w = NULL;
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
                 pid_t pid;
 
                 /* Ignore SIGINT and allow the forked process to receive it */

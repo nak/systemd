@@ -6,10 +6,21 @@
 #include "compress.h"
 #include "fuzz.h"
 
+static int compress(int alg,
+                    const void *src, uint64_t src_size,
+                    void *dst, size_t dst_alloc_size, size_t *dst_size) {
+
+        if (alg == OBJECT_COMPRESSED_LZ4)
+                return compress_blob_lz4(src, src_size, dst, dst_alloc_size, dst_size);
+        if (alg == OBJECT_COMPRESSED_XZ)
+                return compress_blob_xz(src, src_size, dst, dst_alloc_size, dst_size);
+        return -EOPNOTSUPP;
+}
+
 typedef struct header {
-        uint32_t alg:2; /* We have only three compression algorithms so far, but we might add more in the
-                         * future. Let's make this a bit wider so our fuzzer cases remain stable in the
-                         * future. */
+        uint32_t alg:2; /* We have only two compression algorithms so far, but we might add
+                         * more in the future. Let's make this a bit wider so our fuzzer
+                         * cases remain stable in the future. */
         uint32_t sw_len;
         uint32_t sw_alloc;
         uint32_t reserved[3]; /* Extra space to keep fuzz cases stable in case we need to
@@ -35,7 +46,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 log_set_max_level(LOG_CRIT);
 
         log_info("Using compression %s, data size=%zu",
-                 compression_to_string(alg),
+                 object_compressed_to_string(alg) ?: "(none)",
                  data_len);
 
         buf = malloc(MAX(size, 128u)); /* Make the buffer a bit larger for very small data */
@@ -45,7 +56,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
 
         size_t csize;
-        r = compress_blob(alg, h->data, data_len, buf, size, &csize);
+        r = compress(alg, h->data, data_len, buf, size, &csize);
         if (r < 0) {
                 log_error_errno(r, "Compression failed: %m");
                 return 0;
@@ -55,7 +66,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
         size_t sw_alloc = MAX(h->sw_alloc, 1u);
         buf2 = malloc(sw_alloc);
-        if (!buf2) {
+        if (!buf) {
                 log_oom();
                 return 0;
         }

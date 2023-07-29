@@ -23,21 +23,21 @@ static int drr_class_fill_message(Link *link, TClass *tclass, sd_netlink_message
         assert(tclass);
         assert(req);
 
-        assert_se(drr = TCLASS_TO_DRR(tclass));
+        drr = TCLASS_TO_DRR(tclass);
 
         r = sd_netlink_message_open_container_union(req, TCA_OPTIONS, "drr");
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not open container TCA_OPTIONS: %m");
 
         if (drr->quantum > 0) {
                 r = sd_netlink_message_append_u32(req, TCA_DRR_QUANTUM, drr->quantum);
                 if (r < 0)
-                        return r;
+                        return log_link_error_errno(link, r, "Could not append TCA_DRR_QUANTUM, attribute: %m");
         }
 
         r = sd_netlink_message_close_container(req);
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not close container TCA_OPTIONS: %m");
 
         return 0;
 }
@@ -56,13 +56,14 @@ int config_parse_drr_size(
 
         _cleanup_(tclass_free_or_set_invalidp) TClass *tclass = NULL;
         DeficitRoundRobinSchedulerClass *drr;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         uint64_t u;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = tclass_new_static(TCLASS_KIND_DRR, network, filename, section_line, &tclass);
         if (r == -ENOMEM)

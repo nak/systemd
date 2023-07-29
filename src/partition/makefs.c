@@ -13,14 +13,13 @@
 #include "fd-util.h"
 #include "main-func.h"
 #include "mkfs-util.h"
-#include "path-util.h"
 #include "process-util.h"
 #include "signal-util.h"
 #include "string-util.h"
 
 static int run(int argc, char *argv[]) {
-        _cleanup_free_ char *device = NULL, *fstype = NULL, *detected = NULL, *label = NULL;
-        _cleanup_close_ int lock_fd = -EBADF;
+        _cleanup_free_ char *device = NULL, *fstype = NULL, *detected = NULL;
+        _cleanup_close_ int lock_fd = -1;
         sd_id128_t uuid;
         struct stat st;
         int r;
@@ -50,7 +49,7 @@ static int run(int argc, char *argv[]) {
                 if (lock_fd < 0)
                         return log_error_errno(lock_fd, "Failed to lock whole block device of \"%s\": %m", device);
         } else
-                log_debug("%s is not a block device, no need to lock.", device);
+                log_info("%s is not a block device.", device);
 
         r = probe_filesystem(device, &detected);
         if (r == -EUCLEAN)
@@ -66,19 +65,7 @@ static int run(int argc, char *argv[]) {
         if (r < 0)
                 return log_error_errno(r, "Failed to generate UUID for file system: %m");
 
-        r = path_extract_filename(device, &label);
-        if (r < 0)
-                return log_error_errno(r, "Failed to extract file name from '%s': %m", device);
-
-        return make_filesystem(device,
-                               fstype,
-                               label,
-                               /* root = */ NULL,
-                               uuid,
-                               /* discard = */ true,
-                               /* quiet = */ true,
-                               /* sector_size = */ 0,
-                               /* extra_mkfs_options = */ NULL);
+        return make_filesystem(device, fstype, basename(device), uuid, true);
 }
 
 DEFINE_MAIN_FUNCTION(run);

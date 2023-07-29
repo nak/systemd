@@ -4,11 +4,11 @@
 
 #include "btrfs-util.h"
 #include "fd-util.h"
-#include "fs-util.h"
 #include "fileio.h"
 #include "format-util.h"
 #include "log.h"
 #include "string-util.h"
+#include "util.h"
 
 int main(int argc, char *argv[]) {
         BtrfsQuotaInfo quota;
@@ -18,13 +18,14 @@ int main(int argc, char *argv[]) {
         if (fd < 0)
                 log_error_errno(errno, "Failed to open root directory: %m");
         else {
+                char ts[FORMAT_TIMESTAMP_MAX], bs[FORMAT_BYTES_MAX];
                 BtrfsSubvolInfo info;
 
                 r = btrfs_subvol_get_info_fd(fd, 0, &info);
                 if (r < 0)
                         log_error_errno(r, "Failed to get subvolume info: %m");
                 else {
-                        log_info("otime: %s", FORMAT_TIMESTAMP(info.otime));
+                        log_info("otime: %s", format_timestamp(ts, sizeof(ts), info.otime));
                         log_info("read-only (search): %s", yes_no(info.read_only));
                 }
 
@@ -32,10 +33,10 @@ int main(int argc, char *argv[]) {
                 if (r < 0)
                         log_error_errno(r, "Failed to get quota info: %m");
                 else {
-                        log_info("referenced: %s", strna(FORMAT_BYTES(quota.referenced)));
-                        log_info("exclusive: %s", strna(FORMAT_BYTES(quota.exclusive)));
-                        log_info("referenced_max: %s", strna(FORMAT_BYTES(quota.referenced_max)));
-                        log_info("exclusive_max: %s", strna(FORMAT_BYTES(quota.exclusive_max)));
+                        log_info("referenced: %s", strna(format_bytes(bs, sizeof(bs), quota.referenced)));
+                        log_info("exclusive: %s", strna(format_bytes(bs, sizeof(bs), quota.exclusive)));
+                        log_info("referenced_max: %s", strna(format_bytes(bs, sizeof(bs), quota.referenced_max)));
+                        log_info("exclusive_max: %s", strna(format_bytes(bs, sizeof(bs), quota.exclusive_max)));
                 }
 
                 r = btrfs_subvol_get_read_only_fd(fd);
@@ -51,25 +52,17 @@ int main(int argc, char *argv[]) {
         if (r < 0)
                 log_error_errno(r, "Failed to make subvolume: %m");
 
-        r = write_string_file("/xxxtest/file", "ljsadhfljasdkfhlkjdsfha", WRITE_STRING_FILE_CREATE);
+        r = write_string_file("/xxxtest/afile", "ljsadhfljasdkfhlkjdsfha", WRITE_STRING_FILE_CREATE);
         if (r < 0)
                 log_error_errno(r, "Failed to write file: %m");
 
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/xxxtest", AT_FDCWD, "/xxxtest2", 0);
+        r = btrfs_subvol_snapshot("/xxxtest", "/xxxtest2", 0);
         if (r < 0)
                 log_error_errno(r, "Failed to make snapshot: %m");
 
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/xxxtest", AT_FDCWD, "/xxxtest3", BTRFS_SNAPSHOT_READ_ONLY);
+        r = btrfs_subvol_snapshot("/xxxtest", "/xxxtest3", BTRFS_SNAPSHOT_READ_ONLY);
         if (r < 0)
                 log_error_errno(r, "Failed to make snapshot: %m");
-
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/xxxtest", AT_FDCWD, "/xxxtest4", BTRFS_SNAPSHOT_LOCK_BSD);
-        if (r < 0)
-                log_error_errno(r, "Failed to make snapshot: %m");
-        if (r >= 0)
-                assert_se(xopenat_lock(AT_FDCWD, "/xxxtest4", 0, 0, 0, LOCK_BSD, LOCK_EX|LOCK_NB) == -EAGAIN);
-
-        safe_close(r);
 
         r = btrfs_subvol_remove("/xxxtest", BTRFS_REMOVE_QUOTA);
         if (r < 0)
@@ -83,12 +76,7 @@ int main(int argc, char *argv[]) {
         if (r < 0)
                 log_error_errno(r, "Failed to remove subvolume: %m");
 
-        r = btrfs_subvol_remove("/xxxtest4", BTRFS_REMOVE_QUOTA);
-        if (r < 0)
-                log_error_errno(r, "Failed to remove subvolume: %m");
-
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/etc", AT_FDCWD, "/etc2",
-                                     BTRFS_SNAPSHOT_READ_ONLY|BTRFS_SNAPSHOT_FALLBACK_COPY);
+        r = btrfs_subvol_snapshot("/etc", "/etc2", BTRFS_SNAPSHOT_READ_ONLY|BTRFS_SNAPSHOT_FALLBACK_COPY);
         if (r < 0)
                 log_error_errno(r, "Failed to make snapshot: %m");
 
@@ -129,7 +117,7 @@ int main(int argc, char *argv[]) {
         if (mkdir("/xxxrectest/mnt", 0755) < 0)
                 log_error_errno(errno, "Failed to make directory: %m");
 
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/xxxrectest", AT_FDCWD, "/xxxrectest2", BTRFS_SNAPSHOT_RECURSIVE);
+        r = btrfs_subvol_snapshot("/xxxrectest", "/xxxrectest2", BTRFS_SNAPSHOT_RECURSIVE);
         if (r < 0)
                 log_error_errno(r, "Failed to snapshot subvolume: %m");
 
@@ -165,8 +153,7 @@ int main(int argc, char *argv[]) {
         if (r < 0)
                 log_error_errno(r, "Failed to set up quota limit: %m");
 
-        r = btrfs_subvol_snapshot_at(AT_FDCWD, "/xxxquotatest", AT_FDCWD, "/xxxquotatest2",
-                                     BTRFS_SNAPSHOT_RECURSIVE|BTRFS_SNAPSHOT_QUOTA);
+        r = btrfs_subvol_snapshot("/xxxquotatest", "/xxxquotatest2", BTRFS_SNAPSHOT_RECURSIVE|BTRFS_SNAPSHOT_QUOTA);
         if (r < 0)
                 log_error_errno(r, "Failed to set up snapshot: %m");
 
@@ -174,15 +161,13 @@ int main(int argc, char *argv[]) {
         if (r < 0)
                 log_error_errno(r, "Failed to query quota: %m");
 
-        if (r >= 0)
-                assert_se(quota.referenced_max == 4ULL * 1024 * 1024 * 1024);
+        assert_se(quota.referenced_max == 4ULL * 1024 * 1024 * 1024);
 
         r = btrfs_subvol_get_subtree_quota("/xxxquotatest2", 0, &quota);
         if (r < 0)
                 log_error_errno(r, "Failed to query quota: %m");
 
-        if (r >= 0)
-                assert_se(quota.referenced_max == 5ULL * 1024 * 1024 * 1024);
+        assert_se(quota.referenced_max == 5ULL * 1024 * 1024 * 1024);
 
         r = btrfs_subvol_remove("/xxxquotatest", BTRFS_REMOVE_QUOTA|BTRFS_REMOVE_RECURSIVE);
         if (r < 0)

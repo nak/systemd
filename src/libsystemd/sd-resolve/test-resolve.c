@@ -2,7 +2,6 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <net/if_arp.h>
 #include <netinet/in.h>
 #include <resolv.h>
 #include <stdio.h>
@@ -59,12 +58,12 @@ int main(int argc, char *argv[]) {
         struct addrinfo hints = {
                 .ai_family = AF_UNSPEC,
                 .ai_socktype = SOCK_STREAM,
-                .ai_flags = AI_CANONNAME,
+                .ai_flags = AI_CANONNAME
         };
 
-        union sockaddr_union sa = {
-                .in.sin_family = AF_INET,
-                .in.sin_port = htobe16(80),
+        struct sockaddr_in sa = {
+                .sin_family = AF_INET,
+                .sin_port = htobe16(80)
         };
 
         assert_se(sd_resolve_default(&resolve) >= 0);
@@ -80,8 +79,8 @@ int main(int argc, char *argv[]) {
                 log_error_errno(r, "sd_resolve_getaddrinfo(): %m");
 
         /* Make an address -> name query */
-        sa.in.sin_addr.s_addr = inet_addr(argc >= 3 ? argv[2] : "193.99.144.71");
-        r = sd_resolve_getnameinfo(resolve, &q2, &sa.sa, SOCKADDR_LEN(sa), 0, SD_RESOLVE_GET_BOTH, getnameinfo_handler, NULL);
+        sa.sin_addr.s_addr = inet_addr(argc >= 3 ? argv[2] : "193.99.144.71");
+        r = sd_resolve_getnameinfo(resolve, &q2, (struct sockaddr*) &sa, sizeof(sa), 0, SD_RESOLVE_GET_BOTH, getnameinfo_handler, NULL);
         if (r < 0)
                 log_error_errno(r, "sd_resolve_getnameinfo(): %m");
 
@@ -100,7 +99,7 @@ int main(int argc, char *argv[]) {
                 }
                 if (r < 0) {
                         log_error_errno(r, "sd_resolve_wait(): %m");
-                        assert_not_reached();
+                        assert_not_reached("sd_resolve_wait() failed");
                 }
         }
 

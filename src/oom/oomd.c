@@ -2,19 +2,17 @@
 
 #include <getopt.h>
 
-#include "build.h"
 #include "bus-log-control-api.h"
 #include "bus-object.h"
 #include "cgroup-util.h"
 #include "conf-parser.h"
 #include "daemon-util.h"
-#include "fileio.h"
 #include "log.h"
 #include "main-func.h"
-#include "oomd-manager-bus.h"
 #include "oomd-manager.h"
+#include "oomd-manager-bus.h"
 #include "parse-util.h"
-#include "pretty-print.h"
+#include "pretty-print.c"
 #include "psi-util.h"
 #include "signal-util.h"
 
@@ -31,16 +29,21 @@ static int parse_config(void) {
                 {}
         };
 
-        return config_parse_config_file("oomd.conf", "OOM\0",
-                                        config_item_table_lookup, items,
-                                        CONFIG_PARSE_WARN, NULL);
+        return config_parse_many_nulstr(PKGSYSCONFDIR "/oomd.conf",
+                                        CONF_PATHS_NULSTR("systemd/oomd.conf.d"),
+                                        "OOM\0",
+                                        config_item_table_lookup,
+                                        items,
+                                        CONFIG_PARSE_WARN,
+                                        NULL,
+                                        NULL);
 }
 
 static int help(void) {
         _cleanup_free_ char *link = NULL;
         int r;
 
-        r = terminal_urlify_man("systemd-oomd", "8", &link);
+        r = terminal_urlify_man("systemd-oomd", "1", &link);
         if (r < 0)
                 return log_oom();
 
@@ -102,7 +105,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option code.");
                 }
 
         if (optind < argc)
@@ -117,7 +120,6 @@ static int run(int argc, char *argv[]) {
         _cleanup_(manager_freep) Manager *m = NULL;
         _cleanup_free_ char *swap = NULL;
         unsigned long long s = 0;
-        CGroupMask mask;
         int r;
 
         log_setup();
@@ -133,12 +135,6 @@ static int run(int argc, char *argv[]) {
         /* Do some basic requirement checks for running systemd-oomd. It's not exhaustive as some of the other
          * requirements do not have a reliable means to check for in code. */
 
-        int n = sd_listen_fds(0);
-        if (n > 1)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Received too many file descriptors");
-
-        int fd = n == 1 ? SD_LISTEN_FDS_START : -1;
-
         /* SwapTotal is always available in /proc/meminfo and defaults to 0, even on swap-disabled kernels. */
         r = get_proc_field("/proc/meminfo", "SwapTotal", WHITESPACE, &swap);
         if (r < 0)
@@ -146,7 +142,7 @@ static int run(int argc, char *argv[]) {
 
         r = safe_atollu(swap, &s);
         if (r < 0 || s == 0)
-                log_warning("No swap; memory pressure usage will be degraded");
+                log_warning("Swap is currently not detected; memory pressure usage will be degraded");
 
         if (!is_pressure_supported())
                 return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP), "Pressure Stall Information (PSI) is not supported");
@@ -157,17 +153,10 @@ static int run(int argc, char *argv[]) {
         if (r == 0)
                 return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP), "Requires the unified cgroups hierarchy");
 
-        r = cg_mask_supported(&mask);
-        if (r < 0)
-                return log_error_errno(r, "Failed to get supported cgroup controllers: %m");
-
-        if (!FLAGS_SET(mask, CGROUP_MASK_MEMORY))
-                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP), "Requires the cgroup memory controller.");
-
         assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGTERM, SIGINT, -1) >= 0);
 
         if (arg_mem_pressure_usec > 0 && arg_mem_pressure_usec < 1 * USEC_PER_SEC)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "DefaultMemoryPressureDurationSec= must be 0 or at least 1s");
+                log_error_errno(SYNTHETIC_ERRNO(EINVAL), "DefaultMemoryPressureDurationSec= must be 0 or at least 1s");
 
         r = manager_new(&m);
         if (r < 0)
@@ -178,8 +167,7 @@ static int run(int argc, char *argv[]) {
                         arg_dry_run,
                         arg_swap_used_limit_permyriad,
                         arg_mem_pressure_limit_permyriad,
-                        arg_mem_pressure_usec,
-                        fd);
+                        arg_mem_pressure_usec);
         if (r < 0)
                 return log_error_errno(r, "Failed to start up daemon: %m");
 

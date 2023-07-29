@@ -2,6 +2,7 @@
 
 #include "import-compress.h"
 #include "string-table.h"
+#include "util.h"
 
 void import_compress_free(ImportCompress *c) {
         assert(c);
@@ -189,7 +190,7 @@ int import_uncompress(ImportCompress *c, const void *data, size_t size, ImportCo
 #endif
 
         default:
-                assert_not_reached();
+                assert_not_reached("Unknown compression");
         }
 
         return 1;

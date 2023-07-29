@@ -16,8 +16,10 @@ static int property_get_restart_kill_signal(
                 sd_bus_message *reply,
                 void *userdata,
                 sd_bus_error *error) {
-        KillContext *c = ASSERT_PTR(userdata);
+        KillContext *c = userdata;
         int s;
+
+        assert(c);
 
         s = restart_kill_signal(c);
         return sd_bus_message_append_basic(reply, 'i', &s);

@@ -1,16 +1,19 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
-
-#include "analyze-verify-util.h"
+#include "analyze-verify.h"
 #include "tests.h"
 
-TEST(verify_nonexistent) {
+static void test_verify_nonexistent(void) {
         /* Negative cases */
-        assert_se(verify_executable(NULL, &(ExecCommand) {.flags = EXEC_COMMAND_IGNORE_FAILURE, .path = (char*) "/non/existent"}, NULL) == 0);
-        assert_se(verify_executable(NULL, &(ExecCommand) {.path = (char*) "/non/existent"}, NULL) < 0);
+        assert_se(verify_executable(NULL, &(ExecCommand) {.flags = EXEC_COMMAND_IGNORE_FAILURE, .path = (char*) "/non/existent"}) == 0);
+        assert_se(verify_executable(NULL, &(ExecCommand) {.path = (char*) "/non/existent"}) < 0);
 
         /* Ordinary cases */
-        assert_se(verify_executable(NULL, &(ExecCommand) {.path = (char*) "/bin/echo"}, NULL) == 0);
-        assert_se(verify_executable(NULL, &(ExecCommand) {.flags = EXEC_COMMAND_IGNORE_FAILURE, .path = (char*) "/bin/echo"}, NULL) == 0);
+        assert_se(verify_executable(NULL, &(ExecCommand) {.path = (char*) "/bin/echo"}) == 0);
+        assert_se(verify_executable(NULL, &(ExecCommand) {.flags = EXEC_COMMAND_IGNORE_FAILURE, .path = (char*) "/bin/echo"}) == 0);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_verify_nonexistent();
+}

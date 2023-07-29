@@ -1,13 +1,11 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #pragma once
 
-#include <sys/stat.h>
+#include <gcrypt.h>
 
 #include "curl-util.h"
 #include "import-compress.h"
 #include "macro.h"
-#include "openssl-util.h"
-#include "pull-common.h"
 
 typedef struct PullJob PullJob;
 
@@ -53,7 +51,6 @@ struct PullJob {
         uint64_t content_length;
         uint64_t written_compressed;
         uint64_t written_uncompressed;
-        uint64_t offset;
 
         uint64_t uncompressed_max;
         uint64_t compressed_max;
@@ -62,8 +59,6 @@ struct PullJob {
         size_t payload_size;
 
         int disk_fd;
-        bool close_disk_fd;
-        struct stat disk_stat;
 
         usec_t mtime;
 
@@ -73,12 +68,12 @@ struct PullJob {
         usec_t start_usec;
         usec_t last_status_usec;
 
+        bool allow_sparse;
+
         bool calc_checksum;
-        hash_context_t checksum_ctx;
+        gcry_md_hd_t checksum_context;
 
         char *checksum;
-        bool sync;
-        bool force_memory;
 };
 
 int pull_job_new(PullJob **job, const char *url, CurlGlue *glue, void *userdata);
@@ -87,7 +82,5 @@ PullJob* pull_job_unref(PullJob *job);
 int pull_job_begin(PullJob *j);
 
 void pull_job_curl_on_finished(CurlGlue *g, CURL *curl, CURLcode result);
-
-void pull_job_close_disk_fd(PullJob *j);
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(PullJob*, pull_job_unref);

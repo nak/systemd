@@ -14,8 +14,6 @@
 #include "sd-resolve.h"
 
 #include "alloc-util.h"
-#include "build.h"
-#include "daemon-util.h"
 #include "errno-util.h"
 #include "fd-util.h"
 #include "log.h"
@@ -27,6 +25,7 @@
 #include "set.h"
 #include "socket-util.h"
 #include "string-util.h"
+#include "util.h"
 
 #define BUFFER_SIZE (256 * 1024)
 
@@ -96,7 +95,7 @@ static int idle_time_cb(sd_event_source *s, uint64_t usec, void *userdata) {
 }
 
 static int connection_release(Connection *c) {
-        Context *context = ASSERT_PTR(ASSERT_PTR(c)->context);
+        Context *context = c->context;
         int r;
 
         connection_free(c);
@@ -191,7 +190,7 @@ static int connection_shovel(
                         } else if (z == 0 || ERRNO_IS_DISCONNECT(errno)) {
                                 *from_source = sd_event_source_unref(*from_source);
                                 *from = safe_close(*from);
-                        } else if (!ERRNO_IS_TRANSIENT(errno))
+                        } else if (!IN_SET(errno, EAGAIN, EINTR))
                                 return log_error_errno(errno, "Failed to splice: %m");
                 }
 
@@ -203,7 +202,7 @@ static int connection_shovel(
                         } else if (z == 0 || ERRNO_IS_DISCONNECT(errno)) {
                                 *to_source = sd_event_source_unref(*to_source);
                                 *to = safe_close(*to);
-                        } else if (!ERRNO_IS_TRANSIENT(errno))
+                        } else if (!IN_SET(errno, EAGAIN, EINTR))
                                 return log_error_errno(errno, "Failed to splice: %m");
                 }
         } while (shoveled);
@@ -214,11 +213,12 @@ static int connection_shovel(
 static int connection_enable_event_sources(Connection *c);
 
 static int traffic_cb(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
-        Connection *c = ASSERT_PTR(userdata);
+        Connection *c = userdata;
         int r;
 
         assert(s);
         assert(fd >= 0);
+        assert(c);
 
         r = connection_shovel(c,
                               &c->server_fd, c->server_to_client_buffer, &c->client_fd,
@@ -235,15 +235,15 @@ static int traffic_cb(sd_event_source *s, int fd, uint32_t revents, void *userda
                 goto quit;
 
         /* EOF on both sides? */
-        if (c->server_fd < 0 && c->client_fd < 0)
+        if (c->server_fd == -1 && c->client_fd == -1)
                 goto quit;
 
         /* Server closed, and all data written to client? */
-        if (c->server_fd < 0 && c->server_to_client_buffer_full <= 0)
+        if (c->server_fd == -1 && c->server_to_client_buffer_full <= 0)
                 goto quit;
 
         /* Client closed, and all data written to server? */
-        if (c->client_fd < 0 && c->client_to_server_buffer_full <= 0)
+        if (c->client_fd == -1 && c->client_to_server_buffer_full <= 0)
                 goto quit;
 
         r = connection_enable_event_sources(c);
@@ -321,12 +321,13 @@ fail:
 }
 
 static int connect_cb(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
-        Connection *c = ASSERT_PTR(userdata);
+        Connection *c = userdata;
         socklen_t solen;
         int error, r;
 
         assert(s);
         assert(fd >= 0);
+        assert(c);
 
         solen = sizeof(error);
         r = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &solen);
@@ -437,8 +438,7 @@ static int resolve_remote(Connection *c) {
 
         service = strrchr(arg_remote_host, ':');
         if (service) {
-                node = strndupa_safe(arg_remote_host,
-                                     service - arg_remote_host);
+                node = strndupa(arg_remote_host, service - arg_remote_host);
                 service++;
         } else {
                 node = arg_remote_host;
@@ -487,9 +487,9 @@ static int add_connection_socket(Context *context, int fd) {
         *c = (Connection) {
                .context = context,
                .server_fd = fd,
-               .client_fd = -EBADF,
-               .server_to_client_buffer = PIPE_EBADF,
-               .client_to_server_buffer = PIPE_EBADF,
+               .client_fd = -1,
+               .server_to_client_buffer = {-1, -1},
+               .client_to_server_buffer = {-1, -1},
         };
 
         r = set_ensure_put(&context->connections, NULL, c);
@@ -504,12 +504,13 @@ static int add_connection_socket(Context *context, int fd) {
 
 static int accept_cb(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
         _cleanup_free_ char *peer = NULL;
-        Context *context = ASSERT_PTR(userdata);
-        int nfd = -EBADF, r;
+        Context *context = userdata;
+        int nfd = -1, r;
 
         assert(s);
         assert(fd >= 0);
         assert(revents & EPOLLIN);
+        assert(context);
 
         nfd = accept4(fd, NULL, NULL, SOCK_NONBLOCK|SOCK_CLOEXEC);
         if (nfd < 0) {
@@ -656,7 +657,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (optind >= argc)
@@ -673,7 +674,6 @@ static int parse_argv(int argc, char *argv[]) {
 
 static int run(int argc, char *argv[]) {
         _cleanup_(context_clear) Context context = {};
-        _unused_ _cleanup_(notify_on_cleanup) const char *notify_stop = NULL;
         int r, n, fd;
 
         log_parse_environment();
@@ -711,7 +711,6 @@ static int run(int argc, char *argv[]) {
                         return r;
         }
 
-        notify_stop = notify_start(NOTIFY_READY, NOTIFY_STOPPING);
         r = sd_event_loop(context.event);
         if (r < 0)
                 return log_error_errno(r, "Failed to run event loop: %m");

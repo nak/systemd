@@ -170,6 +170,7 @@ static int test_one_module(const char *dir,
         if (!handle)
                 return -EINVAL;
 
+        char **name;
         STRV_FOREACH(name, names)
                 test_byname(handle, module, *name);
 
@@ -213,7 +214,7 @@ static int parse_argv(int argc, char **argv,
 #if ENABLE_NSS_MYMACHINES
                                 "mymachines",
 #endif
-                                NULL);
+                                "files");
         assert_se(modules);
 
         if (argc > 2)
@@ -234,6 +235,7 @@ static int parse_argv(int argc, char **argv,
 static int run(int argc, char **argv) {
         _cleanup_free_ char *dir = NULL;
         _cleanup_strv_free_ char **modules = NULL, **names = NULL;
+        char **module;
         int r;
 
         test_setup_logging(LOG_INFO);

@@ -23,6 +23,7 @@
 #include "selinux-util.h"
 #include "stdio-util.h"
 #include "strv.h"
+#include "util.h"
 
 static bool initialized = false;
 
@@ -30,7 +31,6 @@ struct audit_info {
         sd_bus_creds *creds;
         const char *path;
         const char *cmdline;
-        const char *function;
 };
 
 /*
@@ -57,18 +57,17 @@ static int audit_callback(
         if (sd_bus_creds_get_egid(audit->creds, &gid) >= 0)
                 xsprintf(gid_buf, GID_FMT, gid);
 
-        (void) snprintf(msgbuf, msgbufsize,
-                        "auid=%s uid=%s gid=%s%s%s%s%s%s%s%s%s%s",
-                        login_uid_buf, uid_buf, gid_buf,
-                        audit->path ? " path=\"" : "", strempty(audit->path), audit->path ? "\"" : "",
-                        audit->cmdline ? " cmdline=\"" : "", strempty(audit->cmdline), audit->cmdline ? "\"" : "",
-                        audit->function ? " function=\"" : "", strempty(audit->function), audit->function ? "\"" : "");
+        snprintf(msgbuf, msgbufsize,
+                 "auid=%s uid=%s gid=%s%s%s%s%s%s%s",
+                 login_uid_buf, uid_buf, gid_buf,
+                 audit->path ? " path=\"" : "", strempty(audit->path), audit->path ? "\"" : "",
+                 audit->cmdline ? " cmdline=\"" : "", strempty(audit->cmdline), audit->cmdline ? "\"" : "");
 
         return 0;
 }
 
 static int callback_type_to_priority(int type) {
-        switch (type) {
+        switch(type) {
 
         case SELINUX_ERROR:
                 return LOG_ERR;
@@ -112,9 +111,9 @@ _printf_(2, 3) static int log_callback(int type, const char *fmt, ...) {
 
                 if (r >= 0) {
                         if (type == SELINUX_AVC)
-                                audit_log_user_avc_message(get_audit_fd(), AUDIT_USER_AVC, buf, NULL, NULL, NULL, getuid());
+                                audit_log_user_avc_message(get_audit_fd(), AUDIT_USER_AVC, buf, NULL, NULL, NULL, 0);
                         else if (type == SELINUX_ERROR)
-                                audit_log_user_avc_message(get_audit_fd(), AUDIT_USER_SELINUX_ERR, buf, NULL, NULL, NULL, getuid());
+                                audit_log_user_avc_message(get_audit_fd(), AUDIT_USER_SELINUX_ERR, buf, NULL, NULL, NULL, 0);
 
                         return 0;
                 }
@@ -127,7 +126,7 @@ _printf_(2, 3) static int log_callback(int type, const char *fmt, ...) {
 
         DISABLE_WARNING_FORMAT_NONLITERAL;
         log_internalv(LOG_AUTH | callback_type_to_priority(type),
-                      0, PROJECT_FILE, __LINE__, __func__,
+                      0, PROJECT_FILE, __LINE__, __FUNCTION__,
                       fmt2, ap);
         REENABLE_WARNING;
         va_end(ap);
@@ -136,7 +135,6 @@ _printf_(2, 3) static int log_callback(int type, const char *fmt, ...) {
 }
 
 static int access_init(sd_bus_error *error) {
-        int r;
 
         if (!mac_selinux_use())
                 return 0;
@@ -145,20 +143,23 @@ static int access_init(sd_bus_error *error) {
                 return 1;
 
         if (avc_open(NULL, 0) != 0) {
-                r = -errno;  /* Save original errno for later */
+                int saved_errno = errno;
+                bool enforce;
 
-                bool enforce = security_getenforce() != 0;
-                log_full_errno(enforce ? LOG_ERR : LOG_WARNING, r, "Failed to open the SELinux AVC: %m");
+                enforce = security_getenforce() != 0;
+                log_full_errno(enforce ? LOG_ERR : LOG_WARNING, saved_errno, "Failed to open the SELinux AVC: %m");
 
-                /* If enforcement isn't on, then let's suppress this error, and just don't do any AVC checks.
-                 * The warning we printed is hence all the admin will see. */
+                /* If enforcement isn't on, then let's suppress this
+                 * error, and just don't do any AVC checks. The
+                 * warning we printed is hence all the admin will
+                 * see. */
                 if (!enforce)
                         return 0;
 
-                /* Return an access denied error based on the original errno, if we couldn't load the AVC but
-                 * enforcing mode was on, or we couldn't determine whether it is one. */
-                errno = -r;
-                return sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "Failed to open the SELinux AVC: %m");
+                /* Return an access denied error, if we couldn't load
+                 * the AVC but enforcing mode was on, or we couldn't
+                 * determine whether it is one. */
+                return sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "Failed to open the SELinux AVC: %s", strerror_safe(saved_errno));
         }
 
         selinux_set_callback(SELINUX_CB_AUDIT, (union selinux_callback) { .func_audit = audit_callback });
@@ -174,16 +175,14 @@ static int access_init(sd_bus_error *error) {
    If the machine is in permissive mode it will return ok.  Audit messages will
    still be generated if the access would be denied in enforcing mode.
 */
-int mac_selinux_access_check_internal(
+int mac_selinux_generic_access_check(
                 sd_bus_message *message,
-                const char *unit_path,
-                const char *unit_context,
+                const char *path,
                 const char *permission,
-                const char *function,
                 sd_bus_error *error) {
 
         _cleanup_(sd_bus_creds_unrefp) sd_bus_creds *creds = NULL;
-        const char *tclass, *scon, *acon;
+        const char *tclass, *scon;
         _cleanup_free_ char *cl = NULL;
         _cleanup_freecon_ char *fcon = NULL;
         char **cmdline = NULL;
@@ -192,7 +191,6 @@ int mac_selinux_access_check_internal(
 
         assert(message);
         assert(permission);
-        assert(function);
         assert(error);
 
         r = access_init(error);
@@ -212,39 +210,49 @@ int mac_selinux_access_check_internal(
         if (r < 0)
                 return r;
 
-        /* The SELinux context is something we really should have gotten directly from the message or sender,
-         * and not be an augmented field. If it was augmented we cannot use it for authorization, since this
-         * is racy and vulnerable. Let's add an extra check, just in case, even though this really shouldn't
-         * be possible. */
+        /* The SELinux context is something we really should have
+         * gotten directly from the message or sender, and not be an
+         * augmented field. If it was augmented we cannot use it for
+         * authorization, since this is racy and vulnerable. Let's add
+         * an extra check, just in case, even though this really
+         * shouldn't be possible. */
         assert_return((sd_bus_creds_get_augmented_mask(creds) & SD_BUS_CREDS_SELINUX_CONTEXT) == 0, -EPERM);
 
         r = sd_bus_creds_get_selinux_context(creds, &scon);
         if (r < 0)
                 return r;
 
-        if (unit_context) {
-                /* Nice! The unit comes with a SELinux context read from the unit file */
-                acon = unit_context;
-                tclass = "service";
-        } else {
-                /* If no unit context is known, use our own */
-                if (getcon_raw(&fcon) < 0) {
-                        log_warning_errno(errno, "SELinux getcon_raw() failed%s (perm=%s): %m",
+        if (path) {
+                /* Get the file context of the unit file */
+
+                if (getfilecon_raw(path, &fcon) < 0) {
+                        r = -errno;
+
+                        log_warning_errno(r, "SELinux getfilecon_raw() on '%s' failed%s (perm=%s): %m",
+                                          path,
                                           enforce ? "" : ", ignoring",
                                           permission);
                         if (!enforce)
                                 return 0;
 
-                        return sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "Failed to get current context: %m");
+                        return sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "Failed to get file context on %s.", path);
                 }
-                if (!fcon) {
+
+                tclass = "service";
+
+        } else {
+                if (getcon_raw(&fcon) < 0) {
+                        r = -errno;
+
+                        log_warning_errno(r, "SELinux getcon_raw() failed%s (perm=%s): %m",
+                                          enforce ? "" : ", ignoring",
+                                          permission);
                         if (!enforce)
                                 return 0;
 
-                        return sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "We appear not to have any SELinux context: %m");
+                        return sd_bus_error_set(error, SD_BUS_ERROR_ACCESS_DENIED, "Failed to get current context.");
                 }
 
-                acon = fcon;
                 tclass = "system";
         }
 
@@ -253,33 +261,30 @@ int mac_selinux_access_check_internal(
 
         struct audit_info audit_info = {
                 .creds = creds,
-                .path = unit_path,
+                .path = path,
                 .cmdline = cl,
-                .function = function,
         };
 
-        r = selinux_check_access(scon, acon, tclass, permission, &audit_info);
+        r = selinux_check_access(scon, fcon, tclass, permission, &audit_info);
         if (r < 0) {
-                errno = -(r = errno_or_else(EPERM));
+                r = errno_or_else(EPERM);
 
                 if (enforce)
-                        sd_bus_error_setf(error, SD_BUS_ERROR_ACCESS_DENIED, "SELinux policy denies access: %m");
+                        sd_bus_error_set(error, SD_BUS_ERROR_ACCESS_DENIED, "SELinux policy denies access.");
         }
 
         log_full_errno_zerook(LOG_DEBUG, r,
-                              "SELinux access check scon=%s tcon=%s tclass=%s perm=%s state=%s function=%s path=%s cmdline=%s: %m",
-                              scon, acon, tclass, permission, enforce ? "enforcing" : "permissive", function, strna(unit_path), strna(empty_to_null(cl)));
+                              "SELinux access check scon=%s tcon=%s tclass=%s perm=%s state=%s path=%s cmdline=%s: %m",
+                              scon, fcon, tclass, permission, enforce ? "enforcing" : "permissive", path, cl);
         return enforce ? r : 0;
 }
 
 #else /* HAVE_SELINUX */
 
-int mac_selinux_access_check_internal(
+int mac_selinux_generic_access_check(
                 sd_bus_message *message,
-                const char *unit_path,
-                const char *unit_label,
+                const char *path,
                 const char *permission,
-                const char *function,
                 sd_bus_error *error) {
 
         return 0;

@@ -5,15 +5,12 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "sd-journal.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "fd-util.h"
-#include "format-util.h"
 #include "main-func.h"
 #include "parse-argument.h"
 #include "parse-util.h"
@@ -21,6 +18,7 @@
 #include "string-util.h"
 #include "syslog-util.h"
 #include "terminal-util.h"
+#include "util.h"
 
 static const char *arg_identifier = NULL;
 static int arg_priority = LOG_INFO;
@@ -75,9 +73,6 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
-        /* Resetting to 0 forces the invocation of an internal initialization routine of getopt_long()
-         * that checks for GNU extensions in optstring ('-' or '+' at the beginning). */
-        optind = 0;
         while ((c = getopt_long(argc, argv, "+ht:p:", options, NULL)) >= 0)
 
                 switch (c) {
@@ -120,14 +115,14 @@ static int parse_argv(int argc, char *argv[]) {
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         return 1;
 }
 
 static int run(int argc, char *argv[]) {
-        _cleanup_close_ int outfd = -EBADF, errfd = -EBADF, saved_stderr = -EBADF;
+        _cleanup_close_ int outfd = -1, errfd = -1, saved_stderr = -1;
         int r;
 
         log_setup();
@@ -156,23 +151,8 @@ static int run(int argc, char *argv[]) {
 
         if (argc <= optind)
                 (void) execl("/bin/cat", "/bin/cat", NULL);
-        else {
-                _cleanup_free_ char *s = NULL;
-                struct stat st;
-
-                if (fstat(STDERR_FILENO, &st) < 0)
-                        return log_error_errno(errno,
-                                               "Failed to fstat(%s): %m",
-                                               FORMAT_PROC_FD_PATH(STDERR_FILENO));
-
-                if (asprintf(&s, DEV_FMT ":" INO_FMT, (dev_t)st.st_dev, st.st_ino) < 0)
-                        return log_oom();
-
-                if (setenv("JOURNAL_STREAM", s, /* overwrite = */ true) < 0)
-                        return log_error_errno(errno, "Failed to set environment variable JOURNAL_STREAM: %m");
-
+        else
                 (void) execvp(argv[optind], argv + optind);
-        }
         r = -errno;
 
         /* Let's try to restore a working stderr, so we can print the error message */

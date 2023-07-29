@@ -91,6 +91,7 @@ struct Socket {
         CGroupContext cgroup_context;
 
         ExecRuntime *exec_runtime;
+        DynamicCreds dynamic_creds;
 
         /* For Accept=no sockets refers to the one service we'll
          * activate. For Accept=yes sockets is either NULL, or filled
@@ -171,9 +172,6 @@ int socket_collect_fds(Socket *s, int **fds);
 
 /* Called from the service code when a per-connection service ended */
 void socket_connection_unref(Socket *s);
-
-SocketPort *socket_port_free(SocketPort *p);
-DEFINE_TRIVIAL_CLEANUP_FUNC(SocketPort*, socket_port_free);
 
 void socket_free_ports(Socket *s);
 

@@ -10,7 +10,6 @@
 
 #include "sd-id128.h"
 
-#include "efivars-fundamental.h"
 #include "time-util.h"
 
 #define EFI_VENDOR_LOADER      SD_ID128_MAKE(4a,67,b0,82,0a,4c,41,cf,b6,c7,44,0b,29,bb,8c,4f)
@@ -19,10 +18,9 @@
 #define EFI_VENDOR_GLOBAL_STR  SD_ID128_MAKE_UUID_STR(8b,e4,df,61,93,ca,11,d2,aa,0d,00,e0,98,03,2b,8c)
 #define EFI_VENDOR_SYSTEMD     SD_ID128_MAKE(8c,f2,64,4b,4b,0b,42,8f,93,87,6d,87,60,50,dc,67)
 #define EFI_VENDOR_SYSTEMD_STR SD_ID128_MAKE_UUID_STR(8c,f2,64,4b,4b,0b,42,8f,93,87,6d,87,60,50,dc,67)
-
-#define EFI_VARIABLE_NON_VOLATILE       UINT32_C(0x00000001)
-#define EFI_VARIABLE_BOOTSERVICE_ACCESS UINT32_C(0x00000002)
-#define EFI_VARIABLE_RUNTIME_ACCESS     UINT32_C(0x00000004)
+#define EFI_VARIABLE_NON_VOLATILE       0x0000000000000001
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x0000000000000002
+#define EFI_VARIABLE_RUNTIME_ACCESS     0x0000000000000004
 
 /* Note that the <lowercaseuuid>-<varname> naming scheme is an efivarfs convention, i.e. part of the Linux
  * API file system implementation for EFI. EFI itself processes UIDS in binary form.
@@ -43,18 +41,18 @@
 
 #if ENABLE_EFI
 
-int efi_get_variable(const char *variable, uint32_t *attribute, void **ret_value, size_t *ret_size);
-int efi_get_variable_string(const char *variable, char **ret);
+int efi_get_variable(const char *variable, uint32_t *attribute, void **value, size_t *size);
+int efi_get_variable_string(const char *variable, char **p);
 int efi_set_variable(const char *variable, const void *value, size_t size);
 int efi_set_variable_string(const char *variable, const char *p);
 
 bool is_efi_boot(void);
 bool is_efi_secure_boot(void);
-SecureBootMode efi_get_secure_boot_mode(void);
+bool is_efi_secure_boot_setup_mode(void);
 
 int cache_efi_options_variable(void);
-int systemd_efi_options_variable(char **ret);
-int systemd_efi_options_efivarfs_if_newer(char **ret);
+int systemd_efi_options_variable(char **line);
+int systemd_efi_options_efivarfs_if_newer(char **line);
 
 #else
 
@@ -62,7 +60,7 @@ static inline int efi_get_variable(const char *variable, uint32_t *attribute, vo
         return -EOPNOTSUPP;
 }
 
-static inline int efi_get_variable_string(const char *variable, char **ret) {
+static inline int efi_get_variable_string(const char *variable, char **p) {
         return -EOPNOTSUPP;
 }
 
@@ -82,8 +80,8 @@ static inline bool is_efi_secure_boot(void) {
         return false;
 }
 
-static inline SecureBootMode efi_get_secure_boot_mode(void) {
-        return SECURE_BOOT_UNKNOWN;
+static inline bool is_efi_secure_boot_setup_mode(void) {
+        return false;
 }
 
 static inline int cache_efi_options_variable(void) {

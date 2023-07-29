@@ -8,10 +8,8 @@
 int resize_fs(int fd, uint64_t sz, uint64_t *ret_size);
 
 #define BTRFS_MINIMAL_SIZE (256U*1024U*1024U)
-#define XFS_MINIMAL_SIZE (300U*1024U*1024U)
+#define XFS_MINIMAL_SIZE (14U*1024U*1024U)
 #define EXT4_MINIMAL_SIZE (1024U*1024U)
 
 uint64_t minimal_size_by_fs_magic(statfs_f_type_t magic);
 uint64_t minimal_size_by_fs_name(const char *str);
-
-bool fs_can_online_shrink_and_grow(statfs_f_type_t magic);

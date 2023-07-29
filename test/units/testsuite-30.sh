@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -eux
 set -o pipefail
 
 systemd-analyze log-level debug
+systemd-analyze log-target console
 
 systemctl disable --now systemd-timesyncd.service
 
@@ -26,4 +26,6 @@ while test ! -f /tmp/clock-changed ; do sleep .5 ; done
 
 systemd-analyze log-level info
 
-touch /testok
+echo OK >/testok
+
+exit 0

@@ -3,7 +3,6 @@
 #include <openssl/pem.h>
 
 #include "fd-util.h"
-#include "memstream-util.h"
 #include "user-record-sign.h"
 #include "fileio.h"
 
@@ -31,14 +30,13 @@ static int user_record_signable_json(UserRecord *ur, char **ret) {
 DEFINE_TRIVIAL_CLEANUP_FUNC_FULL(EVP_MD_CTX*, EVP_MD_CTX_free, NULL);
 
 int user_record_sign(UserRecord *ur, EVP_PKEY *private_key, UserRecord **ret) {
-        _cleanup_(memstream_done) MemStream m = {};
         _cleanup_(json_variant_unrefp) JsonVariant *encoded = NULL, *v = NULL;
         _cleanup_(user_record_unrefp) UserRecord *signed_ur = NULL;
         _cleanup_(EVP_MD_CTX_freep) EVP_MD_CTX *md_ctx = NULL;
         _cleanup_free_ char *text = NULL, *key = NULL;
+        size_t signature_size = 0, key_size = 0;
         _cleanup_free_ void *signature = NULL;
-        size_t signature_size = 0;
-        FILE *f;
+        _cleanup_fclose_ FILE *mf = NULL;
         int r;
 
         assert(ur);
@@ -67,14 +65,14 @@ int user_record_sign(UserRecord *ur, EVP_PKEY *private_key, UserRecord **ret) {
         if (EVP_DigestSign(md_ctx, signature, &signature_size, (uint8_t*) text, strlen(text)) <= 0)
                 return -EIO;
 
-        f = memstream_init(&m);
-        if (!f)
+        mf = open_memstream_unlocked(&key, &key_size);
+        if (!mf)
                 return -ENOMEM;
 
-        if (PEM_write_PUBKEY(f, private_key) <= 0)
+        if (PEM_write_PUBKEY(mf, private_key) <= 0)
                 return -EIO;
 
-        r = memstream_finalize(&m, &key, NULL);
+        r = fflush_and_check(mf);
         if (r < 0)
                 return r;
 

@@ -50,7 +50,7 @@ _public_ struct udev_queue *udev_queue_new(struct udev *udev) {
         *udev_queue = (struct udev_queue) {
                 .udev = udev,
                 .n_ref = 1,
-                .fd = -EBADF,
+                .fd = -1,
         };
 
         return udev_queue;

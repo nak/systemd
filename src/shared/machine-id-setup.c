@@ -8,9 +8,8 @@
 #include "sd-id128.h"
 
 #include "alloc-util.h"
-#include "chase.h"
-#include "creds-util.h"
 #include "fd-util.h"
+#include "fs-util.h"
 #include "id128-util.h"
 #include "io-util.h"
 #include "log.h"
@@ -24,47 +23,30 @@
 #include "process-util.h"
 #include "stat-util.h"
 #include "string-util.h"
-#include "sync-util.h"
 #include "umask-util.h"
+#include "util.h"
 #include "virt.h"
 
-static int acquire_machine_id_from_credential(sd_id128_t *ret) {
-        _cleanup_free_ char *buf = NULL;
-        int r;
-
-        r = read_credential_with_decryption("system.machine_id", (void**) &buf, /* ret_size= */ NULL);
-        if (r < 0)
-                return log_warning_errno(r, "Failed to read system.machine_id credential, ignoring: %m");
-        if (r == 0) /* not found */
-                return -ENXIO;
-
-        r = sd_id128_from_string(buf, ret);
-        if (r < 0)
-                return log_warning_errno(r, "Failed to parse system.machine_id credential, ignoring: %m");
-
-        log_info("Initializing machine ID from credential.");
-        return 0;
-}
-
 static int generate_machine_id(const char *root, sd_id128_t *ret) {
-        _cleanup_close_ int fd = -EBADF;
+        const char *dbus_machine_id;
+        _cleanup_close_ int fd = -1;
         int r;
 
         assert(ret);
 
         /* First, try reading the D-Bus machine id, unless it is a symlink */
-        fd = chase_and_open("/var/lib/dbus/machine-id", root, CHASE_PREFIX_ROOT | CHASE_NOFOLLOW, O_RDONLY|O_CLOEXEC|O_NOCTTY, NULL);
-        if (fd >= 0 && id128_read_fd(fd, ID128_FORMAT_PLAIN | ID128_REFUSE_NULL, ret) >= 0) {
-                log_info("Initializing machine ID from D-Bus machine ID.");
-                return 0;
+        dbus_machine_id = prefix_roota(root, "/var/lib/dbus/machine-id");
+        fd = open(dbus_machine_id, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+        if (fd >= 0) {
+                if (id128_read_fd(fd, ID128_PLAIN, ret) >= 0) {
+                        log_info("Initializing machine ID from D-Bus machine ID.");
+                        return 0;
+                }
+
+                fd = safe_close(fd);
         }
 
         if (isempty(root) && running_in_chroot() <= 0) {
-                /* Let's use a system credential for the machine ID if we can */
-                r = acquire_machine_id_from_credential(ret);
-                if (r >= 0)
-                        return r;
-
                 /* If that didn't work, see if we are running in a container,
                  * and a machine ID was passed in via $container_uuid the way
                  * libvirt/LXC does it */
@@ -102,13 +84,13 @@ static int generate_machine_id(const char *root, sd_id128_t *ret) {
 
 int machine_id_setup(const char *root, bool force_transient, sd_id128_t machine_id, sd_id128_t *ret) {
         const char *etc_machine_id, *run_machine_id;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         bool writable;
         int r;
 
         etc_machine_id = prefix_roota(root, "/etc/machine-id");
 
-        WITH_UMASK(0000) {
+        RUN_WITH_UMASK(0000) {
                 /* We create this 0444, to indicate that this isn't really
                  * something you should ever modify. Of course, since the file
                  * will be owned by root it doesn't matter much, but maybe
@@ -141,7 +123,7 @@ int machine_id_setup(const char *root, bool force_transient, sd_id128_t machine_
         if (sd_id128_is_null(machine_id)) {
 
                 /* Try to read any existing machine ID */
-                if (id128_read_fd(fd, ID128_FORMAT_PLAIN, ret) >= 0)
+                if (id128_read_fd(fd, ID128_PLAIN, ret) >= 0)
                         return 0;
 
                 /* Hmm, so, the id currently stored is not useful, then let's generate one */
@@ -162,7 +144,7 @@ int machine_id_setup(const char *root, bool force_transient, sd_id128_t machine_
                  *
                  * Otherwise write the machine-id directly to disk. */
                 if (force_transient) {
-                        r = loop_write(fd, "uninitialized\n", SIZE_MAX, false);
+                        r = loop_write(fd, "uninitialized\n", strlen("uninitialized\n"), false);
                         if (r < 0)
                                 return log_error_errno(r, "Failed to write uninitialized %s: %m", etc_machine_id);
 
@@ -170,7 +152,7 @@ int machine_id_setup(const char *root, bool force_transient, sd_id128_t machine_
                         if (r < 0)
                                 return log_error_errno(r, "Failed to sync %s: %m", etc_machine_id);
                 } else {
-                        r = id128_write_fd(fd, ID128_FORMAT_PLAIN | ID128_SYNC_ON_WRITE, machine_id);
+                        r = id128_write_fd(fd, ID128_PLAIN, machine_id, true);
                         if (r < 0)
                                 return log_error_errno(r, "Failed to write %s: %m", etc_machine_id);
                         else
@@ -185,8 +167,8 @@ int machine_id_setup(const char *root, bool force_transient, sd_id128_t machine_
 
         run_machine_id = prefix_roota(root, "/run/machine-id");
 
-        WITH_UMASK(0022)
-                r = id128_write(run_machine_id, ID128_FORMAT_PLAIN, machine_id);
+        RUN_WITH_UMASK(0022)
+                r = id128_write(run_machine_id, ID128_PLAIN, machine_id, false);
         if (r < 0) {
                 (void) unlink(run_machine_id);
                 return log_error_errno(r, "Cannot write %s: %m", run_machine_id);
@@ -214,8 +196,8 @@ finish:
 }
 
 int machine_id_commit(const char *root) {
-        _cleanup_close_ int fd = -EBADF, initial_mntns_fd = -EBADF;
-        const char *etc_machine_id;
+        _cleanup_close_ int fd = -1, initial_mntns_fd = -1;
+        const char *etc_machine_id, *sync_path;
         sd_id128_t id;
         int r;
 
@@ -258,7 +240,7 @@ int machine_id_commit(const char *root) {
                                        "%s is not on a temporary file system.",
                                        etc_machine_id);
 
-        r = id128_read_fd(fd, ID128_FORMAT_PLAIN, &id);
+        r = id128_read_fd(fd, ID128_PLAIN, &id);
         if (r < 0)
                 return log_error_errno(r, "We didn't find a valid machine ID in %s: %m", etc_machine_id);
 
@@ -279,7 +261,7 @@ int machine_id_commit(const char *root) {
                 return r;
 
         /* Update a persistent version of etc_machine_id */
-        r = id128_write(etc_machine_id, ID128_FORMAT_PLAIN | ID128_SYNC_ON_WRITE, id);
+        r = id128_write(etc_machine_id, ID128_PLAIN, id, true);
         if (r < 0)
                 return log_error_errno(r, "Cannot write %s. This is mandatory to get a persistent machine ID: %m", etc_machine_id);
 

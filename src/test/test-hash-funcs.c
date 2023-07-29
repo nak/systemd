@@ -4,9 +4,11 @@
 #include "hash-funcs.h"
 #include "set.h"
 
-TEST(path_hash_set) {
+static void test_path_hash_set(void) {
         /* The goal is to make sure that non-simplified path are hashed as expected,
          * and that we don't need to simplify them beforehand. */
+
+        log_info("/* %s */", __func__);
 
         /* No freeing of keys, we operate on static strings here… */
         _cleanup_set_free_ Set *set = NULL;
@@ -74,4 +76,8 @@ TEST(path_hash_set) {
         assert_se(!set_contains(set, "/////../bar/./"));
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_INFO);
+
+        test_path_hash_set();
+}

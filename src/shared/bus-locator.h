@@ -9,19 +9,24 @@ typedef struct BusLocator {
         const char *interface;
 } BusLocator;
 
+typedef struct NetNs{
+        const char* const netns;
+} NetNs;
+
+extern const NetNs network_netns;
+
 extern const BusLocator* const bus_home_mgr;
-extern const BusLocator* const bus_hostname;
 extern const BusLocator* const bus_import_mgr;
 extern const BusLocator* const bus_locale;
 extern const BusLocator* const bus_login_mgr;
 extern const BusLocator* const bus_machine_mgr;
 extern const BusLocator* const bus_network_mgr;
-extern const BusLocator* const bus_oom_mgr;
 extern const BusLocator* const bus_portable_mgr;
 extern const BusLocator* const bus_resolve_mgr;
 extern const BusLocator* const bus_systemd_mgr;
 extern const BusLocator* const bus_timedate;
-extern const BusLocator* const bus_timesync_mgr;
+
+const char* bus_network_cmpnt(const char* const name);
 
 /* Shorthand flavors of the sd-bus convenience helpers with destination,path,interface strings encapsulated
  * within a single struct. */

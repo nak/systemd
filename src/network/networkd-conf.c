@@ -4,7 +4,7 @@
  ***/
 
 #include "conf-parser.h"
-#include "constants.h"
+#include "def.h"
 #include "networkd-conf.h"
 #include "networkd-manager.h"
 #include "networkd-speed-meter.h"
@@ -14,20 +14,25 @@ int manager_parse_config_file(Manager *m) {
 
         assert(m);
 
-        r = config_parse_config_file("networkd.conf",
-                                     "Network\0"
-                                     "DHCPv4\0"
-                                     "DHCPv6\0"
-                                     "DHCP\0",
-                                     config_item_perf_lookup, networkd_gperf_lookup,
-                                     CONFIG_PARSE_WARN,
-                                     m);
+        r = config_parse_many_nulstr(
+                        PKGSYSCONFDIR "/networkd.conf",
+                        CONF_PATHS_NULSTR("systemd/networkd.conf.d"),
+                        "Network\0"
+                        "DHCPv4\0"
+                        "DHCPv6\0"
+                        "DHCP\0",
+                        config_item_perf_lookup, networkd_gperf_lookup,
+                        CONFIG_PARSE_WARN,
+                        m,
+                        NULL);
         if (r < 0)
                 return r;
 
         if (m->use_speed_meter && m->speed_meter_interval_usec < SPEED_METER_MINIMUM_TIME_INTERVAL) {
+                char buf[FORMAT_TIMESPAN_MAX];
+
                 log_warning("SpeedMeterIntervalSec= is too small, using %s.",
-                            FORMAT_TIMESPAN(SPEED_METER_MINIMUM_TIME_INTERVAL, USEC_PER_SEC));
+                            format_timespan(buf, sizeof buf, SPEED_METER_MINIMUM_TIME_INTERVAL, USEC_PER_SEC));
                 m->speed_meter_interval_usec = SPEED_METER_MINIMUM_TIME_INTERVAL;
         }
 

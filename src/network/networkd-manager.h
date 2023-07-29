@@ -13,7 +13,6 @@
 #include "hashmap.h"
 #include "networkd-link.h"
 #include "networkd-network.h"
-#include "networkd-sysctl.h"
 #include "ordered-set.h"
 #include "set.h"
 #include "time-util.h"
@@ -29,10 +28,6 @@ struct Manager {
         Hashmap *polkit_registry;
         int ethtool_fd;
 
-        KeepConfiguration keep_configuration;
-        IPv6PrivacyExtensions ipv6_privacy_extensions;
-
-        bool test_mode;
         bool enumerating;
         bool dirty;
         bool restarting;
@@ -40,7 +35,6 @@ struct Manager {
         bool manage_foreign_rules;
 
         Set *dirty_links;
-        Set *new_wlan_ifindices;
 
         char *state_file;
         LinkOperationalState operational_state;
@@ -53,28 +47,35 @@ struct Manager {
         Hashmap *links_by_index;
         Hashmap *links_by_name;
         Hashmap *links_by_hw_addr;
-        Hashmap *links_by_dhcp_pd_subnet_prefix;
         Hashmap *netdevs;
         OrderedHashmap *networks;
+        Hashmap *dhcp6_prefixes;
+        Set *dhcp6_pd_prefixes;
         OrderedSet *address_pools;
-        Set *dhcp_pd_subnet_ids;
+
+        usec_t network_dirs_ts_usec;
 
         DUID dhcp_duid;
         DUID dhcp6_duid;
         DUID duid_product_uuid;
         bool has_product_uuid;
         bool product_uuid_requested;
+        Set *links_requesting_uuid;
 
         char* dynamic_hostname;
         char* dynamic_timezone;
 
+        unsigned routing_policy_rule_remove_messages;
         Set *rules;
+        Set *rules_foreign;
 
         /* Manage nexthops by id. */
         Hashmap *nexthops_by_id;
 
         /* Manager stores nexthops without RTA_OIF attribute. */
+        unsigned nexthop_remove_messages;
         Set *nexthops;
+        Set *nexthops_foreign;
 
         /* Manager stores routes without RTA_OIF attribute. */
         unsigned route_remove_messages;
@@ -85,10 +86,6 @@ struct Manager {
         Hashmap *route_table_numbers_by_name;
         Hashmap *route_table_names_by_number;
 
-        /* Wiphy */
-        Hashmap *wiphy_by_index;
-        Hashmap *wiphy_by_name;
-
         /* For link speed meter */
         bool use_speed_meter;
         sd_event_source *speed_meter_event_source;
@@ -96,28 +93,26 @@ struct Manager {
         usec_t speed_meter_usec_new;
         usec_t speed_meter_usec_old;
 
+        bool dhcp4_prefix_root_cannot_set_table;
         bool bridge_mdb_on_master_not_supported;
 
         FirewallContext *fw_ctx;
 
         OrderedSet *request_queue;
-
-        Hashmap *tuntap_fds_by_name;
 };
 
-int manager_new(Manager **ret, bool test_mode);
+int manager_new(Manager **ret);
 Manager* manager_free(Manager *m);
 
-int manager_setup(Manager *m);
+int manager_connect_bus(Manager *m);
 int manager_start(Manager *m);
 
 int manager_load_config(Manager *m);
+bool manager_should_reload(Manager *m);
 
 int manager_enumerate(Manager *m);
 
 int manager_set_hostname(Manager *m, const char *hostname);
 int manager_set_timezone(Manager *m, const char *timezone);
-
-int manager_reload(Manager *m);
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(Manager*, manager_free);

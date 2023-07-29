@@ -6,11 +6,12 @@
 #include "extract-word.h"
 #include "log.h"
 #include "string-util.h"
-#include "tests.h"
 
-TEST(extract_first_word) {
+static void test_extract_first_word(void) {
         const char *p, *original;
         char *t;
+
+        log_info("/* %s */", __func__);
 
         p = original = "foobar waldo";
         assert_se(extract_first_word(&p, &t, NULL, 0) > 0);
@@ -535,9 +536,11 @@ TEST(extract_first_word) {
         free(t);
 }
 
-TEST(extract_first_word_and_warn) {
+static void test_extract_first_word_and_warn(void) {
         const char *p, *original;
         char *t;
+
+        log_info("/* %s */", __func__);
 
         p = original = "foobar waldo";
         assert_se(extract_first_word_and_warn(&p, &t, NULL, 0, NULL, "fake", 1, original) > 0);
@@ -679,9 +682,11 @@ TEST(extract_first_word_and_warn) {
         assert_se(isempty(p));
 }
 
-TEST(extract_many_words) {
+static void test_extract_many_words(void) {
         const char *p, *original;
         char *a, *b, *c, *d, *e, *f;
+
+        log_info("/* %s */", __func__);
 
         p = original = "foobar waldi piep";
         assert_se(extract_many_words(&p, NULL, 0, &a, &b, &c, NULL) == 3);
@@ -760,4 +765,13 @@ TEST(extract_many_words) {
         free(a);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        log_parse_environment();
+        log_open();
+
+        test_extract_first_word();
+        test_extract_first_word_and_warn();
+        test_extract_many_words();
+
+        return 0;
+}

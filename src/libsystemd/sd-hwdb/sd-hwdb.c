@@ -283,6 +283,7 @@ static int trie_search_f(sd_hwdb *hwdb, const char *search) {
 
 static int hwdb_new(const char *path, sd_hwdb **ret) {
         _cleanup_(sd_hwdb_unrefp) sd_hwdb *hwdb = NULL;
+        const char *hwdb_bin_path = NULL;
         const char sig[] = HWDB_SIG;
 
         assert_return(ret, -EINVAL);
@@ -293,22 +294,20 @@ static int hwdb_new(const char *path, sd_hwdb **ret) {
 
         hwdb->n_ref = 1;
 
-        /* Find hwdb.bin in the explicit path if provided, or iterate over hwdb_bin_paths otherwise  */
+        /* find hwdb.bin in hwdb_bin_paths, or from an explicit path if provided */
         if (!isempty(path)) {
                 log_debug("Trying to open \"%s\"...", path);
                 hwdb->f = fopen(path, "re");
                 if (!hwdb->f)
                         return log_debug_errno(errno, "Failed to open %s: %m", path);
         } else {
-                NULSTR_FOREACH(p, hwdb_bin_paths) {
-                        log_debug("Trying to open \"%s\"...", p);
-                        hwdb->f = fopen(p, "re");
-                        if (hwdb->f) {
-                                path = p;
+                NULSTR_FOREACH(hwdb_bin_path, hwdb_bin_paths) {
+                        log_debug("Trying to open \"%s\"...", hwdb_bin_path);
+                        hwdb->f = fopen(hwdb_bin_path, "re");
+                        if (hwdb->f)
                                 break;
-                        }
                         if (errno != ENOENT)
-                                return log_debug_errno(errno, "Failed to open %s: %m", p);
+                                return log_debug_errno(errno, "Failed to open %s: %m", hwdb_bin_path);
                 }
 
                 if (!hwdb->f)
@@ -317,20 +316,23 @@ static int hwdb_new(const char *path, sd_hwdb **ret) {
         }
 
         if (fstat(fileno(hwdb->f), &hwdb->st) < 0)
-                return log_debug_errno(errno, "Failed to stat %s: %m", path);
+                return log_debug_errno(errno, "Failed to stat %s: %m", hwdb_bin_path);
         if (hwdb->st.st_size < (off_t) offsetof(struct trie_header_f, strings_len) + 8)
-                return log_debug_errno(SYNTHETIC_ERRNO(EIO), "File %s is too short: %m", path);
+                return log_debug_errno(SYNTHETIC_ERRNO(EIO),
+                                       "File %s is too short: %m", hwdb_bin_path);
         if (file_offset_beyond_memory_size(hwdb->st.st_size))
-                return log_debug_errno(SYNTHETIC_ERRNO(EFBIG), "File %s is too long: %m", path);
+                return log_debug_errno(SYNTHETIC_ERRNO(EFBIG),
+                                       "File %s is too long: %m", hwdb_bin_path);
 
         hwdb->map = mmap(0, hwdb->st.st_size, PROT_READ, MAP_SHARED, fileno(hwdb->f), 0);
         if (hwdb->map == MAP_FAILED)
-                return log_debug_errno(errno, "Failed to map %s: %m", path);
+                return log_debug_errno(errno, "Failed to map %s: %m", hwdb_bin_path);
 
         if (memcmp(hwdb->map, sig, sizeof(hwdb->head->signature)) != 0 ||
             (size_t) hwdb->st.st_size != le64toh(hwdb->head->file_size))
                 return log_debug_errno(SYNTHETIC_ERRNO(EINVAL),
-                                       "Failed to recognize the format of %s", path);
+                                       "Failed to recognize the format of %s",
+                                       hwdb_bin_path);
 
         log_debug("=== trie on-disk ===");
         log_debug("tool version:          %"PRIu64, le64toh(hwdb->head->tool_version));

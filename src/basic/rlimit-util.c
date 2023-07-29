@@ -3,7 +3,6 @@
 #include <errno.h>
 
 #include "alloc-util.h"
-#include "errno-util.h"
 #include "extract-word.h"
 #include "fd-util.h"
 #include "format-util.h"
@@ -46,7 +45,10 @@ int setrlimit_closest(int resource, const struct rlimit *rlim) {
 
         log_debug("Failed at setting rlimit " RLIM_FMT " for resource RLIMIT_%s. Will attempt setting value " RLIM_FMT " instead.", rlim->rlim_max, rlimit_to_string(resource), fixed.rlim_max);
 
-        return RET_NERRNO(setrlimit(resource, &fixed));
+        if (setrlimit(resource, &fixed) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int setrlimit_closest_all(const struct rlimit *const *rlim, int *which_failed) {
@@ -87,7 +89,7 @@ static int rlimit_parse_u64(const char *val, rlim_t *ret) {
                 return 0;
         }
 
-        /* setrlimit(2) suggests rlim_t is always 64-bit on Linux. */
+        /* setrlimit(2) suggests rlim_t is always 64bit on Linux. */
         assert_cc(sizeof(rlim_t) == sizeof(uint64_t));
 
         r = safe_atou64(val, &u);
@@ -298,26 +300,26 @@ int rlimit_parse(int resource, const char *val, struct rlimit *ret) {
 }
 
 int rlimit_format(const struct rlimit *rl, char **ret) {
-        _cleanup_free_ char *s = NULL;
-        int r;
+        char *s = NULL;
 
         assert(rl);
         assert(ret);
 
         if (rl->rlim_cur >= RLIM_INFINITY && rl->rlim_max >= RLIM_INFINITY)
-                r = free_and_strdup(&s, "infinity");
+                s = strdup("infinity");
         else if (rl->rlim_cur >= RLIM_INFINITY)
-                r = asprintf(&s, "infinity:" RLIM_FMT, rl->rlim_max);
+                (void) asprintf(&s, "infinity:" RLIM_FMT, rl->rlim_max);
         else if (rl->rlim_max >= RLIM_INFINITY)
-                r = asprintf(&s, RLIM_FMT ":infinity", rl->rlim_cur);
+                (void) asprintf(&s, RLIM_FMT ":infinity", rl->rlim_cur);
         else if (rl->rlim_cur == rl->rlim_max)
-                r = asprintf(&s, RLIM_FMT, rl->rlim_cur);
+                (void) asprintf(&s, RLIM_FMT, rl->rlim_cur);
         else
-                r = asprintf(&s, RLIM_FMT ":" RLIM_FMT, rl->rlim_cur, rl->rlim_max);
-        if (r < 0)
+                (void) asprintf(&s, RLIM_FMT ":" RLIM_FMT, rl->rlim_cur, rl->rlim_max);
+
+        if (!s)
                 return -ENOMEM;
 
-        *ret = TAKE_PTR(s);
+        *ret = s;
         return 0;
 }
 

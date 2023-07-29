@@ -105,9 +105,10 @@ static void bus_wait_for_units_clear(BusWaitForUnits *d) {
 }
 
 static int match_disconnected(sd_bus_message *m, void *userdata, sd_bus_error *error) {
-        BusWaitForUnits *d = ASSERT_PTR(userdata);
+        BusWaitForUnits *d = userdata;
 
         assert(m);
+        assert(d);
 
         log_error("Warning! D-Bus connection terminated.");
 
@@ -228,10 +229,12 @@ static int property_map_job(
                 sd_bus_error *error,
                 void *userdata) {
 
-        WaitForItem *item = ASSERT_PTR(userdata);
+        WaitForItem *item = userdata;
         const char *path;
         uint32_t id;
         int r;
+
+        assert(item);
 
         r = sd_bus_message_read(m, "(uo)", &id, &path);
         if (r < 0)
@@ -264,9 +267,11 @@ static int wait_for_item_parse_properties(WaitForItem *item, sd_bus_message *m) 
 }
 
 static int on_properties_changed(sd_bus_message *m, void *userdata, sd_bus_error *error) {
-        WaitForItem *item = ASSERT_PTR(userdata);
+        WaitForItem *item = userdata;
         const char *interface;
         int r;
+
+        assert(item);
 
         r = sd_bus_message_read(m, "s", &interface);
         if (r < 0) {
@@ -285,9 +290,11 @@ static int on_properties_changed(sd_bus_message *m, void *userdata, sd_bus_error
 }
 
 static int on_get_all_properties(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
-        WaitForItem *item = ASSERT_PTR(userdata);
+        WaitForItem *item = userdata;
         const sd_bus_error *e;
         int r;
+
+        assert(item);
 
         e = sd_bus_message_get_error(m);
         if (e) {

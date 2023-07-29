@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -eux
 set -o pipefail
 
 systemd-analyze log-level debug
-
-# Ensure that the init.scope.d drop-in is applied on boot
-test "$(cat /sys/fs/cgroup/init.scope/memory.high)" != "max"
+systemd-analyze log-target console
 
 # Loose checks to ensure the environment has the necessary features for systemd-oomd
 [[ -e /proc/pressure ]] || echo "no PSI" >>/skipped
@@ -22,40 +19,18 @@ if [[ -e /skipped ]]; then
     exit 0
 fi
 
-rm -rf /run/systemd/system/testsuite-55-testbloat.service.d
-
-# Activate swap file if we are in a VM
-if systemd-detect-virt --vm --quiet; then
-    mkswap /swapfile
-    swapon /swapfile
-    swapon --show
-fi
+rm -rf /etc/systemd/system/testsuite-55-testbloat.service.d
 
 # Configure oomd explicitly to avoid conflicts with distro dropins
-mkdir -p /run/systemd/oomd.conf.d/
-cat >/run/systemd/oomd.conf.d/99-oomd-test.conf <<EOF
-[OOM]
-DefaultMemoryPressureDurationSec=2s
-EOF
+mkdir -p /etc/systemd/oomd.conf.d/
+echo -e "[OOM]\nDefaultMemoryPressureDurationSec=2s" >/etc/systemd/oomd.conf.d/99-oomd-test.conf
+mkdir -p /etc/systemd/system/-.slice.d/
+echo -e "[Slice]\nManagedOOMSwap=auto" >/etc/systemd/system/-.slice.d/99-oomd-test.conf
+mkdir -p /etc/systemd/system/user@.service.d/
+echo -e "[Service]\nManagedOOMMemoryPressure=auto\nManagedOOMMemoryPressureLimit=0%" >/etc/systemd/system/user@.service.d/99-oomd-test.conf
 
-mkdir -p /run/systemd/system/-.slice.d/
-cat >/run/systemd/system/-.slice.d/99-oomd-test.conf <<EOF
-[Slice]
-ManagedOOMSwap=auto
-EOF
-
-mkdir -p /run/systemd/system/user@.service.d/
-cat >/run/systemd/system/user@.service.d/99-oomd-test.conf <<EOF
-[Service]
-ManagedOOMMemoryPressure=auto
-ManagedOOMMemoryPressureLimit=0%
-EOF
-
-mkdir -p /run/systemd/system/systemd-oomd.service.d/
-cat >/run/systemd/system/systemd-oomd.service.d/debug.conf <<EOF
-[Service]
-Environment=SYSTEMD_LOG_LEVEL=debug
-EOF
+mkdir -p /etc/systemd/system/systemd-oomd.service.d/
+echo -e "[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug" >/etc/systemd/system/systemd-oomd.service.d/debug.conf
 
 systemctl daemon-reload
 
@@ -96,7 +71,6 @@ while [[ $(date -u +%s) -le $timeout ]]; do
     if ! systemctl status testsuite-55-testbloat.service; then
         break
     fi
-    oomctl
     sleep 2
 done
 
@@ -104,53 +78,13 @@ done
 if systemctl status testsuite-55-testbloat.service; then exit 42; fi
 if ! systemctl status testsuite-55-testchill.service; then exit 24; fi
 
-# Make sure we also work correctly on user units.
-
-systemctl start --machine "testuser@.host" --user testsuite-55-testchill.service
-systemctl start --machine "testuser@.host" --user testsuite-55-testbloat.service
-
-# Verify systemd-oomd is monitoring the expected units
-# Try to avoid racing the oomctl output check by checking in a loop with a timeout
-oomctl_output=$(oomctl)
-timeout="$(date -ud "1 minutes" +%s)"
-while [[ $(date -u +%s) -le $timeout ]]; do
-    if grep -E "/user.slice.*/testsuite-55-workload.slice" <<< "$oomctl_output"; then
-        break
-    fi
-    oomctl_output=$(oomctl)
-    sleep 1
-done
-
-grep -E "/user.slice.*/testsuite-55-workload.slice" <<< "$oomctl_output"
-grep "20.00%" <<< "$oomctl_output"
-grep "Default Memory Pressure Duration: 2s" <<< "$oomctl_output"
-
-systemctl --machine "testuser@.host" --user status testsuite-55-testchill.service
-
-# systemd-oomd watches for elevated pressure for 2 seconds before acting.
-# It can take time to build up pressure so either wait 2 minutes or for the service to fail.
-timeout="$(date -ud "2 minutes" +%s)"
-while [[ $(date -u +%s) -le $timeout ]]; do
-    if ! systemctl --machine "testuser@.host" --user status testsuite-55-testbloat.service; then
-        break
-    fi
-    oomctl
-    sleep 2
-done
-
-# testbloat should be killed and testchill should be fine
-if systemctl --machine "testuser@.host" --user status testsuite-55-testbloat.service; then exit 42; fi
-if ! systemctl --machine "testuser@.host" --user status testsuite-55-testchill.service; then exit 24; fi
-
 # only run this portion of the test if we can set xattrs
 if setfattr -n user.xattr_test -v 1 /sys/fs/cgroup/; then
     sleep 120 # wait for systemd-oomd kill cool down and elevated memory pressure to come down
 
-    mkdir -p /run/systemd/system/testsuite-55-testbloat.service.d/
-    cat >/run/systemd/system/testsuite-55-testbloat.service.d/override.conf <<EOF
-[Service]
-ManagedOOMPreference=avoid
-EOF
+    mkdir -p /etc/systemd/system/testsuite-55-testbloat.service.d/
+    echo "[Service]" >/etc/systemd/system/testsuite-55-testbloat.service.d/override.conf
+    echo "ManagedOOMPreference=avoid" >>/etc/systemd/system/testsuite-55-testbloat.service.d/override.conf
 
     systemctl daemon-reload
     systemctl start testsuite-55-testchill.service
@@ -162,7 +96,6 @@ EOF
         if ! systemctl status testsuite-55-testmunch.service; then
             break
         fi
-        oomctl
         sleep 2
     done
 
@@ -174,4 +107,6 @@ fi
 
 systemd-analyze log-level info
 
-touch /testok
+echo OK >/testok
+
+exit 0

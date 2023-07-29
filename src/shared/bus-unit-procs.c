@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
-#include "bus-locator.h"
 #include "bus-unit-procs.h"
-#include "glyph-util.h"
 #include "hashmap.h"
 #include "list.h"
+#include "locale-util.h"
 #include "macro.h"
 #include "path-util.h"
 #include "process-util.h"
@@ -47,7 +46,7 @@ static int add_cgroup(Hashmap *cgroups, const char *path, bool is_const, struct 
                 if (!e)
                         return -EINVAL;
 
-                pp = strndupa_safe(path, e - path);
+                pp = strndupa(path, e - path);
 
                 r = add_cgroup(cgroups, pp, false, &parent);
                 if (r < 0)
@@ -189,18 +188,16 @@ static int dump_processes(
                         more = i+1 < n || cg->children;
                         special = special_glyph(more ? SPECIAL_GLYPH_TREE_BRANCH : SPECIAL_GLYPH_TREE_RIGHT);
 
-                        fprintf(stdout, "%s%s%s%*"PID_PRI" %s%s\n",
+                        fprintf(stdout, "%s%s%*"PID_PRI" %s\n",
                                 prefix,
                                 special,
-                                ansi_grey(),
                                 width, pids[i],
-                                name,
-                                ansi_normal());
+                                name);
                 }
         }
 
         if (cg->children) {
-                struct CGroupInfo **children;
+                struct CGroupInfo **children, *child;
                 size_t n = 0, i;
 
                 /* Order subcgroups by their name */
@@ -218,7 +215,9 @@ static int dump_processes(
                         const char *name, *special;
                         bool more;
 
-                        name = strrchr(children[i]->cgroup_path, '/');
+                        child = children[i];
+
+                        name = strrchr(child->cgroup_path, '/');
                         if (!name)
                                 return -EINVAL;
                         name++;
@@ -237,7 +236,7 @@ static int dump_processes(
                         if (!pp)
                                 return -ENOMEM;
 
-                        r = dump_processes(cgroups, children[i]->cgroup_path, pp, n_columns, flags);
+                        r = dump_processes(cgroups, child->cgroup_path, pp, n_columns, flags);
                         if (r < 0)
                                 return r;
                 }
@@ -345,9 +344,11 @@ int unit_show_processes(
 
         prefix = strempty(prefix);
 
-        r = bus_call_method(
+        r = sd_bus_call_method(
                         bus,
-                        bus_systemd_mgr,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
                         "GetUnitProcesses",
                         error,
                         &reply,
@@ -378,7 +379,7 @@ int unit_show_processes(
                 if (r == -ENOMEM)
                         goto finish;
                 if (r < 0)
-                        log_warning_errno(r, "Invalid process description in GetUnitProcesses reply: cgroup=\"%s\" pid=%u command=\"%s\", ignoring: %m",
+                        log_warning_errno(r, "Invalid process description in GetUnitProcesses reply: cgroup=\"%s\" pid="PID_FMT" command=\"%s\", ignoring: %m",
                                           path, pid, name);
         }
 

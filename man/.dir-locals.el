@@ -1,4 +1,3 @@
-; SPDX-License-Identifier: LGPL-2.1-or-later
 ; special .c mode with reduced indentation for man pages
 ((c-mode . ((fill-column . 80)
             (c-basic-offset . 2)

@@ -3,20 +3,15 @@
 
 #include <stdio.h>
 
-#include "macro.h"
 #include "main-func.h"
 
-int generator_open_unit_file_full(const char *dest, const char *source, const char *name, FILE **ret_file, char **ret_temp_path);
+int generator_open_unit_file(
+        const char *dest,
+        const char *source,
+        const char *name,
+        FILE **file);
 
-static inline int generator_open_unit_file(const char *dest, const char *source, const char *name, FILE **ret_file) {
-        return generator_open_unit_file_full(dest, source, name, ret_file, NULL);
-}
-
-int generator_add_symlink_full(const char *dir, const char *dst, const char *dep_type, const char *src, const char *instance);
-
-static inline int generator_add_symlink(const char *dir, const char *dst, const char *dep_type, const char *src) {
-        return generator_add_symlink_full(dir, dst, dep_type, src, NULL);
-}
+int generator_add_symlink(const char *dir, const char *dst, const char *dep_type, const char *src);
 
 int generator_write_fsck_deps(
         FILE *f,
@@ -81,10 +76,6 @@ int generator_hook_up_growfs(
         const char *dir,
         const char *where,
         const char *target);
-int generator_hook_up_pcrfs(
-        const char *dir,
-        const char *where,
-        const char *target);
 
 int generator_enable_remount_fs_service(const char *dir);
 
@@ -95,11 +86,11 @@ void log_setup_generator(void);
         _DEFINE_MAIN_FUNCTION(                                          \
                 ({                                                      \
                         log_setup_generator();                          \
-                        if (!IN_SET(argc, 2, 4))                        \
+                        if (argc > 1 && argc != 4)                      \
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL), \
-                                                       "This program takes one or three arguments."); \
+                                                       "This program takes zero or three arguments."); \
                 }),                                                     \
-                impl(argv[1],                                           \
-                     argv[argc == 4 ? 2 : 1],                           \
-                     argv[argc == 4 ? 3 : 1]),                          \
+                impl(argc > 1 ? argv[1] : "/tmp",                       \
+                     argc > 1 ? argv[2] : "/tmp",                       \
+                     argc > 1 ? argv[3] : "/tmp"),                      \
                 r < 0 ? EXIT_FAILURE : EXIT_SUCCESS)

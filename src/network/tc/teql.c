@@ -1,41 +1,34 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include "macro.h"
-#include "networkd-link.h"
+#include "netlink-util.h"
 #include "parse-util.h"
+#include "stdio-util.h"
 #include "string-util.h"
 #include "teql.h"
 
-static int trivial_link_equalizer_verify(QDisc *qdisc) {
-        _cleanup_free_ char *tca_kind = NULL;
+static int trivial_link_equalizer_fill_tca_kind(Link *link, QDisc *qdisc, sd_netlink_message *req) {
+        char kind[STRLEN("teql") + DECIMAL_STR_MAX(unsigned)];
         TrivialLinkEqualizer *teql;
+        int r;
 
-        teql = TEQL(ASSERT_PTR(qdisc));
-
-        if (asprintf(&tca_kind, "teql%u", teql->id) < 0)
-                return log_oom();
-
-        return free_and_replace(qdisc->tca_kind, tca_kind);
-}
-
-static int trivial_link_equalizer_is_ready(QDisc *qdisc, Link *link) {
-        Link *teql;
-
-        assert(qdisc);
-        assert(qdisc->tca_kind);
         assert(link);
-        assert(link->manager);
+        assert(qdisc);
+        assert(req);
 
-        if (link_get_by_name(link->manager, qdisc->tca_kind, &teql) < 0)
-                return false;
+        teql = TEQL(qdisc);
 
-        return link_is_ready_to_configure(teql, /* allow_unmanaged = */ true);
+        xsprintf(kind, "teql%u", teql->id);
+        r = sd_netlink_message_append_string(req, TCA_KIND, kind);
+        if (r < 0)
+                return log_link_error_errno(link, r, "Could not append TCA_KIND attribute: %m");
+
+        return 0;
 }
 
 const QDiscVTable teql_vtable = {
         .object_size = sizeof(TrivialLinkEqualizer),
-        .verify = trivial_link_equalizer_verify,
-        .is_ready = trivial_link_equalizer_is_ready,
+        .fill_tca_kind = trivial_link_equalizer_fill_tca_kind,
 };
 
 int config_parse_trivial_link_equalizer_id(
@@ -52,13 +45,14 @@ int config_parse_trivial_link_equalizer_id(
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
         TrivialLinkEqualizer *teql;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         unsigned id;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(QDISC_KIND_TEQL, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)

@@ -15,6 +15,7 @@
 #include "strv.h"
 #include "tests.h"
 #include "user-util.h"
+#include "util.h"
 #include "version.h"
 
 static void check_p_d_u(const char *path, int code, const char *result) {
@@ -27,7 +28,7 @@ static void check_p_d_u(const char *path, int code, const char *result) {
         assert_se(streq_ptr(unit, result));
 }
 
-TEST(path_decode_unit) {
+static void test_path_decode_unit(void) {
         check_p_d_u("getty@tty2.service", 0, "getty@tty2.service");
         check_p_d_u("getty@tty2.service/", 0, "getty@tty2.service");
         check_p_d_u("getty@tty2.service/xxx", 0, "getty@tty2.service");
@@ -49,7 +50,7 @@ static void check_p_g_u(const char *path, int code, const char *result) {
         assert_se(streq_ptr(unit, result));
 }
 
-TEST(path_get_unit) {
+static void test_path_get_unit(void) {
         check_p_g_u("/system.slice/foobar.service/sdfdsaf", 0, "foobar.service");
         check_p_g_u("/system.slice/getty@tty5.service", 0, "getty@tty5.service");
         check_p_g_u("/system.slice/getty@tty5.service/aaa/bbb", 0, "getty@tty5.service");
@@ -63,33 +64,6 @@ TEST(path_get_unit) {
         check_p_g_u("/user.slice/user-1000.slice/user@.service/server.service", -ENXIO, NULL);
 }
 
-static void check_p_g_u_p(const char *path, int code, const char *result) {
-        _cleanup_free_ char *unit_path = NULL;
-        int r;
-
-        r = cg_path_get_unit_path(path, &unit_path);
-        printf("%s: %s → %s %d expected %s %d\n", __func__, path, unit_path, r, strnull(result), code);
-        assert_se(r == code);
-        assert_se(streq_ptr(unit_path, result));
-}
-
-TEST(path_get_unit_path) {
-        check_p_g_u_p("/system.slice/foobar.service/sdfdsaf", 0, "/system.slice/foobar.service");
-        check_p_g_u_p("/system.slice/getty@tty5.service", 0, "/system.slice/getty@tty5.service");
-        check_p_g_u_p("/system.slice/getty@tty5.service/aaa/bbb", 0, "/system.slice/getty@tty5.service");
-        check_p_g_u_p("/system.slice/getty@tty5.service/", 0, "/system.slice/getty@tty5.service");
-        check_p_g_u_p("/system.slice/getty@tty6.service/tty5", 0, "/system.slice/getty@tty6.service");
-        check_p_g_u_p("sadfdsafsda", -ENXIO, NULL);
-        check_p_g_u_p("/system.slice/getty####@tty6.service/xxx", -ENXIO, NULL);
-        check_p_g_u_p("/system.slice/system-waldo.slice/foobar.service/sdfdsaf", 0, "/system.slice/system-waldo.slice/foobar.service");
-        check_p_g_u_p("/system.slice/system-waldo.slice/_cpu.service/sdfdsaf", 0, "/system.slice/system-waldo.slice/_cpu.service");
-        check_p_g_u_p("/system.slice/system-waldo.slice/_cpu.service", 0, "/system.slice/system-waldo.slice/_cpu.service");
-        check_p_g_u_p("/user.slice/user-1000.slice/user@1000.service/server.service", 0, "/user.slice/user-1000.slice/user@1000.service");
-        check_p_g_u_p("/user.slice/user-1000.slice/user@.service/server.service", -ENXIO, NULL);
-        check_p_g_u_p("/user.slice/_user-1000.slice/user@1000.service/foobar.slice/foobar@pie.service", 0, "/user.slice/_user-1000.slice/user@1000.service");
-        check_p_g_u_p("/_session-2.scope/_foobar@pie.service/pa/po", 0, "/_session-2.scope");
-}
-
 static void check_p_g_u_u(const char *path, int code, const char *result) {
         _cleanup_free_ char *unit = NULL;
         int r;
@@ -100,7 +74,7 @@ static void check_p_g_u_u(const char *path, int code, const char *result) {
         assert_se(streq_ptr(unit, result));
 }
 
-TEST(path_get_user_unit) {
+static void test_path_get_user_unit(void) {
         check_p_g_u_u("/user.slice/user-1000.slice/session-2.scope/foobar.service", 0, "foobar.service");
         check_p_g_u_u("/user.slice/user-1000.slice/session-2.scope/waldo.slice/foobar.service", 0, "foobar.service");
         check_p_g_u_u("/user.slice/user-1002.slice/session-2.scope/foobar.service/waldo", 0, "foobar.service");
@@ -123,7 +97,7 @@ static void check_p_g_s(const char *path, int code, const char *result) {
         assert_se(streq_ptr(s, result));
 }
 
-TEST(path_get_session) {
+static void test_path_get_session(void) {
         check_p_g_s("/user.slice/user-1000.slice/session-2.scope/foobar.service", 0, "2");
         check_p_g_s("/session-3.scope", 0, "3");
         check_p_g_s("/session-.scope", -ENXIO, NULL);
@@ -137,7 +111,7 @@ static void check_p_g_o_u(const char *path, int code, uid_t result) {
         assert_se(uid == result);
 }
 
-TEST(path_get_owner_uid) {
+static void test_path_get_owner_uid(void) {
         check_p_g_o_u("/user.slice/user-1000.slice/session-2.scope/foobar.service", 0, 1000);
         check_p_g_o_u("/user.slice/user-1006.slice", 0, 1006);
         check_p_g_o_u("", -ENXIO, 0);
@@ -150,7 +124,7 @@ static void check_p_g_slice(const char *path, int code, const char *result) {
         assert_se(streq_ptr(s, result));
 }
 
-TEST(path_get_slice) {
+static void test_path_get_slice(void) {
         check_p_g_slice("/user.slice", 0, "user.slice");
         check_p_g_slice("/foobar", 0, SPECIAL_ROOT_SLICE);
         check_p_g_slice("/user.slice/user-waldo.slice", 0, "user-waldo.slice");
@@ -167,7 +141,7 @@ static void check_p_g_u_slice(const char *path, int code, const char *result) {
         assert_se(streq_ptr(s, result));
 }
 
-TEST(path_get_user_slice) {
+static void test_path_get_user_slice(void) {
         check_p_g_u_slice("/user.slice", -ENXIO, NULL);
         check_p_g_u_slice("/foobar", -ENXIO, NULL);
         check_p_g_u_slice("/user.slice/user-waldo.slice", -ENXIO, NULL);
@@ -184,15 +158,16 @@ TEST(path_get_user_slice) {
         check_p_g_u_slice("/foo.slice//foo-bar.slice/user@1000.service/piep.slice//piep-pap.slice//foo.service", 0, "piep-pap.slice");
 }
 
-TEST(get_paths, .sd_booted = true) {
+static void test_get_paths(void) {
         _cleanup_free_ char *a = NULL;
 
         assert_se(cg_get_root_path(&a) >= 0);
         log_info("Root = %s", a);
 }
 
-TEST(proc) {
+static void test_proc(void) {
         _cleanup_closedir_ DIR *d = NULL;
+        struct dirent *de;
         int r;
 
         d = opendir("/proc");
@@ -235,22 +210,17 @@ TEST(proc) {
         }
 }
 
-static void test_escape_one(const char *s, const char *expected) {
-        _cleanup_free_ char *b = NULL;
+static void test_escape_one(const char *s, const char *r) {
+        _cleanup_free_ char *b;
 
-        assert_se(s);
-        assert_se(expected);
-
-        assert_se(cg_escape(s, &b) >= 0);
-        assert_se(streq(b, expected));
+        b = cg_escape(s);
+        assert_se(b);
+        assert_se(streq(b, r));
 
         assert_se(streq(cg_unescape(b), s));
-
-        assert_se(filename_is_valid(b));
-        assert_se(!cg_needs_escape(s) || b[0] == '_');
 }
 
-TEST(escape, .sd_booted = true) {
+static void test_escape(void) {
         test_escape_one("foobar", "foobar");
         test_escape_one(".foobar", "_.foobar");
         test_escape_one("foobar.service", "foobar.service");
@@ -264,7 +234,7 @@ TEST(escape, .sd_booted = true) {
         test_escape_one(".", "_.");
 }
 
-TEST(controller_is_valid) {
+static void test_controller_is_valid(void) {
         assert_se(cg_controller_is_valid("foobar"));
         assert_se(cg_controller_is_valid("foo_bar"));
         assert_se(cg_controller_is_valid("name=foo"));
@@ -290,7 +260,7 @@ static void test_slice_to_path_one(const char *unit, const char *path, int error
         assert_se(streq_ptr(ret, path));
 }
 
-TEST(slice_to_path) {
+static void test_slice_to_path(void) {
         test_slice_to_path_one("foobar.slice", "foobar.slice", 0);
         test_slice_to_path_one("foobar-waldo.slice", "foobar.slice/foobar-waldo.slice", 0);
         test_slice_to_path_one("foobar-waldo.service", NULL, -EINVAL);
@@ -322,14 +292,16 @@ static void test_shift_path_one(const char *raw, const char *root, const char *s
         assert_se(streq(s, shifted));
 }
 
-TEST(shift_path) {
+static void test_shift_path(void) {
+
         test_shift_path_one("/foobar/waldo", "/", "/foobar/waldo");
         test_shift_path_one("/foobar/waldo", "", "/foobar/waldo");
         test_shift_path_one("/foobar/waldo", "/foobar", "/waldo");
         test_shift_path_one("/foobar/waldo", "/hogehoge", "/foobar/waldo");
 }
 
-TEST(mask_supported, .sd_booted = true) {
+static void test_mask_supported(void) {
+
         CGroupMask m;
         CGroupController c;
 
@@ -339,7 +311,7 @@ TEST(mask_supported, .sd_booted = true) {
                 printf("'%s' is supported: %s\n", cgroup_controller_to_string(c), yes_no(m & CGROUP_CONTROLLER_TO_MASK(c)));
 }
 
-TEST(is_cgroup_fs, .sd_booted = true) {
+static void test_is_cgroup_fs(void) {
         struct statfs sfs;
         assert_se(statfs("/sys/fs/cgroup", &sfs) == 0);
         if (is_temporary_fs(&sfs))
@@ -347,7 +319,7 @@ TEST(is_cgroup_fs, .sd_booted = true) {
         assert_se(is_cgroup_fs(&sfs));
 }
 
-TEST(fd_is_cgroup_fs, .sd_booted = true) {
+static void test_fd_is_cgroup_fs(void) {
         int fd;
 
         fd = open("/sys/fs/cgroup", O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
@@ -361,7 +333,7 @@ TEST(fd_is_cgroup_fs, .sd_booted = true) {
         fd = safe_close(fd);
 }
 
-TEST(cg_tests) {
+static void test_cg_tests(void) {
         int all, hybrid, systemd, r;
 
         r = cg_unified();
@@ -392,7 +364,7 @@ TEST(cg_tests) {
                 assert_se(!systemd);
 }
 
-TEST(cg_get_keyed_attribute) {
+static void test_cg_get_keyed_attribute(void) {
         _cleanup_free_ char *val = NULL;
         char *vals3[3] = {}, *vals3a[3] = {};
         int i, r;
@@ -423,12 +395,12 @@ TEST(cg_get_keyed_attribute) {
 
         assert_se(cg_get_keyed_attribute("cpu", "/init.scope", "cpu.stat", STRV_MAKE("usage_usec", "no_such_attr"), vals3) == -ENXIO);
         assert_se(cg_get_keyed_attribute_graceful("cpu", "/init.scope", "cpu.stat", STRV_MAKE("usage_usec", "no_such_attr"), vals3) == 1);
-        assert_se(vals3[0] && !vals3[1]);
+        assert(vals3[0] && !vals3[1]);
         free(vals3[0]);
 
         assert_se(cg_get_keyed_attribute("cpu", "/init.scope", "cpu.stat", STRV_MAKE("usage_usec", "usage_usec"), vals3) == -ENXIO);
         assert_se(cg_get_keyed_attribute_graceful("cpu", "/init.scope", "cpu.stat", STRV_MAKE("usage_usec", "usage_usec"), vals3) == 1);
-        assert_se(vals3[0] && !vals3[1]);
+        assert(vals3[0] && !vals3[1]);
         free(vals3[0]);
 
         assert_se(cg_get_keyed_attribute("cpu", "/init.scope", "cpu.stat",
@@ -457,13 +429,27 @@ TEST(cg_get_keyed_attribute) {
         }
 }
 
-TEST(bfq_weight_conversion) {
-        assert_se(BFQ_WEIGHT(1) == 1);
-        assert_se(BFQ_WEIGHT(50) == 50);
-        assert_se(BFQ_WEIGHT(100) == 100);
-        assert_se(BFQ_WEIGHT(500) == 136);
-        assert_se(BFQ_WEIGHT(5000) == 545);
-        assert_se(BFQ_WEIGHT(10000) == 1000);
-}
+int main(void) {
+        test_setup_logging(LOG_DEBUG);
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+        test_path_decode_unit();
+        test_path_get_unit();
+        test_path_get_user_unit();
+        test_path_get_session();
+        test_path_get_owner_uid();
+        test_path_get_slice();
+        test_path_get_user_slice();
+        TEST_REQ_RUNNING_SYSTEMD(test_get_paths());
+        test_proc();
+        TEST_REQ_RUNNING_SYSTEMD(test_escape());
+        test_controller_is_valid();
+        test_slice_to_path();
+        test_shift_path();
+        TEST_REQ_RUNNING_SYSTEMD(test_mask_supported());
+        TEST_REQ_RUNNING_SYSTEMD(test_is_cgroup_fs());
+        TEST_REQ_RUNNING_SYSTEMD(test_fd_is_cgroup_fs());
+        test_cg_tests();
+        test_cg_get_keyed_attribute();
+
+        return 0;
+}

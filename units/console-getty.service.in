@@ -10,9 +10,9 @@
 [Unit]
 Description=Console Getty
 Documentation=man:agetty(8) man:systemd-getty-generator(8)
-After=systemd-user-sessions.service plymouth-quit-wait.service getty-pre.target
+After=systemd-user-sessions.service plymouth-quit-wait.service
 {% if HAVE_SYSV_COMPAT %}
-After=rc-local.service
+After=rc-local.service getty-pre.target
 {% endif %}
 Before=getty.target
 
@@ -20,14 +20,13 @@ Before=getty.target
 ConditionPathExists=/dev/console
 
 [Service]
-# The '-o' option value tells agetty to replace 'login' arguments with an option to preserve environment (-p),
-# followed by '--' for safety, and then the entered username.
-ExecStart=-/sbin/agetty -o '-p -- \\u' --noclear --keep-baud - 115200,38400,9600 $TERM
+# The '-o' option value tells agetty to replace 'login' arguments with an
+# option to preserve environment (-p), followed by '--' for safety, and then
+# the entered username.
+ExecStart=-/sbin/agetty -o '-p -- \\u' --noclear --keep-baud console 115200,38400,9600 $TERM
 Type=idle
 Restart=always
 UtmpIdentifier=cons
-StandardInput=tty
-StandardOutput=tty
 TTYPath=/dev/console
 TTYReset=yes
 TTYVHangup=yes

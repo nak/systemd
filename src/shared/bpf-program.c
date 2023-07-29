@@ -7,7 +7,6 @@
 
 #include "alloc-util.h"
 #include "bpf-program.h"
-#include "errno-util.h"
 #include "escape.h"
 #include "fd-util.h"
 #include "memory-util.h"
@@ -39,28 +38,7 @@ static const char *const bpf_cgroup_attach_type_table[__MAX_BPF_ATTACH_TYPE] = {
 
 DEFINE_STRING_TABLE_LOOKUP(bpf_cgroup_attach_type, int);
 
-DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(bpf_program_hash_ops, void, trivial_hash_func, trivial_compare_func, bpf_program_free);
-
-BPFProgram *bpf_program_free(BPFProgram *p) {
-        if (!p)
-                return NULL;
-        /* Unfortunately, the kernel currently doesn't implicitly detach BPF programs from their cgroups when the last
-         * fd to the BPF program is closed. This has nasty side-effects since this means that abnormally terminated
-         * programs that attached one of their BPF programs to a cgroup will leave this program pinned for good with
-         * zero chance of recovery, until the cgroup is removed. This is particularly problematic if the cgroup in
-         * question is the root cgroup (or any other cgroup belonging to a service that cannot be restarted during
-         * operation, such as dbus), as the memory for the BPF program can only be reclaimed through a reboot. To
-         * counter this, we track closely to which cgroup a program was attached to and will detach it on our own
-         * whenever we close the BPF fd. */
-        (void) bpf_program_cgroup_detach(p);
-
-        safe_close(p->kernel_fd);
-        free(p->prog_name);
-        free(p->instructions);
-        free(p->attached_path);
-
-        return mfree(p);
-}
+DEFINE_HASH_OPS_WITH_KEY_DESTRUCTOR(bpf_program_hash_ops, void, trivial_hash_func, trivial_compare_func, bpf_program_unref);
 
  /* struct bpf_prog_info info must be initialized since its value is both input and output
   * for BPF_OBJ_GET_INFO_BY_FD syscall. */
@@ -76,30 +54,23 @@ static int bpf_program_get_info_by_fd(int prog_fd, struct bpf_prog_info *info, u
         attr.info.info_len = info_len;
         attr.info.info = PTR_TO_UINT64(info);
 
-        return RET_NERRNO(bpf(BPF_OBJ_GET_INFO_BY_FD, &attr, sizeof(attr)));
+        if (bpf(BPF_OBJ_GET_INFO_BY_FD, &attr, sizeof(attr)) < 0)
+                return -errno;
+
+        return 0;
 }
 
-int bpf_program_new(uint32_t prog_type, const char *prog_name, BPFProgram **ret) {
-        _cleanup_(bpf_program_freep) BPFProgram *p = NULL;
-        _cleanup_free_ char *name = NULL;
-
-        if (prog_name) {
-                if (strlen(prog_name) >= BPF_OBJ_NAME_LEN)
-                        return -ENAMETOOLONG;
-
-                name = strdup(prog_name);
-                if (!name)
-                        return -ENOMEM;
-        }
+int bpf_program_new(uint32_t prog_type, BPFProgram **ret) {
+        _cleanup_(bpf_program_unrefp) BPFProgram *p = NULL;
 
         p = new(BPFProgram, 1);
         if (!p)
                 return -ENOMEM;
 
         *p = (BPFProgram) {
+                .n_ref = 1,
                 .prog_type = prog_type,
-                .kernel_fd = -EBADF,
-                .prog_name = TAKE_PTR(name),
+                .kernel_fd = -1,
         };
 
         *ret = TAKE_PTR(p);
@@ -108,7 +79,7 @@ int bpf_program_new(uint32_t prog_type, const char *prog_name, BPFProgram **ret)
 }
 
 int bpf_program_new_from_bpffs_path(const char *path, BPFProgram **ret) {
-        _cleanup_(bpf_program_freep) BPFProgram *p = NULL;
+        _cleanup_(bpf_program_unrefp) BPFProgram *p = NULL;
         struct bpf_prog_info info = {};
         int r;
 
@@ -121,7 +92,8 @@ int bpf_program_new_from_bpffs_path(const char *path, BPFProgram **ret) {
 
         *p = (BPFProgram) {
                 .prog_type = BPF_PROG_TYPE_UNSPEC,
-                .kernel_fd = -EBADF,
+                .n_ref = 1,
+                .kernel_fd = -1,
         };
 
         r = bpf_program_load_from_bpf_fs(p, path);
@@ -138,6 +110,27 @@ int bpf_program_new_from_bpffs_path(const char *path, BPFProgram **ret) {
         return 0;
 }
 
+static BPFProgram *bpf_program_free(BPFProgram *p) {
+        assert(p);
+
+        /* Unfortunately, the kernel currently doesn't implicitly detach BPF programs from their cgroups when the last
+         * fd to the BPF program is closed. This has nasty side-effects since this means that abnormally terminated
+         * programs that attached one of their BPF programs to a cgroup will leave this programs pinned for good with
+         * zero chance of recovery, until the cgroup is removed. This is particularly problematic if the cgroup in
+         * question is the root cgroup (or any other cgroup belonging to a service that cannot be restarted during
+         * operation, such as dbus), as the memory for the BPF program can only be reclaimed through a reboot. To
+         * counter this, we track closely to which cgroup a program was attached to and will detach it on our own
+         * whenever we close the BPF fd. */
+        (void) bpf_program_cgroup_detach(p);
+
+        safe_close(p->kernel_fd);
+        free(p->instructions);
+        free(p->attached_path);
+
+        return mfree(p);
+}
+
+DEFINE_TRIVIAL_REF_UNREF_FUNC(BPFProgram, bpf_program, bpf_program_free);
 
 int bpf_program_add_instructions(BPFProgram *p, const struct bpf_insn *instructions, size_t count) {
 
@@ -177,8 +170,6 @@ int bpf_program_load_kernel(BPFProgram *p, char *log_buf, size_t log_size) {
         attr.log_buf = PTR_TO_UINT64(log_buf);
         attr.log_level = !!log_buf;
         attr.log_size = log_size;
-        if (p->prog_name)
-                strncpy(attr.prog_name, p->prog_name, BPF_OBJ_NAME_LEN - 1);
 
         p->kernel_fd = bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
         if (p->kernel_fd < 0)
@@ -207,7 +198,7 @@ int bpf_program_load_from_bpf_fs(BPFProgram *p, const char *path) {
 
 int bpf_program_cgroup_attach(BPFProgram *p, int type, const char *path, uint32_t flags) {
         _cleanup_free_ char *copy = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         union bpf_attr attr;
         int r;
 
@@ -268,7 +259,7 @@ int bpf_program_cgroup_attach(BPFProgram *p, int type, const char *path, uint32_
 }
 
 int bpf_program_cgroup_detach(BPFProgram *p) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         assert(p);
 
@@ -300,16 +291,9 @@ int bpf_program_cgroup_detach(BPFProgram *p) {
         return 0;
 }
 
-int bpf_map_new(
-                const char *name,
-                enum bpf_map_type type,
-                size_t key_size,
-                size_t value_size,
-                size_t max_entries,
-                uint32_t flags) {
-
+int bpf_map_new(enum bpf_map_type type, size_t key_size, size_t value_size, size_t max_entries, uint32_t flags) {
         union bpf_attr attr;
-        const char *n = name;
+        int fd;
 
         zero(attr);
         attr.map_type = type;
@@ -318,14 +302,11 @@ int bpf_map_new(
         attr.max_entries = max_entries;
         attr.map_flags = flags;
 
-        /* The map name is primarily informational for debugging purposes, and typically too short
-         * to carry the full unit name, hence we employ a trivial lossy escaping to make it fit
-         * (truncation + only alphanumerical, "." and "_" are allowed as per
-         * https://www.kernel.org/doc/html/next/bpf/maps.html#usage-notes) */
-        for (size_t i = 0; i < sizeof(attr.map_name) - 1 && *n; i++, n++)
-                attr.map_name[i] = strchr(ALPHANUMERICAL ".", *n) ? *n : '_';
+        fd = bpf(BPF_MAP_CREATE, &attr, sizeof(attr));
+        if (fd < 0)
+                return -errno;
 
-        return RET_NERRNO(bpf(BPF_MAP_CREATE, &attr, sizeof(attr)));
+        return fd;
 }
 
 int bpf_map_update_element(int fd, const void *key, void *value) {
@@ -336,7 +317,10 @@ int bpf_map_update_element(int fd, const void *key, void *value) {
         attr.key = PTR_TO_UINT64(key);
         attr.value = PTR_TO_UINT64(value);
 
-        return RET_NERRNO(bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr)));
+        if (bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr)) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int bpf_map_lookup_element(int fd, const void *key, void *value) {
@@ -347,7 +331,10 @@ int bpf_map_lookup_element(int fd, const void *key, void *value) {
         attr.key = PTR_TO_UINT64(key);
         attr.value = PTR_TO_UINT64(value);
 
-        return RET_NERRNO(bpf(BPF_MAP_LOOKUP_ELEM, &attr, sizeof(attr)));
+        if (bpf(BPF_MAP_LOOKUP_ELEM, &attr, sizeof(attr)) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int bpf_program_pin(int prog_fd, const char *bpffs_path) {
@@ -357,7 +344,10 @@ int bpf_program_pin(int prog_fd, const char *bpffs_path) {
         attr.pathname = PTR_TO_UINT64((void *) bpffs_path);
         attr.bpf_fd = prog_fd;
 
-        return RET_NERRNO(bpf(BPF_OBJ_PIN, &attr, sizeof(attr)));
+        if (bpf(BPF_OBJ_PIN, &attr, sizeof(attr)) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int bpf_program_get_id_by_fd(int prog_fd, uint32_t *ret_id) {
@@ -434,9 +424,8 @@ int bpf_program_serialize_attachment_set(FILE *f, FDSet *fds, const char *key, S
 
 int bpf_program_deserialize_attachment(const char *v, FDSet *fds, BPFProgram **bpfp) {
         _cleanup_free_ char *sfd = NULL, *sat = NULL, *unescaped = NULL;
-        _cleanup_(bpf_program_freep) BPFProgram *p = NULL;
-        _cleanup_close_ int fd = -EBADF;
-        ssize_t l;
+        _cleanup_(bpf_program_unrefp) BPFProgram *p = NULL;
+        _cleanup_close_ int fd = -1;
         int ifd, at, r;
 
         assert(v);
@@ -449,9 +438,11 @@ int bpf_program_deserialize_attachment(const char *v, FDSet *fds, BPFProgram **b
         if (r == 0)
                 return -EINVAL;
 
-        ifd = parse_fd(sfd);
-        if (ifd < 0)
+        r = safe_atoi(sfd, &ifd);
+        if (r < 0)
                 return r;
+        if (ifd < 0)
+                return -EBADF;
 
         /* Extract second word: the attach type */
         r = extract_first_word(&v, &sat, NULL, 0);
@@ -465,12 +456,9 @@ int bpf_program_deserialize_attachment(const char *v, FDSet *fds, BPFProgram **b
                 return at;
 
         /* The rest is the path */
-        if (isempty(v))
-                return -EINVAL;
-
-        l = cunescape(v, 0, &unescaped);
-        if (l < 0)
-                return l;
+        r = cunescape(v, 0, &unescaped);
+        if (r < 0)
+                return r;
 
         fd = fdset_remove(fds, ifd);
         if (fd < 0)
@@ -481,6 +469,7 @@ int bpf_program_deserialize_attachment(const char *v, FDSet *fds, BPFProgram **b
                 return -ENOMEM;
 
         *p = (BPFProgram) {
+                .n_ref = 1,
                 .kernel_fd = TAKE_FD(fd),
                 .prog_type = BPF_PROG_TYPE_UNSPEC,
                 .attached_path = TAKE_PTR(unescaped),
@@ -488,7 +477,7 @@ int bpf_program_deserialize_attachment(const char *v, FDSet *fds, BPFProgram **b
         };
 
         if (*bpfp)
-                bpf_program_free(*bpfp);
+                bpf_program_unref(*bpfp);
 
         *bpfp = TAKE_PTR(p);
         return 0;

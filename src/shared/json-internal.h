@@ -9,16 +9,16 @@
  * interface with this. */
 
 typedef union JsonValue  {
-        /* Encodes a simple value. This structure is generally 8 bytes wide (as double is 64-bit). */
+        /* Encodes a simple value. On x86-64 this structure is 16 bytes wide (as long double is 128bit). */
         bool boolean;
-        double real;
-        int64_t integer;
-        uint64_t unsig;
+        long double real;
+        intmax_t integer;
+        uintmax_t unsig;
 } JsonValue;
 
 /* Let's protect us against accidental structure size changes on our most relevant arch */
 #ifdef __x86_64__
-assert_cc(sizeof(JsonValue) == 8U);
+assert_cc(sizeof(JsonValue) == 16U);
 #endif
 
 #define JSON_VALUE_NULL ((JsonValue) {})

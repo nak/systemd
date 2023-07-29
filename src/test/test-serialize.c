@@ -10,9 +10,9 @@
 #include "tests.h"
 #include "tmpfile-util.h"
 
-static char long_string[LONG_LINE_MAX+1];
+char long_string[LONG_LINE_MAX+1];
 
-TEST(serialize_item) {
+static void test_serialize_item(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-serialize.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
 
@@ -37,7 +37,7 @@ TEST(serialize_item) {
         assert_se(streq(line3, ""));
 }
 
-TEST(serialize_item_escaped) {
+static void test_serialize_item_escaped(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-serialize.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
 
@@ -62,7 +62,7 @@ TEST(serialize_item_escaped) {
         assert_se(streq(line3, ""));
 }
 
-TEST(serialize_usec) {
+static void test_serialize_usec(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-serialize.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
 
@@ -89,7 +89,7 @@ TEST(serialize_usec) {
         assert_se(x == USEC_INFINITY-1);
 }
 
-TEST(serialize_strv) {
+static void test_serialize_strv(void) {
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-serialize.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
 
@@ -124,14 +124,19 @@ TEST(serialize_strv) {
 
                 const char *t = startswith(line, "strv3=");
                 assert_se(t);
-                assert_se(deserialize_strv(&strv2, t) >= 0);
+
+                char *un;
+                assert_se(cunescape(t, 0, &un) >= 0);
+                assert_se(strv_consume(&strv2, un) >= 0);
         }
 
         assert_se(strv_equal(strv, strv2));
 }
 
-TEST(deserialize_environment) {
+static void test_deserialize_environment(void) {
         _cleanup_strv_free_ char **env;
+
+        log_info("/* %s */", __func__);
 
         assert_se(env = strv_new("A=1"));
 
@@ -144,7 +149,7 @@ TEST(deserialize_environment) {
         assert_se(deserialize_environment("bar\\_baz", &env) < 0);
 }
 
-TEST(serialize_environment) {
+static void test_serialize_environment(void) {
         _cleanup_strv_free_ char **env = NULL, **env2 = NULL;
         _cleanup_(unlink_tempfilep) char fn[] = "/tmp/test-env-util.XXXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
@@ -186,10 +191,18 @@ TEST(serialize_environment) {
         assert_se(strv_equal(env, env2));
 }
 
-static int intro(void) {
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_INFO);
+
         memset(long_string, 'x', sizeof(long_string)-1);
         char_array_0(long_string);
+
+        test_serialize_item();
+        test_serialize_item_escaped();
+        test_serialize_usec();
+        test_serialize_strv();
+        test_deserialize_environment();
+        test_serialize_environment();
+
         return EXIT_SUCCESS;
 }
-
-DEFINE_TEST_MAIN_WITH_INTRO(LOG_INFO, intro);

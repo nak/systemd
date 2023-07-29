@@ -8,10 +8,11 @@
  * https://github.com/mjg59/efitools
  */
 
-#include "device-path-util.h"
-#include "secure-boot.h"
-#include "shim.h"
+#include <efi.h>
+#include <efilib.h>
+
 #include "util.h"
+#include "shim.h"
 
 #if defined(__x86_64__) || defined(__i386__)
 #define __sysv_abi__ __attribute__((sysv_abi))
@@ -20,89 +21,181 @@
 #endif
 
 struct ShimLock {
-        EFI_STATUS __sysv_abi__ (*shim_verify) (const void *buffer, uint32_t size);
+        EFI_STATUS __sysv_abi__ (*shim_verify) (VOID *buffer, UINT32 size);
 
         /* context is actually a struct for the PE header, but it isn't needed so void is sufficient just do define the interface
          * see shim.c/shim.h and PeHeader.h in the github shim repo */
-        EFI_STATUS __sysv_abi__ (*generate_hash) (void *data, uint32_t datasize, void *context, uint8_t *sha256hash, uint8_t *sha1hash);
+        EFI_STATUS __sysv_abi__ (*generate_hash) (VOID *data, UINT32 datasize, VOID *context, UINT8 *sha256hash, UINT8 *sha1hash);
 
-        EFI_STATUS __sysv_abi__ (*read_header) (void *data, uint32_t datasize, void *context);
+        EFI_STATUS __sysv_abi__ (*read_header) (VOID *data, UINT32 datasize, VOID *context);
 };
 
+#define SIMPLE_FS_GUID &(EFI_GUID) SIMPLE_FILE_SYSTEM_PROTOCOL
+#define SECURITY_PROTOCOL_GUID \
+        &(EFI_GUID) { 0xa46423e3, 0x4617, 0x49f1, { 0xb9, 0xff, 0xd1, 0xbf, 0xa9, 0x11, 0x58, 0x39 } }
+#define SECURITY_PROTOCOL2_GUID \
+        &(EFI_GUID) { 0x94ab2f58, 0x1438, 0x4ef1, { 0x91, 0x52, 0x18, 0x94, 0x1a, 0x3a, 0x0e, 0x68 } }
 #define SHIM_LOCK_GUID \
-        { 0x605dab50, 0xe046, 0x4300, { 0xab, 0xb6, 0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23 } }
+        &(EFI_GUID) { 0x605dab50, 0xe046, 0x4300, { 0xab, 0xb6, 0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23 } }
 
-bool shim_loaded(void) {
+BOOLEAN shim_loaded(void) {
         struct ShimLock *shim_lock;
 
-        return BS->LocateProtocol(MAKE_GUID_PTR(SHIM_LOCK), NULL, (void **) &shim_lock) == EFI_SUCCESS;
+        return uefi_call_wrapper(BS->LocateProtocol, 3, SHIM_LOCK_GUID, NULL, (VOID**) &shim_lock) == EFI_SUCCESS;
 }
 
-static bool shim_validate(
-                const void *ctx, const EFI_DEVICE_PATH *device_path, const void *file_buffer, size_t file_size) {
+static BOOLEAN shim_validate(VOID *data, UINT32 size) {
+        struct ShimLock *shim_lock;
 
-        EFI_STATUS err;
-        _cleanup_free_ char *file_buffer_owned = NULL;
+        if (!data)
+                return FALSE;
 
-        if (!file_buffer) {
-                if (!device_path)
-                        return false;
+        if (uefi_call_wrapper(BS->LocateProtocol, 3, SHIM_LOCK_GUID, NULL, (VOID**) &shim_lock) != EFI_SUCCESS)
+                return FALSE;
 
-                EFI_HANDLE device_handle;
-                EFI_DEVICE_PATH *file_dp = (EFI_DEVICE_PATH *) device_path;
-                err = BS->LocateDevicePath(
-                                MAKE_GUID_PTR(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL), &file_dp, &device_handle);
-                if (err != EFI_SUCCESS)
-                        return false;
+        if (!shim_lock)
+                return FALSE;
 
-                _cleanup_(file_closep) EFI_FILE *root = NULL;
-                err = open_volume(device_handle, &root);
-                if (err != EFI_SUCCESS)
-                        return false;
+        return shim_lock->shim_verify(data, size) == EFI_SUCCESS;
+}
 
-                _cleanup_free_ char16_t *dp_str = NULL;
-                err = device_path_to_str(file_dp, &dp_str);
-                if (err != EFI_SUCCESS)
-                        return false;
+/*
+ * See the UEFI Platform Initialization manual (Vol2: DXE) for this
+ */
+struct _EFI_SECURITY2_PROTOCOL;
+struct _EFI_SECURITY_PROTOCOL;
+struct _EFI_DEVICE_PATH_PROTOCOL;
 
-                err = file_read(root, dp_str, 0, 0, &file_buffer_owned, &file_size);
-                if (err != EFI_SUCCESS)
-                        return false;
+typedef struct _EFI_SECURITY2_PROTOCOL EFI_SECURITY2_PROTOCOL;
+typedef struct _EFI_SECURITY_PROTOCOL EFI_SECURITY_PROTOCOL;
+typedef struct _EFI_DEVICE_PATH_PROTOCOL EFI_DEVICE_PATH_PROTOCOL;
 
-                file_buffer = file_buffer_owned;
+typedef EFI_STATUS (EFIAPI *EFI_SECURITY_FILE_AUTHENTICATION_STATE) (
+        const EFI_SECURITY_PROTOCOL *This,
+        UINT32 AuthenticationStatus,
+        const EFI_DEVICE_PATH_PROTOCOL *File
+);
+
+typedef EFI_STATUS (EFIAPI *EFI_SECURITY2_FILE_AUTHENTICATION) (
+        const EFI_SECURITY2_PROTOCOL *This,
+        const EFI_DEVICE_PATH_PROTOCOL *DevicePath,
+        VOID *FileBuffer,
+        UINTN FileSize,
+        BOOLEAN  BootPolicy
+);
+
+struct _EFI_SECURITY2_PROTOCOL {
+        EFI_SECURITY2_FILE_AUTHENTICATION FileAuthentication;
+};
+
+struct _EFI_SECURITY_PROTOCOL {
+        EFI_SECURITY_FILE_AUTHENTICATION_STATE  FileAuthenticationState;
+};
+
+/* Handle to the original authenticator for security1 protocol */
+static EFI_SECURITY_FILE_AUTHENTICATION_STATE esfas = NULL;
+
+/* Handle to the original authenticator for security2 protocol */
+static EFI_SECURITY2_FILE_AUTHENTICATION es2fa = NULL;
+
+/*
+ * Perform shim/MOK and Secure Boot authentication on a binary that's already been
+ * loaded into memory. This function does the platform SB authentication first
+ * but preserves its return value in case of its failure, so that it can be
+ * returned in case of a shim/MOK authentication failure. This is done because
+ * the SB failure code seems to vary from one implementation to another, and I
+ * don't want to interfere with that at this time.
+ */
+static EFIAPI EFI_STATUS security2_policy_authentication (const EFI_SECURITY2_PROTOCOL *this,
+                                                          const EFI_DEVICE_PATH_PROTOCOL *device_path,
+                                                          VOID *file_buffer, UINTN file_size, BOOLEAN boot_policy) {
+        EFI_STATUS status;
+
+        /* Chain original security policy */
+        status = uefi_call_wrapper(es2fa, 5, this, device_path, file_buffer, file_size, boot_policy);
+
+        /* if OK, don't bother with MOK check */
+        if (status == EFI_SUCCESS)
+                return status;
+
+        if (shim_validate(file_buffer, file_size))
+                return EFI_SUCCESS;
+
+        return status;
+}
+
+/*
+ * Perform both shim/MOK and platform Secure Boot authentication. This function loads
+ * the file and performs shim/MOK authentication first simply to avoid double loads
+ * of Linux kernels, which are much more likely to be shim/MOK-signed than platform-signed,
+ * since kernels are big and can take several seconds to load on some computers and
+ * filesystems. This also has the effect of returning whatever the platform code is for
+ * authentication failure, be it EFI_ACCESS_DENIED, EFI_SECURITY_VIOLATION, or something
+ * else. (This seems to vary between implementations.)
+ */
+static EFIAPI EFI_STATUS security_policy_authentication (const EFI_SECURITY_PROTOCOL *this, UINT32 authentication_status,
+                                                         const EFI_DEVICE_PATH_PROTOCOL *device_path_const) {
+        EFI_STATUS status;
+        _cleanup_freepool_ EFI_DEVICE_PATH *dev_path = NULL;
+        _cleanup_freepool_ CHAR16 *dev_path_str = NULL;
+        EFI_HANDLE h;
+        EFI_FILE *root;
+        _cleanup_freepool_ CHAR8 *file_buffer = NULL;
+        UINTN file_size;
+
+        if (!device_path_const)
+                return EFI_INVALID_PARAMETER;
+
+        dev_path = DuplicateDevicePath((EFI_DEVICE_PATH*) device_path_const);
+
+        status = uefi_call_wrapper(BS->LocateDevicePath, 3, SIMPLE_FS_GUID, &dev_path, &h);
+        if (status != EFI_SUCCESS)
+                return status;
+
+        /* No need to check return value, this already happened in efi_main() */
+        root = LibOpenRoot(h);
+        dev_path_str = DevicePathToStr(dev_path);
+
+        status = file_read(root, dev_path_str, 0, 0, &file_buffer, &file_size);
+        if (EFI_ERROR(status))
+                return status;
+        uefi_call_wrapper(root->Close, 1, root);
+
+        if (shim_validate(file_buffer, file_size))
+                return EFI_SUCCESS;
+
+        /* Try using the platform's native policy.... */
+        return uefi_call_wrapper(esfas, 3, this, authentication_status, device_path_const);
+}
+
+EFI_STATUS security_policy_install(void) {
+        EFI_SECURITY_PROTOCOL *security_protocol;
+        EFI_SECURITY2_PROTOCOL *security2_protocol = NULL;
+        EFI_STATUS status;
+
+        /* Already Installed */
+        if (esfas)
+                return EFI_ALREADY_STARTED;
+
+        /*
+         * Don't bother with status here. The call is allowed
+         * to fail, since SECURITY2 was introduced in PI 1.2.1.
+         * Use security2_protocol == NULL as indicator.
+         */
+        uefi_call_wrapper(BS->LocateProtocol, 3, SECURITY_PROTOCOL2_GUID, NULL, (VOID**) &security2_protocol);
+
+        status = uefi_call_wrapper(BS->LocateProtocol, 3, SECURITY_PROTOCOL_GUID, NULL, (VOID**) &security_protocol);
+         /* This one is mandatory, so there's a serious problem */
+        if (status != EFI_SUCCESS)
+                return status;
+
+        esfas = security_protocol->FileAuthenticationState;
+        security_protocol->FileAuthenticationState = security_policy_authentication;
+
+        if (security2_protocol) {
+                es2fa = security2_protocol->FileAuthentication;
+                security2_protocol->FileAuthentication = security2_policy_authentication;
         }
 
-        struct ShimLock *shim_lock;
-        err = BS->LocateProtocol(MAKE_GUID_PTR(SHIM_LOCK), NULL, (void **) &shim_lock);
-        if (err != EFI_SUCCESS)
-                return false;
-
-        return shim_lock->shim_verify(file_buffer, file_size) == EFI_SUCCESS;
-}
-
-EFI_STATUS shim_load_image(EFI_HANDLE parent, const EFI_DEVICE_PATH *device_path, EFI_HANDLE *ret_image) {
-        assert(device_path);
-        assert(ret_image);
-
-        bool have_shim = shim_loaded();
-
-        if (have_shim)
-                install_security_override(shim_validate, NULL);
-
-        EFI_STATUS ret = BS->LoadImage(
-                        /*BootPolicy=*/false, parent, (EFI_DEVICE_PATH *) device_path, NULL, 0, ret_image);
-
-        if (have_shim)
-                uninstall_security_override();
-
-        return ret;
-}
-
-void shim_retain_protocol(void) {
-        uint8_t value = 1;
-
-        /* Ask Shim to avoid uninstalling its security protocol, so that we can use it from sd-stub to
-         * validate PE addons. By default, Shim uninstalls its protocol when calling StartImage().
-         * Requires Shim 15.8. */
-        (void) efivar_set_raw(MAKE_GUID_PTR(SHIM_LOCK), u"ShimRetainProtocol", &value, sizeof(value), 0);
+        return EFI_SUCCESS;
 }

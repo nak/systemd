@@ -21,12 +21,11 @@
 #include "strxcpyx.h"
 #include "udev-builtin.h"
 #include "udev-event.h"
-#include "udevadm-util.h"
 #include "udevadm.h"
 
-static sd_device_action_t arg_action = SD_DEVICE_ADD;
+static const char *arg_action = "add";
 static ResolveNameTiming arg_resolve_name_timing = RESOLVE_NAME_EARLY;
-static const char *arg_syspath = NULL;
+static char arg_syspath[UDEV_PATH_SIZE] = {};
 
 static int help(void) {
 
@@ -50,17 +49,25 @@ static int parse_argv(int argc, char *argv[]) {
                 {}
         };
 
-        int r, c;
+        int c;
 
         while ((c = getopt_long(argc, argv, "a:N:Vh", options, NULL)) >= 0)
                 switch (c) {
-                case 'a':
-                        r = parse_device_action(optarg, &arg_action);
-                        if (r < 0)
-                                return log_error_errno(r, "Invalid action '%s'", optarg);
-                        if (r == 0)
+                case 'a': {
+                        sd_device_action_t a;
+
+                        if (streq(optarg, "help")) {
+                                dump_device_action_table();
                                 return 0;
+                        }
+
+                        a = device_action_from_string(optarg);
+                        if (a < 0)
+                                return log_error_errno(a, "Invalid action '%s'", optarg);
+
+                        arg_action = device_action_to_string(a);
                         break;
+                }
                 case 'N':
                         arg_resolve_name_timing = resolve_name_timing_from_string(optarg);
                         if (arg_resolve_name_timing < 0)
@@ -74,12 +81,18 @@ static int parse_argv(int argc, char *argv[]) {
                 case '?':
                         return -EINVAL;
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option");
                 }
 
-        arg_syspath = argv[optind];
-        if (!arg_syspath)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "syspath parameter missing.");
+        if (!argv[optind])
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                       "syspath parameter missing.");
+
+        /* add /sys if needed */
+        if (!path_startswith(argv[optind], "/sys"))
+                strscpyl(arg_syspath, sizeof(arg_syspath), "/sys", argv[optind], NULL);
+        else
+                strscpy(arg_syspath, sizeof(arg_syspath), argv[optind]);
 
         return 1;
 }
@@ -88,7 +101,7 @@ int test_main(int argc, char *argv[], void *userdata) {
         _cleanup_(udev_rules_freep) UdevRules *rules = NULL;
         _cleanup_(udev_event_freep) UdevEvent *event = NULL;
         _cleanup_(sd_device_unrefp) sd_device *dev = NULL;
-        const char *cmd;
+        const char *cmd, *key, *value;
         sigset_t mask, sigmask_orig;
         void *val;
         int r;
@@ -114,7 +127,7 @@ int test_main(int argc, char *argv[], void *userdata) {
                 goto out;
         }
 
-        r = find_device_with_action(arg_syspath, arg_action, &dev);
+        r = device_new_from_synthetic_event(&dev, arg_syspath, arg_action);
         if (r < 0) {
                 log_error_errno(r, "Failed to open device '%s': %m", arg_syspath);
                 goto out;
@@ -135,11 +148,8 @@ int test_main(int argc, char *argv[], void *userdata) {
 
         ORDERED_HASHMAP_FOREACH_KEY(val, cmd, event->run_list) {
                 char program[UDEV_PATH_SIZE];
-                bool truncated;
 
-                (void) udev_event_apply_format(event, cmd, program, sizeof(program), false, &truncated);
-                if (truncated)
-                        log_warning("The command '%s' is truncated while substituting into '%s'.", program, cmd);
+                (void) udev_event_apply_format(event, cmd, program, sizeof(program), false);
                 printf("run: '%s'\n", program);
         }
 

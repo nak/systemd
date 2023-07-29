@@ -20,9 +20,7 @@ xsltproc_flags = [
         '--stringparam', 'man.copyright.section.enabled', '0',
         '--stringparam', 'systemd.version', '@0@'.format(meson.project_version()),
         '--path',
-        '@0@:@1@:@2@'.format(meson.current_build_dir(),
-                             meson.current_source_dir(),
-                             libshared_build_dir)]
+        '@0@:@1@'.format(meson.current_build_dir(), meson.current_source_dir())]
 
 custom_man_xsl = files('custom-man.xsl')
 custom_html_xsl = files('custom-html.xsl')
@@ -32,15 +30,14 @@ custom_entities_ent = custom_target(
         'custom-entities.ent',
         input : 'custom-entities.ent.in',
         output : 'custom-entities.ent',
-        command : [jinja2_cmdline, '@INPUT@', '@OUTPUT@'])
-
-man_page_depends += custom_entities_ent
+        command : [meson_render_jinja2, config_h, '@INPUT@'],
+        capture : true)
 
 man_pages = []
 html_pages = []
 source_xml_files = []
 dbus_docs = []
-foreach tuple : manpages
+foreach tuple : xsltproc.found() ? manpages : []
         stem = tuple[0]
         section = tuple[1]
         aliases = tuple[2]
@@ -57,50 +54,48 @@ foreach tuple : manpages
                 htmlaliases += alias + '.html'
         endforeach
 
-        mandirn = get_option('mandir') / ('man' + section)
+        mandirn = join_paths(get_option('mandir'), 'man' + section)
 
         if condition == '' or conf.get(condition) == 1
+                p1 = custom_target(
+                        man,
+                        input : xml,
+                        output : [man] + manaliases,
+                        command : xslt_cmd + [custom_man_xsl, '@INPUT@'],
+                        depends : custom_entities_ent,
+                        install : want_man,
+                        install_dir : mandirn)
+                man_pages += p1
+
+                p2 = []
+                foreach htmlalias : htmlaliases
+                        link = custom_target(
+                                htmlalias,
+                                output : htmlalias,
+                                command : [ln, '-fs', html, '@OUTPUT@'])
+                        if want_html
+                                dst = join_paths(docdir, 'html', htmlalias)
+                                cmd = 'ln -fs @0@ $DESTDIR@1@'.format(html, dst)
+                                meson.add_install_script('sh', '-c', cmd)
+                                p2 += link
+                        endif
+                        html_pages += link
+                endforeach
+
+                p3 = custom_target(
+                        html,
+                        input : xml,
+                        output : html,
+                        command : xslt_cmd + [custom_html_xsl, '@INPUT@'],
+                        depends : [custom_entities_ent, p2],
+                        install : want_html,
+                        install_dir : join_paths(docdir, 'html'))
+                html_pages += p3
+
                 file = files(tuple[0] + '.xml')
                 source_xml_files += file
                 if tuple[0].startswith('org.freedesktop.')
                         dbus_docs += file
-                endif
-
-                if xsltproc.found()
-                        p1 = custom_target(
-                                man,
-                                input : xml,
-                                output : [man] + manaliases,
-                                command : xslt_cmd + [custom_man_xsl, '@INPUT@'],
-                                depends : man_page_depends,
-                                install : want_man,
-                                install_dir : mandirn)
-                        man_pages += p1
-
-                        p2 = []
-                        foreach htmlalias : htmlaliases
-                                link = custom_target(
-                                        htmlalias,
-                                        output : htmlalias,
-                                        command : [ln, '-fs', html, '@OUTPUT@'])
-                                if want_html
-                                        dst = docdir / 'html' / htmlalias
-                                        cmd = 'ln -fs @0@ $DESTDIR@1@'.format(html, dst)
-                                        meson.add_install_script('sh', '-c', cmd)
-                                        p2 += link
-                                endif
-                                html_pages += link
-                        endforeach
-
-                        p3 = custom_target(
-                                html,
-                                input : xml,
-                                output : html,
-                                command : xslt_cmd + [custom_html_xsl, '@INPUT@'],
-                                depends : [man_page_depends, p2],
-                                install : want_html,
-                                install_dir : docdir / 'html')
-                        html_pages += p3
                 endif
         else
                 message('Skipping @0@.@1@ because @2@ is false'.format(stem, section, condition))
@@ -109,7 +104,7 @@ endforeach
 
 ############################################################
 
-have_lxml = run_command(xml_helper_py, check: false).returncode() == 0
+have_lxml = run_command(xml_helper_py).returncode() == 0
 if not have_lxml
         message('python-lxml not available, not making man page indices')
 endif
@@ -118,7 +113,7 @@ systemd_directives_xml = custom_target(
         'systemd.directives.xml',
         input : ['directives-template.xml', source_xml_files],
         output : 'systemd.directives.xml',
-        depends : man_page_depends,
+        depends : custom_entities_ent,
         command : [make_directive_index_py, '@OUTPUT@', '@INPUT@'])
 
 nonindex_xml_files = source_xml_files + [systemd_directives_xml]
@@ -137,7 +132,7 @@ foreach tuple : xsltproc.found() ? [['systemd.directives', '7', systemd_directiv
         html = stem + '.html'
         man = stem + '.' + section
 
-        mandirn = get_option('mandir') / ('man' + section)
+        mandirn = join_paths(get_option('mandir'), 'man' + section)
 
         p1 = custom_target(
                 man,
@@ -157,7 +152,7 @@ foreach tuple : xsltproc.found() ? [['systemd.directives', '7', systemd_directiv
                         output : htmlalias,
                         command : [ln, '-fs', html, '@OUTPUT@'])
                 if want_html
-                        dst = docdir / 'html' / htmlalias
+                        dst = join_paths(docdir, 'html', htmlalias)
                         cmd = 'ln -fs @0@ $DESTDIR@1@'.format(html, dst)
                         meson.add_install_script('sh', '-c', cmd)
                         p2 += link
@@ -170,9 +165,9 @@ foreach tuple : xsltproc.found() ? [['systemd.directives', '7', systemd_directiv
                 input : xml,
                 output : html,
                 command : xslt_cmd + [custom_html_xsl, '@INPUT@'],
-                depends : [man_page_depends, p2],
+                depends : [custom_entities_ent, p2],
                 install : want_html and have_lxml,
-                install_dir : docdir / 'html')
+                install_dir : join_paths(docdir, 'html'))
         html_pages += p3
 endforeach
 
@@ -218,27 +213,3 @@ configure_file(
         input : 'html.in',
         output : 'html',
         configuration : buildroot_substs)
-
-############################################################
-
-update_dbus_docs = custom_target(
-        'update-dbus-docs-impl',
-        output : 'update-dbus-docs',
-        command : [update_dbus_docs_py, '--build-dir', project_build_root, '@INPUT@'],
-        input : dbus_docs)
-
-if conf.get('BUILD_MODE_DEVELOPER') == 1
-        test('dbus-docs-fresh',
-             update_dbus_docs_py,
-             suite : 'dist',
-             args : ['--build-dir', project_build_root, '--test', dbus_docs],
-             depends : dbus_programs)
-endif
-
-update_man_rules = custom_target(
-        'update-man-rules-impl',
-        output : 'update-man-rules',
-        command : [update_man_rules_py,
-                   '@0@/man/*.xml'.format(project_source_root),
-                   '@0@/rules/meson.build'.format(meson.current_source_dir())],
-        depends : man_page_depends)

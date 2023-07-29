@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
-# shellcheck disable=SC2317
+
 set -eux
 set -o pipefail
 
-# shellcheck source=test/units/test-control.sh
-. "$(dirname "$0")"/test-control.sh
-
 systemd-analyze log-level debug
+systemd-analyze log-target console
 
 unit=testsuite-38-sleep.service
 
@@ -20,7 +17,7 @@ dbus_freeze() {
     local name object_path suffix
 
     suffix="${1##*.}"
-    name="${1%".$suffix"}"
+    name="${1%.$suffix}"
     object_path="/org/freedesktop/systemd1/unit/${name//-/_2d}_2e${suffix}"
 
     busctl call \
@@ -34,7 +31,7 @@ dbus_thaw() {
     local name object_path suffix
 
     suffix="${1##*.}"
-    name="${1%".$suffix"}"
+    name="${1%.$suffix}"
     object_path="/org/freedesktop/systemd1/unit/${name//-/_2d}_2e${suffix}"
 
     busctl call \
@@ -68,7 +65,7 @@ dbus_can_freeze() {
     local name object_path suffix
 
     suffix="${1##*.}"
-    name="${1%".$suffix"}"
+    name="${1%.$suffix}"
     object_path="/org/freedesktop/systemd1/unit/${name//-/_2d}_2e${suffix}"
 
     busctl get-property \
@@ -82,7 +79,7 @@ check_freezer_state() {
     local name object_path suffix
 
     suffix="${1##*.}"
-    name="${1%".$suffix"}"
+    name="${1%.$suffix}"
     object_path="/org/freedesktop/systemd1/unit/${name//-/_2d}_2e${suffix}"
 
     for _ in {0..10}; do
@@ -108,7 +105,7 @@ check_cgroup_state() {
     grep -q "frozen $2" /sys/fs/cgroup/system.slice/"$1"/cgroup.events
 }
 
-testcase_dbus_api() {
+test_dbus_api() {
     echo "Test that DBus API works:"
     echo -n "  - Freeze(): "
     dbus_freeze "${unit}"
@@ -142,7 +139,7 @@ testcase_dbus_api() {
     echo
 }
 
-testcase_jobs() {
+test_jobs() {
     local pid_before=
     local pid_after=
     echo "Test that it is possible to apply jobs on frozen units:"
@@ -167,7 +164,7 @@ testcase_jobs() {
     echo
 }
 
-testcase_systemctl() {
+test_systemctl() {
     echo "Test that systemctl freeze/thaw verbs:"
 
     systemctl start "$unit"
@@ -193,7 +190,7 @@ testcase_systemctl() {
     echo
 }
 
-testcase_systemctl_show() {
+test_systemctl_show() {
     echo "Test systemctl show integration:"
 
     systemctl start "$unit"
@@ -216,7 +213,7 @@ testcase_systemctl_show() {
     echo
 }
 
-testcase_recursive() {
+test_recursive() {
     local slice="bar.slice"
     local unit="baz.service"
 
@@ -246,7 +243,7 @@ testcase_recursive() {
     echo
 }
 
-testcase_preserve_state() {
+test_preserve_state() {
     local slice="bar.slice"
     local unit="baz.service"
 
@@ -293,9 +290,15 @@ testcase_preserve_state() {
     echo
 }
 
-if [[ -e /sys/fs/cgroup/system.slice/cgroup.freeze ]]; then
+test -e /sys/fs/cgroup/system.slice/cgroup.freeze && {
     start_test_service
-    run_testcases
-fi
+    test_dbus_api
+    test_systemctl
+    test_systemctl_show
+    test_jobs
+    test_recursive
+    test_preserve_state
+}
 
-touch /testok
+echo OK >/testok
+exit 0

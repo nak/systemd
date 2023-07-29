@@ -13,6 +13,7 @@
 #include "parse-util.h"
 #include "string-table.h"
 #include "string-util.h"
+#include "util.h"
 
 static const char* const fou_encap_type_table[_NETDEV_FOO_OVER_UDP_ENCAP_MAX] = {
         [NETDEV_FOO_OVER_UDP_ENCAP_DIRECT] = "FooOverUDP",
@@ -23,21 +24,30 @@ DEFINE_STRING_TABLE_LOOKUP(fou_encap_type, FooOverUDPEncapType);
 DEFINE_CONFIG_PARSE_ENUM(config_parse_fou_encap_type, fou_encap_type, FooOverUDPEncapType,
                          "Failed to parse Encapsulation=");
 
-static int netdev_fill_fou_tunnel_message(NetDev *netdev, sd_netlink_message *m) {
+static int netdev_fill_fou_tunnel_message(NetDev *netdev, sd_netlink_message **ret) {
+        _cleanup_(sd_netlink_message_unrefp) sd_netlink_message *m = NULL;
         FouTunnel *t;
         uint8_t encap_type;
         int r;
 
-        assert_se(t = FOU(netdev));
+        assert(netdev);
+
+        t = FOU(netdev);
+
+        assert(t);
+
+        r = sd_genl_message_new(netdev->manager->genl, SD_GENL_FOU, FOU_CMD_ADD, &m);
+        if (r < 0)
+                return log_netdev_error_errno(netdev, r, "Failed to allocate generic netlink message: %m");
 
         r = sd_netlink_message_append_u16(m, FOU_ATTR_PORT, htobe16(t->port));
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_PORT attribute: %m");
 
         if (IN_SET(t->peer_family, AF_INET, AF_INET6)) {
                 r = sd_netlink_message_append_u16(m, FOU_ATTR_PEER_PORT, htobe16(t->peer_port));
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_PEER_PORT attribute: %m");
         }
 
         switch (t->fou_encap_type) {
@@ -48,57 +58,40 @@ static int netdev_fill_fou_tunnel_message(NetDev *netdev, sd_netlink_message *m)
                 encap_type = FOU_ENCAP_GUE;
                 break;
         default:
-                assert_not_reached();
+                assert_not_reached("invalid encap type");
         }
 
         r = sd_netlink_message_append_u8(m, FOU_ATTR_TYPE, encap_type);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_TYPE attribute: %m");
 
         r = sd_netlink_message_append_u8(m, FOU_ATTR_AF, AF_INET);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_AF attribute: %m");
 
         r = sd_netlink_message_append_u8(m, FOU_ATTR_IPPROTO, t->fou_protocol);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_IPPROTO attribute: %m");
 
         if (t->local_family == AF_INET) {
                 r = sd_netlink_message_append_in_addr(m, FOU_ATTR_LOCAL_V4, &t->local.in);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_LOCAL_V4 attribute: %m");
         } else if (t->local_family == AF_INET6) {
                 r = sd_netlink_message_append_in6_addr(m, FOU_ATTR_LOCAL_V6, &t->local.in6);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_LOCAL_V6 attribute: %m");
         }
 
         if (t->peer_family == AF_INET) {
                 r = sd_netlink_message_append_in_addr(m, FOU_ATTR_PEER_V4, &t->peer.in);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_PEER_V4 attribute: %m");
         } else if (t->peer_family == AF_INET6){
                 r = sd_netlink_message_append_in6_addr(m, FOU_ATTR_PEER_V6, &t->peer.in6);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append FOU_ATTR_PEER_V6 attribute: %m");
         }
-
-        return 0;
-}
-
-static int netdev_create_fou_tunnel_message(NetDev *netdev, sd_netlink_message **ret) {
-        _cleanup_(sd_netlink_message_unrefp) sd_netlink_message *m = NULL;
-        int r;
-
-        assert(netdev);
-
-        r = sd_genl_message_new(netdev->manager->genl, FOU_GENL_NAME, FOU_CMD_ADD, &m);
-        if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Could not allocate netlink message: %m");
-
-        r = netdev_fill_fou_tunnel_message(netdev, m);
-        if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Could not create netlink message: %m");
 
         *ret = TAKE_PTR(m);
         return 0;
@@ -115,7 +108,7 @@ static int fou_tunnel_create_handler(sd_netlink *rtnl, sd_netlink_message *m, Ne
                 log_netdev_info(netdev, "netdev exists, using existing without changing its parameters");
         else if (r < 0) {
                 log_netdev_warning_errno(netdev, r, "netdev could not be created: %m");
-                netdev_enter_failed(netdev);
+                netdev_drop(netdev);
 
                 return 1;
         }
@@ -131,7 +124,7 @@ static int netdev_fou_tunnel_create(NetDev *netdev) {
         assert(netdev);
         assert(FOU(netdev));
 
-        r = netdev_create_fou_tunnel_message(netdev, &m);
+        r = netdev_fill_fou_tunnel_message(netdev, &m);
         if (r < 0)
                 return r;
 
@@ -156,7 +149,7 @@ int config_parse_ip_protocol(
                 void *data,
                 void *userdata) {
 
-        uint8_t *ret = ASSERT_PTR(data);
+        uint8_t *ret = data;
         unsigned protocol;
         /* linux/fou.h defines the netlink field as one byte, so we need to reject protocols numbers that
          * don't fit in one byte. */
@@ -166,6 +159,7 @@ int config_parse_ip_protocol(
         assert(section);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = parse_ip_protocol(rvalue);
         if (r >= 0)
@@ -202,13 +196,14 @@ int config_parse_fou_tunnel_address(
                 void *data,
                 void *userdata) {
 
-        union in_addr_union *addr = ASSERT_PTR(data);
+        union in_addr_union *addr = data;
         FouTunnel *t = userdata;
         int r, *f;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         if (streq(lvalue, "Local"))
                 f = &t->local_family;
@@ -248,7 +243,7 @@ static int netdev_fou_tunnel_verify(NetDev *netdev, const char *filename) {
                                                       filename);
                 break;
         default:
-                assert_not_reached();
+                assert_not_reached("Invalid fou encap type");
         }
 
         if (t->peer_family == AF_UNSPEC && t->peer_port > 0)

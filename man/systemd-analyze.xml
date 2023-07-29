@@ -43,7 +43,6 @@
       <command>systemd-analyze</command>
       <arg choice="opt" rep="repeat">OPTIONS</arg>
       <arg choice="plain">dump</arg>
-      <arg choice="opt" rep="repeat"><replaceable>PATTERN</replaceable></arg>
     </cmdsynopsis>
 
     <cmdsynopsis>
@@ -60,11 +59,6 @@
       <arg choice="opt">>file.dot</arg>
     </cmdsynopsis>
 
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">unit-files</arg>
-    </cmdsynopsis>
     <cmdsynopsis>
       <command>systemd-analyze</command>
       <arg choice="opt" rep="repeat">OPTIONS</arg>
@@ -97,12 +91,6 @@
     <cmdsynopsis>
       <command>systemd-analyze</command>
       <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">filesystems</arg>
-      <arg choice="opt"><replaceable>SET</replaceable>…</arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
       <arg choice="plain">calendar</arg>
       <arg choice="plain" rep="repeat"><replaceable>SPEC</replaceable></arg>
     </cmdsynopsis>
@@ -127,14 +115,6 @@
     <cmdsynopsis>
       <command>systemd-analyze</command>
       <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">compare-versions</arg>
-      <arg choice="plain"><replaceable>VERSION1</replaceable></arg>
-      <arg choice="opt"><replaceable>OP</replaceable></arg>
-      <arg choice="plain"><replaceable>VERSION2</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
       <arg choice="plain">verify</arg>
       <arg choice="opt" rep="repeat"><replaceable>FILE</replaceable></arg>
     </cmdsynopsis>
@@ -143,36 +123,6 @@
       <arg choice="opt" rep="repeat">OPTIONS</arg>
       <arg choice="plain">security</arg>
       <arg choice="plain" rep="repeat"><replaceable>UNIT</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">inspect-elf</arg>
-      <arg choice="plain" rep="repeat"><replaceable>FILE</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">malloc</arg>
-      <arg choice="opt" rep="repeat"><replaceable>D-BUS SERVICE</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">fdstore</arg>
-      <arg choice="opt" rep="repeat"><replaceable>UNIT</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">image-policy</arg>
-      <arg choice="plain" rep="repeat"><replaceable>POLICY</replaceable></arg>
-    </cmdsynopsis>
-    <cmdsynopsis>
-      <command>systemd-analyze</command>
-      <arg choice="opt" rep="repeat">OPTIONS</arg>
-      <arg choice="plain">pcrs</arg>
-      <arg choice="opt" rep="repeat"><replaceable>PCR</replaceable></arg>
     </cmdsynopsis>
   </refsynopsisdiv>
 
@@ -192,10 +142,10 @@
       <title><command>systemd-analyze time</command></title>
 
       <para>This command prints the time spent in the kernel before userspace has been reached, the time
-      spent in the initrd before normal system userspace has been reached, and the time normal system
-      userspace took to initialize. Note that these measurements simply measure the time passed up to the
-      point where all system services have been spawned, but not necessarily until they fully finished
-      initialization or the disk is idle.</para>
+      spent in the initial RAM disk (initrd) before normal system userspace has been reached, and the time
+      normal system userspace took to initialize. Note that these measurements simply measure the time passed
+      up to the point where all system services have been spawned, but not necessarily until they fully
+      finished initialization or the disk is idle.</para>
 
       <example>
         <title><command>Show how long the boot took</command></title>
@@ -251,7 +201,7 @@ multi-user.target reached after 47.820s in userspace
       <replaceable>UNIT</replaceable>s or for the default target otherwise). The time after the unit is
       active or started is printed after the "@" character. The time the unit takes to start is printed after
       the "+" character. Note that the output might be misleading as the initialization of services might
-      depend on socket activation and because of the parallel execution of units. Also, similarly to the
+      depend on socket activation and because of the parallel execution of units. Also, similar to the
       <command>blame</command> command, this only takes into account the time units spent in
       <literal>activating</literal> state, and hence does not cover units that never went through an
       <literal>activating</literal> state (such as device units that transition directly from
@@ -279,12 +229,10 @@ multi-user.target @47.820s
     </refsect2>
 
     <refsect2>
-      <title><command>systemd-analyze dump [<replaceable>pattern</replaceable>…]</command></title>
+      <title><command>systemd-analyze dump</command></title>
 
-      <para>Without any parameter, this command outputs a (usually very long) human-readable serialization of
-      the complete service manager state. Optional glob pattern may be specified, causing the output to be
-      limited to units whose names match one of the patterns. The output format is subject to change without
-      notice and should not be parsed by applications. This command is rate limited for unprivileged users.</para>
+      <para>This command outputs a (usually very long) human-readable serialization of the complete server
+      state. Its format is subject to change without notice and should not be parsed by applications.</para>
 
       <example>
         <title>Show the internal state of user manager</title>
@@ -307,23 +255,10 @@ Timestamp units-load-finish: Thu 2019-03-14 23:28:07 CET
     </refsect2>
 
     <refsect2>
-      <title><command>systemd-analyze malloc [<replaceable>D-Bus service</replaceable>…]</command></title>
-
-      <para>This command can be used to request the output of the internal memory state (as returned by
-      <citerefentry project='man-pages'><refentrytitle>malloc_info</refentrytitle><manvolnum>3</manvolnum></citerefentry>)
-      of a D-Bus service. If no service is specified, the query will be sent to
-      <filename>org.freedesktop.systemd1</filename> (the system or user service manager). The output format
-      is not guaranteed to be stable and should not be parsed by applications.</para>
-
-      <para>The service must implement the <filename>org.freedesktop.MemoryAllocation1</filename> interface.
-      In the systemd suite, it is currently only implemented by the manager.</para>
-    </refsect2>
-
-    <refsect2>
       <title><command>systemd-analyze plot</command></title>
 
-      <para>This command prints either an SVG graphic, detailing which system services have been started at what
-      time, highlighting the time they spent on initialization, or the raw time data in JSON or table format.</para>
+      <para>This command prints an SVG graphic detailing which system services have been started at what
+      time, highlighting the time they spent on initialization.</para>
 
       <example>
         <title><command>Plot a bootchart</command></title>
@@ -332,13 +267,6 @@ Timestamp units-load-finish: Thu 2019-03-14 23:28:07 CET
 $ eog bootup.svg&amp;
 </programlisting>
       </example>
-
-      <para>Note that this plot is based on the most recent per-unit timing data of loaded units. This means
-      that if a unit gets started, then stopped and then started again the information shown will cover the
-      most recent start cycle, not the first one. Thus it's recommended to consult this information only
-      shortly after boot, so that this distinction doesn't matter. Moreover, units that are not referenced by
-      any other unit through a dependency might be unloaded by the service manager once they terminate (and
-      did not fail). Such units will not show up in the plot.</para>
     </refsect2>
 
     <refsect2>
@@ -483,14 +411,6 @@ Conditions succeeded.</programlisting>
     </refsect2>
 
     <refsect2>
-      <title><command>systemd-analyze filesystems <optional><replaceable>SET</replaceable>...</optional></command></title>
-
-      <para>This command will list filesystems in the specified filesystem set
-      <replaceable>SET</replaceable>, or all known sets if no sets are specified. Argument
-      <replaceable>SET</replaceable> must include the <literal>@</literal> prefix.</para>
-    </refsect2>
-
-    <refsect2>
       <title><command>systemd-analyze calendar <replaceable>EXPRESSION</replaceable>...</command></title>
 
       <para>This command will parse and normalize repetitive calendar time events, and will calculate when
@@ -614,57 +534,10 @@ NAutoVTs=8
     </refsect2>
 
     <refsect2>
-      <title><command>systemd-analyze compare-versions
-      <replaceable>VERSION1</replaceable>
-      <optional><replaceable>OP</replaceable></optional>
-      <replaceable>VERSION2</replaceable></command></title>
-
-      <para>This command has two distinct modes of operation, depending on whether the operator
-      <replaceable>OP</replaceable> is specified.</para>
-
-      <para>In the first mode — when <replaceable>OP</replaceable> is not specified — it will compare the two
-      version strings and print either <literal><replaceable>VERSION1</replaceable> &lt;
-      <replaceable>VERSION2</replaceable></literal>, or <literal><replaceable>VERSION1</replaceable> ==
-      <replaceable>VERSION2</replaceable></literal>, or <literal><replaceable>VERSION1</replaceable> &gt;
-      <replaceable>VERSION2</replaceable></literal> as appropriate.</para>
-
-      <para>The exit status is <constant>0</constant> if the versions are equal, <constant>11</constant> if
-      the version of the right is smaller, and <constant>12</constant> if the version of the left is
-      smaller. (This matches the convention used by <command>rpmdev-vercmp</command>.)</para>
-
-      <para>In the second mode — when <replaceable>OP</replaceable> is specified — it will compare the two
-      version strings using the operation <replaceable>OP</replaceable> and return <constant>0</constant>
-      (success) if they condition is satisfied, and <constant>1</constant> (failure)
-      otherwise. <constant>OP</constant> may be <command>lt</command>, <command>le</command>,
-      <command>eq</command>, <command>ne</command>, <command>ge</command>, <command>gt</command>. In this
-      mode, no output is printed.
-      (This matches the convention used by
-      <citerefentry project='die-net'><refentrytitle>dpkg</refentrytitle><manvolnum>1</manvolnum></citerefentry>
-      <option>--compare-versions</option>.)</para>
-
-      <example>
-        <title>Compare versions of a package</title>
-
-        <programlisting>
-$ systemd-analyze compare-versions systemd-250~rc1.fc36.aarch64 systemd-251.fc36.aarch64
-systemd-250~rc1.fc36.aarch64 &lt; systemd-251.fc36.aarch64
-$ echo $?
-12
-
-$ systemd-analyze compare-versions 1 lt 2; echo $?
-0
-$ systemd-analyze compare-versions 1 ge 2; echo $?
-1
-        </programlisting>
-      </example>
-    </refsect2>
-
-    <refsect2>
       <title><command>systemd-analyze verify <replaceable>FILE</replaceable>...</command></title>
 
       <para>This command will load unit files and print warnings if any errors are detected. Files specified
-      on the command line will be loaded, but also any other units referenced by them. A unit's name on disk
-      can be overridden by specifying an alias after a colon; see below for an example. The full unit search
+      on the command line will be loaded, but also any other units referenced by them. The full unit search
       path is formed by combining the directories for all command line arguments, and the usual unit load
       paths. The variable <varname>$SYSTEMD_UNIT_PATH</varname> is supported, and may be used to replace or
       augment the compiled in set of unit load paths; see
@@ -726,27 +599,6 @@ Service a.service not loaded, a.socket cannot be started.
 Service b@0.service not loaded, b.socket cannot be started.
         </programlisting>
       </example>
-
-      <example>
-        <title>Aliasing a unit</title>
-
-        <programlisting>$ cat /tmp/source
-[Unit]
-Description=Hostname printer
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/echo %H
-MysteryKey=true
-
-$ systemd-analyze verify /tmp/source
-Failed to prepare filename /tmp/source: Invalid argument
-
-$ systemd-analyze verify /tmp/source:alias.service
-alias.service:7: Unknown key name 'MysteryKey' in section 'Service', ignoring.
-        </programlisting>
-      </example>
-
     </refsect2>
 
     <refsect2>
@@ -791,139 +643,6 @@ alias.service:7: Unknown key name 'MysteryKey' in section 'Service', ignoring.
 ...
 → Overall exposure level for systemd-logind.service: 4.1 OK 🙂
 </programlisting>
-      </example>
-    </refsect2>
-
-    <refsect2>
-      <title><command>systemd-analyze inspect-elf <replaceable>FILE</replaceable>...</command></title>
-
-      <para>This command will load the specified files, and if they are ELF objects (executables,
-      libraries, core files, etc.) it will parse the embedded packaging metadata, if any, and print
-      it in a table or json format. See the <ulink url="https://systemd.io/COREDUMP_PACKAGE_METADATA/">
-      Packaging Metadata</ulink> documentation for more information.</para>
-
-      <example>
-        <title>Print information about a core file as JSON</title>
-
-        <programlisting>$ systemd-analyze inspect-elf --json=pretty \
-        core.fsverity.1000.f77dac5dc161402aa44e15b7dd9dcf97.58561.1637106137000000
-{
-        "elfType" : "coredump",
-        "elfArchitecture" : "AMD x86-64",
-        "/home/bluca/git/fsverity-utils/fsverity" : {
-                "type" : "deb",
-                "name" : "fsverity-utils",
-                "version" : "1.3-1",
-                "buildId" : "7c895ecd2a271f93e96268f479fdc3c64a2ec4ee"
-        },
-        "/home/bluca/git/fsverity-utils/libfsverity.so.0" : {
-                "type" : "deb",
-                "name" : "fsverity-utils",
-                "version" : "1.3-1",
-                "buildId" : "b5e428254abf14237b0ae70ed85fffbb98a78f88"
-        }
-}
-        </programlisting>
-      </example>
-    </refsect2>
-
-    <refsect2>
-      <title><command>systemd-analyze fdstore <optional><replaceable>UNIT</replaceable>...</optional></command></title>
-
-      <para>Lists the current contents of the specified service unit's file descriptor store. This shows
-      names, inode types, device numbers, inode numbers, paths and open modes of the open file
-      descriptors. The specified units must have <varname>FileDescriptorStoreMax=</varname> enabled, see
-      <citerefentry><refentrytitle>systemd.service</refentrytitle><manvolnum>5</manvolnum></citerefentry> for
-      details.</para>
-
-      <example>
-        <title>Table output</title>
-        <programlisting>$ systemd-analyze fdstore systemd-journald.service
-FDNAME TYPE DEVNO   INODE RDEVNO PATH             FLAGS
-stored sock 0:8   4218620 -      socket:[4218620] ro
-stored sock 0:8   4213198 -      socket:[4213198] ro
-stored sock 0:8   4213190 -      socket:[4213190] ro
-…</programlisting>
-      </example>
-
-      <para>Note: the "DEVNO" column refers to the major/minor numbers of the device node backing the file
-      system the file descriptor's inode is on. The "RDEVNO" column refers to the major/minor numbers of the
-      device node itself if the file descriptor refers to one. Compare with corresponding
-      <varname>.st_dev</varname> and <varname>.st_rdev</varname> fields in <type>struct stat</type> (see
-      <citerefentry
-      project='man-pages'><refentrytitle>stat</refentrytitle><manvolnum>2</manvolnum></citerefentry> for
-      details). The listed inode numbers in the "INODE" column are on the file system indicated by
-      "DEVNO".</para>
-    </refsect2>
-
-    <refsect2>
-      <title><command>systemd-analyze image-policy <optional><replaceable>POLICY</replaceable>…</optional></command></title>
-
-      <para>This command analyzes the specified image policy string, as per
-      <citerefentry><refentrytitle>systemd.image-policy</refentrytitle><manvolnum>7</manvolnum></citerefentry>. The
-      policy is normalized and simplified. For each currently defined partition identifier (as per the <ulink
-      url="https://uapi-group.org/specifications/specs/discoverable_partitions_specification">Discoverable
-      Partitions Specification</ulink> the effect of the image policy string is shown in tabular form.</para>
-
-      <example>
-        <title>Example Output</title>
-
-        <programlisting>$ systemd-analyze image-policy swap=encrypted:usr=read-only-on+verity:root=encrypted
-Analyzing policy: root=encrypted:usr=verity+read-only-on:swap=encrypted
-       Long form: root=encrypted:usr=verity+read-only-on:swap=encrypted:=unused+absent
-
-PARTITION       MODE        READ-ONLY GROWFS
-root            encrypted   -         -
-usr             verity      yes       -
-home            ignore      -         -
-srv             ignore      -         -
-esp             ignore      -         -
-xbootldr        ignore      -         -
-swap            encrypted   -         -
-root-verity     ignore      -         -
-usr-verity      unprotected yes       -
-root-verity-sig ignore      -         -
-usr-verity-sig  ignore      -         -
-tmp             ignore      -         -
-var             ignore      -         -
-default         ignore      -         -</programlisting>
-      </example>
-    </refsect2>
-
-    <refsect2>
-      <title><command>systemd-analyze pcrs <optional><replaceable>PCR</replaceable>…</optional></command></title>
-
-      <para>This command shows the known TPM2 PCRs along with their identifying names and current values.</para>
-
-      <example>
-        <title>Example Output</title>
-
-        <programlisting>$ systemd-analyze pcrs
-NR NAME                SHA256
- 0 platform-code       bcd2eb527108bbb1f5528409bcbe310aa9b74f687854cc5857605993f3d9eb11
- 1 platform-config     b60622856eb7ce52637b80f30a520e6e87c347daa679f3335f4f1a600681bb01
- 2 external-code       1471262403e9a62f9c392941300b4807fbdb6f0bfdd50abfab752732087017dd
- 3 external-config     3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969
- 4 boot-loader-code    939f7fa1458e1f7ce968874d908e524fc0debf890383d355e4ce347b7b78a95c
- 5 boot-loader-config  864c61c5ea5ecbdb6951e6cb6d9c1f4b4eac79772f7fe13b8bece569d83d3768
- 6 -                   3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969
- 7 secure-boot-policy  9c905bd9b9891bfb889b90a54c4b537b889cfa817c4389cc25754823a9443255
- 8 -                   0000000000000000000000000000000000000000000000000000000000000000
- 9 kernel-initrd       9caa29b128113ef42aa53d421f03437be57211e5ebafc0fa8b5d4514ee37ff0c
-10 ima                 5ea9e3dab53eb6b483b6ec9e3b2c712bea66bca1b155637841216e0094387400
-11 kernel-boot         0000000000000000000000000000000000000000000000000000000000000000
-12 kernel-config       627ffa4b405e911902fe1f1a8b0164693b31acab04f805f15bccfe2209c7eace
-13 sysexts             0000000000000000000000000000000000000000000000000000000000000000
-14 shim-policy         0000000000000000000000000000000000000000000000000000000000000000
-15 system-identity     0000000000000000000000000000000000000000000000000000000000000000
-16 debug               0000000000000000000000000000000000000000000000000000000000000000
-17 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-18 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-19 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-20 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-21 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-22 -                   ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-23 application-support 0000000000000000000000000000000000000000000000000000000000000000</programlisting>
       </example>
     </refsect2>
   </refsect1>
@@ -1026,352 +745,10 @@ NR NAME                SHA256
       </varlistentry>
 
       <varlistentry>
-        <term><option>--recursive-errors=<replaceable>MODE</replaceable></option></term>
-
-        <listitem><para>Control verification of units and their dependencies and whether
-        <command>systemd-analyze verify</command> exits with a non-zero process exit status or not. With
-        <command>yes</command>, return a non-zero process exit status when warnings arise during verification
-        of either the specified unit or any of its associated dependencies. With <command>no</command>,
-        return a non-zero process exit status when warnings arise during verification of only the specified
-        unit. With <command>one</command>, return a non-zero process exit status when warnings arise during
-        verification of either the specified unit or its immediate dependencies. If this option is not
-        specified, zero is returned as the exit status regardless whether warnings arise during verification
-        or not.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
         <term><option>--root=<replaceable>PATH</replaceable></option></term>
 
-        <listitem><para>With <command>cat-files</command> and <command>verify</command>,
-        operate on files underneath the specified root path <replaceable>PATH</replaceable>.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--image=<replaceable>PATH</replaceable></option></term>
-
-        <listitem><para>With <command>cat-files</command> and <command>verify</command>,
-        operate on files inside the specified image path <replaceable>PATH</replaceable>.</para></listitem>
-      </varlistentry>
-
-      <xi:include href="standard-options.xml" xpointer="image-policy-open" />
-
-      <varlistentry>
-        <term><option>--offline=<replaceable>BOOL</replaceable></option></term>
-
-        <listitem><para>With <command>security</command>, perform an offline security review
-        of the specified unit files, i.e. does not have to rely on PID 1 to acquire security
-        information for the files like the <command>security</command> verb when used by itself does.
-        This means that <option>--offline=</option> can be used with <option>--root=</option> and
-        <option>--image=</option> as well. If a unit's overall exposure level is above that set by
-        <option>--threshold=</option> (default value is 100), <option>--offline=</option> will return
-        an error.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--profile=<replaceable>PATH</replaceable></option></term>
-
-        <listitem><para>With <command>security</command> <option>--offline=</option>, takes into
-        consideration the specified portable profile when assessing unit settings.
-        The profile can be passed by name, in which case the well-known system locations will
-        be searched, or it can be the full path to a specific drop-in file.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--threshold=<replaceable>NUMBER</replaceable></option></term>
-
-        <listitem><para>With <command>security</command>, allow the user to set a custom value
-        to compare the overall exposure level with, for the specified unit files. If a unit's
-        overall exposure level, is greater than that set by the user, <command>security</command>
-        will return an error. <option>--threshold=</option> can be used with <option>--offline=</option>
-        as well and its default value is 100.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--security-policy=<replaceable>PATH</replaceable></option></term>
-
-        <listitem><para>With <command>security</command>, allow the user to define a custom set of
-        requirements formatted as a JSON file against which to compare the specified unit file(s)
-        and determine their overall exposure level to security threats.</para>
-
-        <table>
-          <title>Accepted Assessment Test Identifiers</title>
-
-          <tgroup cols='1'>
-            <colspec colname='directive' />
-            <thead>
-              <row>
-                <entry>Assessment Test Identifier</entry>
-              </row>
-            </thead>
-            <tbody>
-              <row>
-                <entry>UserOrDynamicUser</entry>
-              </row>
-              <row>
-                <entry>SupplementaryGroups</entry>
-              </row>
-              <row>
-                <entry>PrivateMounts</entry>
-              </row>
-              <row>
-                <entry>PrivateDevices</entry>
-              </row>
-              <row>
-                <entry>PrivateTmp</entry>
-              </row>
-              <row>
-                <entry>PrivateNetwork</entry>
-              </row>
-              <row>
-                <entry>PrivateUsers</entry>
-              </row>
-              <row>
-                <entry>ProtectControlGroups</entry>
-              </row>
-              <row>
-                <entry>ProtectKernelModules</entry>
-              </row>
-              <row>
-                <entry>ProtectKernelTunables</entry>
-              </row>
-              <row>
-                <entry>ProtectKernelLogs</entry>
-              </row>
-              <row>
-                <entry>ProtectClock</entry>
-              </row>
-              <row>
-                <entry>ProtectHome</entry>
-              </row>
-              <row>
-                <entry>ProtectHostname</entry>
-              </row>
-              <row>
-                <entry>ProtectSystem</entry>
-              </row>
-              <row>
-                <entry>RootDirectoryOrRootImage</entry>
-              </row>
-              <row>
-                <entry>LockPersonality</entry>
-              </row>
-              <row>
-                <entry>MemoryDenyWriteExecute</entry>
-              </row>
-              <row>
-                <entry>NoNewPrivileges</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_ADMIN</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SET_UID_GID_PCAP</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_PTRACE</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_TIME</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_NET_ADMIN</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_RAWIO</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_MODULE</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_AUDIT</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYSLOG</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_NICE_RESOURCE</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_MKNOD</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_CHOWN_FSETID_SETFCAP</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_DAC_FOWNER_IPC_OWNER</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_KILL</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_NET_BIND_SERVICE_BROADCAST_RAW</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_BOOT</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_MAC</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_LINUX_IMMUTABLE</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_IPC_LOCK</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_CHROOT</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_BLOCK_SUSPEND</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_WAKE_ALARM</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_LEASE</entry>
-              </row>
-              <row>
-                <entry>CapabilityBoundingSet_CAP_SYS_TTY_CONFIG</entry>
-              </row>
-              <row>
-                <entry>UMask</entry>
-              </row>
-              <row>
-                <entry>KeyringMode</entry>
-              </row>
-              <row>
-                <entry>ProtectProc</entry>
-              </row>
-              <row>
-                <entry>ProcSubset</entry>
-              </row>
-              <row>
-                <entry>NotifyAccess</entry>
-              </row>
-              <row>
-                <entry>RemoveIPC</entry>
-              </row>
-              <row>
-                <entry>Delegate</entry>
-              </row>
-              <row>
-                <entry>RestrictRealtime</entry>
-              </row>
-              <row>
-                <entry>RestrictSUIDSGID</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_user</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_mnt</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_ipc</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_pid</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_cgroup</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_uts</entry>
-              </row>
-              <row>
-                <entry>RestrictNamespaces_net</entry>
-              </row>
-              <row>
-                <entry>RestrictAddressFamilies_AF_INET_INET6</entry>
-              </row>
-              <row>
-                <entry>RestrictAddressFamilies_AF_UNIX</entry>
-              </row>
-              <row>
-                <entry>RestrictAddressFamilies_AF_NETLINK</entry>
-              </row>
-              <row>
-                <entry>RestrictAddressFamilies_AF_PACKET</entry>
-              </row>
-              <row>
-                <entry>RestrictAddressFamilies_OTHER</entry>
-              </row>
-              <row>
-                <entry>SystemCallArchitectures</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_swap</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_obsolete</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_clock</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_cpu_emulation</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_debug</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_mount</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_module</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_raw_io</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_reboot</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_privileged</entry>
-              </row>
-              <row>
-                <entry>SystemCallFilter_resources</entry>
-              </row>
-              <row>
-                <entry>IPAddressDeny</entry>
-              </row>
-              <row>
-                <entry>DeviceAllow</entry>
-              </row>
-              <row>
-                <entry>AmbientCapabilities</entry>
-              </row>
-            </tbody>
-          </tgroup>
-        </table>
-
-        <para>See example "JSON Policy" below.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--json=<replaceable>MODE</replaceable></option></term>
-
-        <listitem><para>With the <command>security</command> command, generate a JSON formatted
-        output of the security analysis table. The format is a JSON array with objects
-        containing the following fields: <varname>set</varname> which indicates if the setting has
-        been enabled or not, <varname>name</varname> which is what is used to refer to the setting,
-        <varname>json_field</varname> which is the JSON compatible identifier of the setting,
-        <varname>description</varname> which is an outline of the setting state, and
-        <varname>exposure</varname> which is a number in the range 0.0…10.0, where a higher value
-        corresponds to a higher security threat. The JSON version of the table is printed to standard
-        output. The <replaceable>MODE</replaceable> passed to the option can be one of three:
-        <option>off</option> which is the default, <option>pretty</option> and <option>short</option>
-        which respectively output a prettified or shorted JSON version of the security table.
-
-        With the <command>plot</command> command, generate a JSON formatted output of the raw time data.
-        The format is a JSON array with objects containing the following fields: <varname>name</varname>
-        which is the unit name, <varname>activated</varname> which is the time after startup the
-        service was activated, <varname>activating</varname> which is how long after startup the service
-        was initially started, <varname>time</varname> which is how long the service took to activate
-        from when it was initially started, <varname>deactivated</varname> which is the time after startup
-        that the service was deactivated, <varname>deactivating</varname> which is the time after startup
-        that the service was initially told to deactivate.
-        </para></listitem>
+        <listitem><para>With <command>cat-files</command>, show config files underneath
+        the specified root path <replaceable>PATH</replaceable>.</para></listitem>
       </varlistentry>
 
       <varlistentry>
@@ -1388,43 +765,8 @@ NR NAME                SHA256
         to the specified point in time. If not specified defaults to the current time.</para></listitem>
       </varlistentry>
 
-      <varlistentry>
-        <term><option>--unit=<replaceable>UNIT</replaceable></option></term>
-
-        <listitem><para>When used with the <command>condition</command> command, evaluate all the
-        <varname index="false">Condition*=...</varname> and <varname index="false">Assert*=...</varname>
-        assignments in the specified unit file. The full unit search path is formed by combining the
-        directories for the specified unit with the usual unit load paths. The variable
-        <varname>$SYSTEMD_UNIT_PATH</varname> is supported, and may be used to replace or augment the
-        compiled in set of unit load paths; see
-        <citerefentry><refentrytitle>systemd.unit</refentrytitle><manvolnum>5</manvolnum></citerefentry>. All
-        units files present in the directory containing the specified unit will be used in preference to the
-        other paths.</para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--table</option></term>
-
-        <listitem><para>When used with the <command>plot</command> command, the raw time data is output in a table.
-        </para></listitem>
-      </varlistentry>
-
-      <varlistentry>
-        <term><option>--no-legend</option></term>
-
-        <listitem><para>When used with the <command>plot</command> command in combination with either
-        <option>--table</option> or <option>--json=</option>, no legends or hints are included in the output.
-        </para></listitem>
-      </varlistentry>
-
       <xi:include href="user-system-options.xml" xpointer="host" />
       <xi:include href="user-system-options.xml" xpointer="machine" />
-
-      <varlistentry>
-        <term><option>--quiet</option></term>
-
-        <listitem><para>Suppress hints and other non-essential output.</para></listitem>
-      </varlistentry>
 
       <xi:include href="standard-options.xml" xpointer="help" />
       <xi:include href="standard-options.xml" xpointer="version" />
@@ -1436,79 +778,11 @@ NR NAME                SHA256
   <refsect1>
     <title>Exit status</title>
 
-    <para>For most commands, 0 is returned on success, and a non-zero failure code otherwise.</para>
-
-    <para>With the verb <command>compare-versions</command>, in the two-argument form,
-    <constant>12</constant>, <constant>0</constant>, <constant>11</constant> is returned if the second
-    version string is respectively larger, equal, or smaller to the first. In the three-argument form,
-    <constant>0</constant> or <constant>1</constant> if the condition is respectively true or false.</para>
+    <para>On success, 0 is returned, a non-zero failure code
+    otherwise.</para>
   </refsect1>
 
   <xi:include href="common-variables.xml" />
-
-  <refsect1>
-    <title>Examples</title>
-
-    <example>
-      <title>JSON Policy</title>
-
-      <para>The JSON file passed as a path parameter to <option>--security-policy=</option> has a top-level
-      JSON object, with keys being the assessment test identifiers mentioned above. The values in the file
-      should be JSON objects with one or more of the following fields: <option>description_na</option>
-      (string), <option>description_good</option> (string), <option>description_bad</option> (string),
-      <option>weight</option> (unsigned integer), and <option>range</option> (unsigned integer). If any of
-      these fields corresponding to a specific id of the unit file is missing from the JSON object, the
-      default built-in field value corresponding to that same id is used for security analysis as default.
-      The weight and range fields are used in determining the overall exposure level of the unit files: the
-      value of each setting is assigned a badness score, which is multiplied by the policy weight and divided
-      by the policy range to determine the overall exposure that the setting implies. The computed badness is
-      summed across all settings in the unit file, normalized to the 1…100 range, and used to determine the
-      overall exposure level of the unit.  By allowing users to manipulate these fields, the 'security' verb
-      gives them the option to decide for themself which ids are more important and hence should have a
-      greater effect on the exposure level. A weight of <literal>0</literal> means the setting will not be
-      checked.</para>
-
-      <programlisting>
-{
-  "PrivateDevices":
-    {
-    "description_good": "Service has no access to hardware devices",
-    "description_bad": "Service potentially has access to hardware devices",
-    "weight": 1000,
-    "range": 1
-    },
-  "PrivateMounts":
-    {
-    "description_good": "Service cannot install system mounts",
-    "description_bad": "Service may install system mounts",
-    "weight": 1000,
-    "range": 1
-    },
-  "PrivateNetwork":
-    {
-    "description_good": "Service has no access to the host's network",
-    "description_bad": "Service has access to the host's network",
-    "weight": 2500,
-    "range": 1
-    },
-  "PrivateTmp":
-    {
-    "description_good": "Service has no access to other software's temporary files",
-    "description_bad": "Service has access to other software's temporary files",
-    "weight": 1000,
-    "range": 1
-    },
-  "PrivateUsers":
-    {
-    "description_good": "Service does not have access to other users",
-    "description_bad": "Service has access to other users",
-    "weight": 1000,
-    "range": 1
-    }
-}
-      </programlisting>
-    </example>
-  </refsect1>
 
   <refsect1>
     <title>See Also</title>

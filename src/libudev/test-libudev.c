@@ -6,7 +6,6 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
-#include "devnum-util.h"
 #include "fd-util.h"
 #include "libudev-list-internal.h"
 #include "libudev-util.h"
@@ -91,7 +90,7 @@ static void print_device(struct udev_device *device) {
 }
 
 static void test_device(struct udev *udev, const char *syspath) {
-        _cleanup_(udev_device_unrefp) struct udev_device *device = NULL;
+        _cleanup_(udev_device_unrefp) struct udev_device *device;
 
         log_info("/* %s, device %s */", __func__, syspath);
         device = udev_device_new_from_syspath(udev, syspath);
@@ -102,7 +101,7 @@ static void test_device(struct udev *udev, const char *syspath) {
 }
 
 static void test_device_parents(struct udev *udev, const char *syspath) {
-        _cleanup_(udev_device_unrefp) struct udev_device *device = NULL;
+        _cleanup_(udev_device_unrefp) struct udev_device *device;
         struct udev_device *device_parent;
 
         log_info("/* %s, device %s */", __func__, syspath);
@@ -129,7 +128,7 @@ static void test_device_devnum(struct udev *udev) {
         dev_t devnum = makedev(1, 3);
         _cleanup_(udev_device_unrefp) struct udev_device *device;
 
-        log_info("/* %s, device " DEVNUM_FORMAT_STR " */", __func__, DEVNUM_FORMAT_VAL(devnum));
+        log_info("/* %s, device %d:%d */", __func__, major(devnum), minor(devnum));
 
         device = udev_device_new_from_devnum(udev, 'c', devnum);
         if (device)
@@ -172,7 +171,7 @@ static int enumerate_print_list(struct udev_enumerate *enumerate) {
 
 static void test_monitor(struct udev *udev) {
         _cleanup_(udev_monitor_unrefp) struct udev_monitor *udev_monitor;
-        _cleanup_close_ int fd_ep = -EBADF;
+        _cleanup_close_ int fd_ep;
         int fd_udev;
         struct epoll_event ep_udev = {
                 .events = EPOLLIN,
@@ -446,7 +445,7 @@ static int parse_args(int argc, char *argv[], const char **syspath, const char *
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option code.");
                 }
 
         return 1;

@@ -4,7 +4,6 @@
 
 #include "macro.h"
 #include "strv.h"
-#include "tests.h"
 #include "verbs.h"
 
 static int noop_dispatcher(int argc, char *argv[], void *userdata) {
@@ -15,7 +14,7 @@ static int noop_dispatcher(int argc, char *argv[], void *userdata) {
         optind = 0; \
         assert_se(dispatch_verb(strv_length(argv), argv, verbs, NULL) == expected);
 
-TEST(verbs) {
+static void test_verbs(void) {
         static const Verb verbs[] = {
                 { "help",        VERB_ANY, VERB_ANY, 0,            noop_dispatcher },
                 { "list-images", VERB_ANY, 1,        0,            noop_dispatcher },
@@ -47,7 +46,7 @@ TEST(verbs) {
         test_dispatch_one(STRV_MAKE_EMPTY, verbs, 0);
 }
 
-TEST(verbs_no_default) {
+static void test_verbs_no_default(void) {
         static const Verb verbs[] = {
                 { "help", VERB_ANY, VERB_ANY, 0, noop_dispatcher },
                 {},
@@ -56,4 +55,9 @@ TEST(verbs_no_default) {
         test_dispatch_one(STRV_MAKE(NULL), verbs, -EINVAL);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_verbs();
+        test_verbs_no_default();
+
+        return 0;
+}

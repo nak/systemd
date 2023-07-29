@@ -2,7 +2,6 @@
 title: JSON User Records
 category: Users, Groups and Home Directories
 layout: default
-SPDX-License-Identifier: LGPL-2.1-or-later
 ---
 
 # JSON User Records
@@ -14,8 +13,8 @@ pairs, encoded as JSON. Specifically:
 
 1. [`systemd-homed.service`](https://www.freedesktop.org/software/systemd/man/systemd-homed.service.html)
    manages `human` user home directories and embeds these JSON records
-   directly in the home directory images
-   (see [Home Directories](HOME_DIRECTORY.md) for details).
+   directly in the home directory images (see [Home
+   Directories](https://systemd.io/HOME_DIRECTORY) for details).
 
 2. [`pam_systemd`](https://www.freedesktop.org/software/systemd/man/pam_systemd.html)
    processes these JSON records for users that log in, and applies various
@@ -71,13 +70,14 @@ the following extensions are envisioned:
 
 4. Default parameters for backup applications and similar
 
-Similar to JSON User Records there are also
-[JSON Group Records](GROUP_RECORD.md) that encapsulate UNIX groups.
+Similar to JSON User Records there are also [JSON Group
+Records](https://systemd.io/GROUP_RECORD) that encapsulate UNIX groups.
 
 JSON User Records may be transferred or written to disk in various protocols
 and formats. To inquire about such records defined on the local system use the
-[User/Group Lookup API via Varlink](USER_GROUP_API.md). User/group records may
-also be dropped in number of drop-in directories as files. See
+[User/Group Lookup API via
+Varlink](https://systemd.io/USER_GROUP_API). User/group records may also be
+dropped in number of drop-in directories as files. See
 [`nss-systemd(8)`](https://www.freedesktop.org/software/systemd/man/nss-systemd.html)
 for details.
 
@@ -87,11 +87,6 @@ JSON is nicely extensible and widely used. In particular it's easy to
 synthesize and process with numerous programming languages. It's particularly
 popular in the web communities, which hopefully should make it easy to link
 user credential data from the web and from local systems more closely together.
-
-Please note that this specification assumes that JSON numbers may cover the full
-integer range of -2^63 … 2^64-1 without loss of precision (i.e. INT64_MIN …
-UINT64_MAX). Please read, write and process user records as defined by this
-specification only with JSON implementations that provide this number range.
 
 ## General Structure
 
@@ -212,9 +207,9 @@ object. The following fields are currently defined:
 
 `userName` → The UNIX user name for this record. Takes a string with a valid
 UNIX user name. This field is the only mandatory field, all others are
-optional. Corresponds with the `pw_name` field of `struct passwd` and the
+optional. Corresponds with the `pw_name` field of of `struct passwd` and the
 `sp_namp` field of `struct spwd` (i.e. the shadow user record stored in
-`/etc/shadow`). See [User/Group Name Syntax](USER_NAMES.md) for
+`/etc/shadow`). See [User/Group Name Syntax](https://systemd.io/USER_NAMES) for
 the (relaxed) rules the various systemd components enforce on user/group names.
 
 `realm` → The "realm" a user is defined in. This concept allows distinguishing
@@ -269,13 +264,13 @@ disposition of a user automatically from a record even in absence of this
 field, based on other fields, for example the numeric UID. By setting this
 field explicitly applications can override this default determination.
 
-`lastChangeUSec` → An unsigned 64-bit integer value, referring to a timestamp in µs
+`lastChangeUSec` → An unsigned 64bit integer value, referring to a timestamp in µs
 since the epoch 1970, indicating when the user record (specifically, any of the
 `regular`, `privileged`, `perMachine` sections) was last changed. This field is
 used when comparing two records of the same user to identify the newer one, and
 is used for example for automatic updating of user records, where appropriate.
 
-`lastPasswordChangeUSec` → Similar, also an unsigned 64-bit integer value,
+`lastPasswordChangeUSec` → Similar, also an unsigned 64bit integer value,
 indicating the point in time the password (or any authentication token) of the
 user was last changed. This corresponds to the `sp_lstchg` field of `struct
 spwd`, i.e. the matching field in the user shadow database `/etc/shadow`,
@@ -297,7 +292,7 @@ for all login sessions of the user.
 
 `environment` → An array of strings, each containing an environment variable
 and its value to set for the user's login session, in a format compatible with
-[`putenv()`](https://man7.org/linux/man-pages/man3/putenv.3.html). Any
+[`putenv()`](http://man7.org/linux/man-pages/man3/putenv.3.html). Any
 environment variable listed here is automatically set by
 [`pam_systemd`](https://www.freedesktop.org/software/systemd/man/pam_systemd.html)
 for all login sessions of the user.
@@ -320,7 +315,7 @@ variable, for example: `de_DE.UTF8`.
 [`pam_systemd`](https://www.freedesktop.org/software/systemd/man/pam_systemd.html)
 will automatically initialize the login process' nice level to this value with,
 which is then inherited by all the user's processes, see
-[`setpriority()`](https://man7.org/linux/man-pages/man2/setpriority.2.html) for
+[`setpriority()`](http://man7.org/linux/man-pages/man2/setpriority.2.html) for
 more information.
 
 `resourceLimits` → An object, where each key refers to a Linux resource limit
@@ -329,16 +324,16 @@ two keys `cur` and `max` for the soft and hard resource limit. When logging in
 [`pam_systemd`](https://www.freedesktop.org/software/systemd/man/pam_systemd.html)
 will automatically initialize the login process' resource limits to these
 values, which is then inherited by all the user's processes, see
-[`setrlimit()`](https://man7.org/linux/man-pages/man2/setrlimit.2.html) for more
+[`setrlimit()`](http://man7.org/linux/man-pages/man2/setrlimit.2.html) for more
 information.
 
-`locked` → A boolean value. If true, the user account is locked, the user may
+`locked` → A boolean value. If true the user account is locked, the user may
 not log in. If this field is missing it should be assumed to be false,
 i.e. logins are permitted. This field corresponds to the `sp_expire` field of
 `struct spwd` (i.e. the `/etc/shadow` data for a user) being set to zero or
 one.
 
-`notBeforeUSec` → An unsigned 64-bit integer value, indicating a time in µs since
+`notBeforeUSec` → An unsigned 64bit integer value, indicating a time in µs since
 the UNIX epoch (1970) before which the record should be considered invalid for
 the purpose of logging in.
 
@@ -358,11 +353,11 @@ directory, also containing the `~/.identity` user record; `luks` is a per-user
 LUKS volume that is mounted as home directory, and `cifs` a home directory
 mounted from a Windows File Share. The five latter types are primarily used by
 `systemd-homed` when managing home directories, but may be used if other
-managers are used too. If this is not set, `classic` is the implied default.
+managers are used too. If this is not set `classic` is the implied default.
 
-`diskSize` → An unsigned 64-bit integer, indicating the intended home directory
+`diskSize` → An unsigned 64bit integer, indicating the intended home directory
 disk space in bytes to assign to the user. Depending on the selected storage
-type this might be implemented differently: for `luks` this is the intended size
+type this might be implement differently: for `luks` this is the intended size
 of the file system and LUKS volume, while for the others this likely translates
 to classic file system quota settings.
 
@@ -378,7 +373,7 @@ directory is first created, and defaults to `/etc/skel` if not defined.
 `accessMode` → Takes an unsigned integer in the range 0…511 indicating the UNIX
 access mask for the home directory when it is first created.
 
-`tasksMax` → Takes an unsigned 64-bit integer indicating the maximum number of
+`tasksMax` → Takes an unsigned 64bit integer indicating the maximum number of
 tasks the user may start in parallel during system runtime. This counts
 all tasks (i.e. threads, where each process is at least one thread) the user starts or that are
 forked from these processes even if the user identity is changed (for example
@@ -387,7 +382,7 @@ by setuid binaries/`su`/`sudo` and similar).
 enforces this by setting the `TasksMax` slice property for the user's slice
 `user-$UID.slice`.
 
-`memoryHigh`/`memoryMax` → These take unsigned 64-bit integers indicating upper
+`memoryHigh`/`memoryMax` → These take unsigned 64bit integers indicating upper
 memory limits for all processes of the user (plus all processes forked off them
 that might have changed user identity), in bytes. Enforced by
 [`systemd-logind.service`](https://www.freedesktop.org/software/systemd/man/systemd-logind.service.html),
@@ -415,16 +410,11 @@ useful when `cifs` is used as storage mechanism for the user's home directory,
 see above.
 
 `cifsService` → A string indicating the Windows File Share service (CIFS) to
-mount as home directory of the user on login. Should be in format
-`//<host>/<service>/<directory/…>`. The directory part is optional. If missing
-the top-level directory of the CIFS share is used.
-
-`cifsExtraMountOptions` → A string with additional mount options to pass to
-`mount.cifs` when mounting the home directory CIFS share.
+mount as home directory of the user on login.
 
 `imagePath` → A string with an absolute file system path to the file, directory
 or block device to use for storage backing the home directory. If the `luks`
-storage is used, this refers to the loopback file or block device node to store
+storage is used this refers to the loopback file or block device node to store
 the LUKS volume on. For `fscrypt`, `directory`, `subvolume` this refers to the
 directory to bind mount as home directory on login. Not defined for `classic`
 or `cifs`.
@@ -464,7 +454,7 @@ relevant when the storage mechanism used is `luks`.
 referencing the file system UUID the home directory is located in. This is
 primarily relevant when the storage mechanism used is `luks`.
 
-`luksDiscard` → A boolean. If true and `luks` storage is used, controls whether
+`luksDiscard` → A boolean. If true and `luks` storage is used controls whether
 the loopback block devices, LUKS and the file system on top shall be used in
 `discard` mode, i.e. erased sectors should always be returned to the underlying
 storage. If false and `luks` storage is used turns this behavior off. In
@@ -474,9 +464,6 @@ executed to make sure the image matches the selected option.
 `luksOfflineDiscard` → A boolean. Similar to `luksDiscard`, it controls whether
 to trim/allocate the file system/backing file when deactivating the home
 directory.
-
-`luksExtraMountOptions` → A string with additional mount options to append to
-the default mount options for the file system in the LUKS volume.
 
 `luksCipher` → A string, indicating the cipher to use for the LUKS storage mechanism.
 
@@ -490,47 +477,28 @@ the PBKDF operation for the LUKS storage mechanism.
 
 `luksPbkdfType` → A string, indicating the PBKDF type to use for the LUKS storage mechanism.
 
-`luksPbkdfForceIterations` → An unsigned 64-bit integer, indicating the intended
-number of iterations for the PBKDF operation, when LUKS storage is used.
-
-`luksPbkdfTimeCostUSec` → An unsigned 64-bit integer, indicating the intended
+`luksPbkdfTimeCostUSec` → An unsigned 64bit integer, indicating the intended
 time cost for the PBKDF operation, when the LUKS storage mechanism is used, in
-µs. Ignored when `luksPbkdfForceIterations` is set.
+µs.
 
-`luksPbkdfMemoryCost` → An unsigned 64-bit integer, indicating the intended
+`luksPbkdfMemoryCost` → An unsigned 64bit integer, indicating the intended
 memory cost for the PBKDF operation, when LUKS storage is used, in bytes.
 
-`luksPbkdfParallelThreads` → An unsigned 64-bit integer, indicating the intended
+`luksPbkdfParallelThreads` → An unsigned 64bit integer, indicating the intended
 required parallel threads for the PBKDF operation, when LUKS storage is used.
-
-`luksSectorSize` → An unsigned 64-bit integer, indicating the sector size to
-use for the LUKS storage mechanism, in bytes. Must be a power of two between
-512 and 4096.
-
-`autoResizeMode` → A string, one of `off`, `grow`, `shrink-and-grow`. Unless
-set to `off`, controls whether the home area shall be grown automatically to
-the size configured in `diskSize` automatically at login time. If set to
-`shrink-and-grown` the home area is also shrunk to the minimal size possible
-(as dictated by used disk space and file system constraints) on logout.
-
-`rebalanceWeight` → An unsigned integer, `null` or a boolean. Configures the
-free disk space rebalancing weight for the home area. The integer must be in
-the range 1…10000 to configure an explicit weight. If unset, or set to `null`
-or `true` the default weight of 100 is implied. If set to 0 or `false`
-rebalancing is turned off for this home area.
 
 `service` → A string declaring the service that defines or manages this user
 record. It is recommended to use reverse domain name notation for this. For
 example, if `systemd-homed` manages a user a string of `io.systemd.Home` is
 used for this.
 
-`rateLimitIntervalUSec` → An unsigned 64-bit integer that configures the
+`rateLimitIntervalUSec` → An unsigned 64bit integer that configures the
 authentication rate limiting enforced on the user account. This specifies a
 timer interval (in µs) within which to count authentication attempts. When the
 counter goes above the value configured n `rateLimitIntervalBurst` log-ins are
 temporarily refused until the interval passes.
 
-`rateLimitIntervalBurst` → An unsigned 64-bit integer, closely related to
+`rateLimitIntervalBurst` → An unsigned 64bit integer, closely related to
 `rateLimitIntervalUSec`, that puts a limit on authentication attempts within
 the configured time interval.
 
@@ -543,7 +511,7 @@ it is bypassed.
 auto-login. Systems are supposed to automatically log in a user marked this way
 during boot, if there's exactly one user on it defined this way.
 
-`stopDelayUSec` → An unsigned 64-bit integer, indicating the time in µs the
+`stopDelayUSec` → An unsigned 64bit integer, indicating the time in µs the
 per-user service manager is kept around after the user fully logged out.  This
 value is honored by
 [`systemd-logind.service`](https://www.freedesktop.org/software/systemd/man/systemd-logind.service.html). If
@@ -557,17 +525,17 @@ automatically killed when the user logs out. This is enforced by
 [`systemd-logind.service`](https://www.freedesktop.org/software/systemd/man/systemd-logind.service.html). If
 false any processes left around when the user logs out are left running.
 
-`passwordChangeMinUSec`/`passwordChangeMaxUSec` → An unsigned 64-bit integer,
+`passwordChangeMinUSec`/`passwordChangeMaxUSec` → An unsigned 64bit integer,
 encoding how much time has to pass at least/at most between password changes of
 the user. This corresponds with the `sp_min` and `sp_max` fields of `struct
 spwd` (i.e. the `/etc/shadow` entries of the user), but offers finer
 granularity.
 
-`passwordChangeWarnUSec` → An unsigned 64-bit integer, encoding how much time to
+`passwordChangeWarnUSec` → An unsigned 64bit integer, encoding how much time to
 warn the user before their password expires, in µs. This corresponds with the
 `sp_warn` field of `struct spwd`.
 
-`passwordChangeInactiveUSec` → An unsigned 64-bit integer, encoding how much
+`passwordChangeInactiveUSec` → An unsigned 64bit integer, encoding how much
 time has to pass after the password expired that the account is
 deactivated. This corresponds with the `sp_inact` field of `struct spwd`.
 
@@ -585,7 +553,7 @@ against all plugged in security tokens and if there's exactly one matching
 private key found with it it is used.
 
 `fido2HmacCredential` → An array of strings, each with a Base64-encoded FIDO2
-credential ID that shall be used for authentication with FIDO2 devices that
+credential ID that shell be used for authentication with FIDO2 devices that
 implement the `hmac-secret` extension. The salt to pass to the FIDO2 device is
 found in `fido2HmacSalt`.
 
@@ -632,13 +600,13 @@ user to choose.
 
 `hashedPassword` → An array of strings, each containing a hashed UNIX password
 string, in the format
-[`crypt(3)`](https://man7.org/linux/man-pages/man3/crypt.3.html) generates. This
+[`crypt(3)`](http://man7.org/linux/man-pages/man3/crypt.3.html) generates. This
 corresponds with `sp_pwdp` field of `struct spwd` (and in a way the `pw_passwd`
 field of `struct passwd`).
 
 `sshAuthorizedKeys` → An array of strings, each listing an SSH public key that
 is authorized to access the account. The strings should follow the same format
-as the lines in the traditional `~/.ssh/authorized_keys` file.
+as the lines in the traditional `~/.ssh/authorized_key` file.
 
 `pkcs11EncryptedKey` → An array of objects. Each element of the array should be
 an object consisting of three string fields: `uri` shall contain a PKCS#11
@@ -717,7 +685,7 @@ in full).
 
 The following fields are defined in this section:
 
-`matchMachineId` → An array of strings that are formatted 128-bit IDs in
+`matchMachineId` → An array of strings that are formatted 128bit IDs in
 hex. If any of the specified IDs match the system's local machine ID
 (i.e. matches `/etc/machine-id`) the fields in this object are honored.
 
@@ -736,17 +704,15 @@ that may be used in this section are identical to the equally named ones in the
 `notAfterUSec`, `storage`, `diskSize`, `diskSizeRelative`, `skeletonDirectory`,
 `accessMode`, `tasksMax`, `memoryHigh`, `memoryMax`, `cpuWeight`, `ioWeight`,
 `mountNoDevices`, `mountNoSuid`, `mountNoExecute`, `cifsDomain`,
-`cifsUserName`, `cifsService`, `cifsExtraMountOptions`, `imagePath`, `uid`,
-`gid`, `memberOf`, `fileSystemType`, `partitionUuid`, `luksUuid`,
-`fileSystemUuid`, `luksDiscard`, `luksOfflineDiscard`, `luksCipher`,
-`luksCipherMode`, `luksVolumeKeySize`, `luksPbkdfHashAlgorithm`,
-`luksPbkdfType`, `luksPbkdfForceIterations`, `luksPbkdfTimeCostUSec`, `luksPbkdfMemoryCost`,
-`luksPbkdfParallelThreads`, `luksSectorSize`, `autoResizeMode`, `rebalanceWeight`,
-`rateLimitIntervalUSec`, `rateLimitBurst`, `enforcePasswordPolicy`,
-`autoLogin`, `stopDelayUSec`, `killProcesses`, `passwordChangeMinUSec`,
-`passwordChangeMaxUSec`, `passwordChangeWarnUSec`,
-`passwordChangeInactiveUSec`, `passwordChangeNow`, `pkcs11TokenUri`,
-`fido2HmacCredential`.
+`cifsUserName`, `cifsService`, `imagePath`, `uid`, `gid`, `memberOf`,
+`fileSystemType`, `partitionUuid`, `luksUuid`, `fileSystemUuid`, `luksDiscard`,
+`luksOfflineDiscard`, `luksCipher`, `luksCipherMode`, `luksVolumeKeySize`,
+`luksPbkdfHashAlgorithm`, `luksPbkdfType`, `luksPbkdfTimeCostUSec`,
+`luksPbkdfMemoryCost`, `luksPbkdfParallelThreads`, `rateLimitIntervalUSec`,
+`rateLimitBurst`, `enforcePasswordPolicy`, `autoLogin`, `stopDelayUSec`,
+`killProcesses`, `passwordChangeMinUSec`, `passwordChangeMaxUSec`,
+`passwordChangeWarnUSec`, `passwordChangeInactiveUSec`, `passwordChangeNow`,
+`pkcs11TokenUri`, `fido2HmacCredential`.
 
 ## Fields in the `binding` section
 
@@ -799,26 +765,26 @@ sub-object of the top-level user record object is keyed by the machine ID,
 which points to the object with the fields defined here. The following fields
 are defined:
 
-`diskUsage` → An unsigned 64-bit integer. The currently used disk space of the
+`diskUsage` → An unsigned 64bit integer. The currently used disk space of the
 home directory in bytes. This value might be determined in different ways,
 depending on the selected storage mechanism. For LUKS storage this is the file
 size of the loopback file or block device size. For the
 directory/subvolume/fscrypt storage this is the current disk space used as
 reported by the file system quota subsystem.
 
-`diskFree` → An unsigned 64-bit integer, denoting the number of "free" bytes in
+`diskFree` → An unsigned 64bit integer, denoting the number of "free" bytes in
 the disk space allotment, i.e. usually the difference between the disk size as
 reported by `diskSize` and the used already as reported in `diskFree`, but
 possibly skewed by metadata sizes, disk compression and similar.
 
-`diskSize` → An unsigned 64-bit integer, denoting the disk space currently
+`diskSize` → An unsigned 64bit integer, denoting the disk space currently
 allotted to the user, in bytes. Depending on the storage mechanism this can mean
 different things (see above). In contrast to the top-level field of the same
 (or the one in the `perMachine` section), this field reports the current size
 allotted to the user, not the intended one. The values may differ when user
 records are updated without the home directory being re-sized.
 
-`diskCeiling`/`diskFloor` → Unsigned 64-bit integers indicating upper and lower
+`diskCeiling`/`diskFloor` → Unsigned 64bit integers indicating upper and lower
 bounds when changing the `diskSize` value, in bytes. These values are typically
 derived from the underlying data storage, and indicate in which range the home
 directory may be re-sized in, i.e. in which sensible range the `diskSize` value
@@ -851,27 +817,27 @@ recognized by the local manager but whose private key is not available
 locally. This means the user record cannot be modified locally as it couldn't
 be signed afterwards.
 
-`goodAuthenticationCounter` → An unsigned 64-bit integer. This counter is
+`goodAuthenticationCounter` → An unsigned 64bit integer. This counter is
 increased by one on every successful authentication attempt, i.e. an
 authentication attempt where a security token of some form was presented and it
 was correct.
 
-`badAuthenticationCounter` → An unsigned 64-bit integer. This counter is
+`badAuthenticationCounter` → An unsigned 64bit integer. This counter is
 increased by one on every unsuccessfully authentication attempt, i.e. an
 authentication attempt where a security token of some form was presented and it
 was incorrect.
 
-`lastGoodAuthenticationUSec` → An unsigned 64-bit integer, indicating the time
+`lastGoodAuthenticationUSec` → An unsigned 64bit integer, indicating the time
 of the last successful authentication attempt in µs since the UNIX epoch (1970).
 
 `lastBadAuthenticationUSec` → Similar, but the timestamp of the last
 unsuccessfully authentication attempt.
 
-`rateLimitBeginUSec` → An unsigned 64-bit integer: the µs timestamp since the
+`rateLimitBeginUSec` → An unsigned 64bit integer: the µs timestamp since the
 UNIX epoch (1970) where the most recent rate limiting interval has been
 started, as configured with `rateLimitIntervalUSec`.
 
-`rateLimitCount` → An unsigned 64-bit integer, counting the authentication
+`rateLimitCount` → An unsigned 64bit integer, counting the authentication
 attempts in the current rate limiting interval, see above. If this counter
 grows beyond the value configured in `rateLimitBurst` authentication attempts
 are temporarily refused.
@@ -884,12 +850,6 @@ determined the home directory is in internal built-in media. (This is used by
 on removable media the delay is selected very low to minimize the chance the
 home directory remains in unclean state if the storage device is removed from
 the system by the user).
-
-`accessMode` → The access mode currently in effect for the home directory
-itself.
-
-`fileSystemType` → The file system type backing the home directory: a short
-string, such as "btrfs", "ext4", "xfs".
 
 ## Fields in the `signature` section
 

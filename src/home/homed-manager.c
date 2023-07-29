@@ -3,14 +3,11 @@
 #include <grp.h>
 #include <linux/fs.h>
 #include <linux/magic.h>
-#include <math.h>
 #include <openssl/pem.h>
 #include <pwd.h>
 #include <sys/ioctl.h>
 #include <sys/quota.h>
 #include <sys/stat.h>
-
-#include "sd-id128.h"
 
 #include "btrfs-util.h"
 #include "bus-common-errors.h"
@@ -18,7 +15,6 @@
 #include "bus-log-control-api.h"
 #include "bus-polkit.h"
 #include "clean-ipc.h"
-#include "common-signal.h"
 #include "conf-files.h"
 #include "device-util.h"
 #include "dirent-util.h"
@@ -26,7 +22,6 @@
 #include "fileio.h"
 #include "format-util.h"
 #include "fs-util.h"
-#include "glyph-util.h"
 #include "gpt.h"
 #include "home-util.h"
 #include "homed-conf.h"
@@ -40,12 +35,9 @@
 #include "process-util.h"
 #include "quota-util.h"
 #include "random-util.h"
-#include "resize-fs.h"
 #include "socket-util.h"
-#include "sort-util.h"
 #include "stat-util.h"
 #include "strv.h"
-#include "sync-util.h"
 #include "tmpfile-util.h"
 #include "udev-util.h"
 #include "user-record-sign.h"
@@ -90,55 +82,53 @@ static void manager_watch_home(Manager *m) {
         m->inotify_event_source = sd_event_source_disable_unref(m->inotify_event_source);
         m->scan_slash_home = false;
 
-        if (statfs(get_home_root(), &sfs) < 0) {
+        if (statfs("/home/", &sfs) < 0) {
                 log_full_errno(errno == ENOENT ? LOG_DEBUG : LOG_WARNING, errno,
-                               "Failed to statfs() %s directory, disabling automatic scanning.", get_home_root());
+                               "Failed to statfs() /home/ directory, disabling automatic scanning.");
                 return;
         }
 
         if (is_network_fs(&sfs)) {
-                log_info("%s is a network file system, disabling automatic scanning.", get_home_root());
+                log_info("/home/ is a network file system, disabling automatic scanning.");
                 return;
         }
 
         if (is_fs_type(&sfs, AUTOFS_SUPER_MAGIC)) {
-                log_info("%s is on autofs, disabling automatic scanning.", get_home_root());
+                log_info("/home/ is on autofs, disabling automatic scanning.");
                 return;
         }
 
         m->scan_slash_home = true;
 
-        r = sd_event_add_inotify(m->event, &m->inotify_event_source, get_home_root(),
+        r = sd_event_add_inotify(m->event, &m->inotify_event_source, "/home/",
                                  IN_CREATE|IN_CLOSE_WRITE|IN_DELETE_SELF|IN_MOVE_SELF|IN_ONLYDIR|IN_MOVED_TO|IN_MOVED_FROM|IN_DELETE,
                                  on_home_inotify, m);
         if (r < 0)
                 log_full_errno(r == -ENOENT ? LOG_DEBUG : LOG_WARNING, r,
-                               "Failed to create inotify watch on %s, ignoring.", get_home_root());
+                               "Failed to create inotify watch on /home/, ignoring.");
 
         (void) sd_event_source_set_description(m->inotify_event_source, "home-inotify");
-
-        log_info("Watching %s.", get_home_root());
 }
 
 static int on_home_inotify(sd_event_source *s, const struct inotify_event *event, void *userdata) {
-        _cleanup_free_ char *j = NULL;
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
         const char *e, *n;
 
+        assert(m);
         assert(event);
 
         if ((event->mask & (IN_Q_OVERFLOW|IN_MOVE_SELF|IN_DELETE_SELF|IN_IGNORED|IN_UNMOUNT)) != 0) {
 
                 if (FLAGS_SET(event->mask, IN_Q_OVERFLOW))
-                        log_debug("%s inotify queue overflow, rescanning.", get_home_root());
+                        log_debug("/home/ inotify queue overflow, rescanning.");
                 else if (FLAGS_SET(event->mask, IN_MOVE_SELF))
-                        log_info("%s moved or renamed, recreating watch and rescanning.", get_home_root());
+                        log_info("/home/ moved or renamed, recreating watch and rescanning.");
                 else if (FLAGS_SET(event->mask, IN_DELETE_SELF))
-                        log_info("%s deleted, recreating watch and rescanning.", get_home_root());
+                        log_info("/home/ deleted, recreating watch and rescanning.");
                 else if (FLAGS_SET(event->mask, IN_UNMOUNT))
-                        log_info("%s unmounted, recreating watch and rescanning.", get_home_root());
+                        log_info("/home/ unmounted, recreating watch and rescanning.");
                 else if (FLAGS_SET(event->mask, IN_IGNORED))
-                        log_info("%s watch invalidated, recreating watch and rescanning.", get_home_root());
+                        log_info("/home/ watch invalidated, recreating watch and rescanning.");
 
                 manager_watch_home(m);
                 (void) manager_gc_images(m);
@@ -155,23 +145,19 @@ static int on_home_inotify(sd_event_source *s, const struct inotify_event *event
         if (!e)
                 return 0;
 
-        n = strndupa_safe(event->name, e - event->name);
+        n = strndupa(event->name, e - event->name);
         if (!suitable_user_name(n))
                 return 0;
 
-        j = path_join(get_home_root(), event->name);
-        if (!j)
-                return log_oom();
-
         if ((event->mask & (IN_CREATE|IN_CLOSE_WRITE|IN_MOVED_TO)) != 0) {
                 if (FLAGS_SET(event->mask, IN_CREATE))
-                        log_debug("%s has been created, having a look.", j);
+                        log_debug("/home/%s has been created, having a look.", event->name);
                 else if (FLAGS_SET(event->mask, IN_CLOSE_WRITE))
-                        log_debug("%s has been modified, having a look.", j);
+                        log_debug("/home/%s has been modified, having a look.", event->name);
                 else if (FLAGS_SET(event->mask, IN_MOVED_TO))
-                        log_debug("%s has been moved in, having a look.", j);
+                        log_debug("/home/%s has been moved in, having a look.", event->name);
 
-                (void) manager_assess_image(m, -1, get_home_root(), event->name);
+                (void) manager_assess_image(m, -1, "/home/", event->name);
                 (void) bus_manager_emit_auto_login_changed(m);
         }
 
@@ -179,11 +165,11 @@ static int on_home_inotify(sd_event_source *s, const struct inotify_event *event
                 Home *h;
 
                 if (FLAGS_SET(event->mask, IN_DELETE))
-                        log_debug("%s has been deleted, revalidating.", j);
+                        log_debug("/home/%s has been deleted, revalidating.", event->name);
                 else if (FLAGS_SET(event->mask, IN_CLOSE_WRITE))
-                        log_debug("%s has been closed after writing, revalidating.", j);
+                        log_debug("/home/%s has been closed after writing, revalidating.", event->name);
                 else if (FLAGS_SET(event->mask, IN_MOVED_FROM))
-                        log_debug("%s has been moved away, revalidating.", j);
+                        log_debug("/home/%s has been moved away, revalidating.", event->name);
 
                 h = hashmap_get(m->homes_by_name, n);
                 if (h) {
@@ -207,7 +193,6 @@ int manager_new(Manager **ret) {
 
         *m = (Manager) {
                 .default_storage = _USER_STORAGE_INVALID,
-                .rebalance_interval_usec = 2 * USEC_PER_MINUTE, /* initially, rebalance every 2min */
         };
 
         r = manager_parse_config_file(m);
@@ -223,15 +208,6 @@ int manager_new(Manager **ret) {
                 return r;
 
         r = sd_event_add_signal(m->event, NULL, SIGTERM, NULL, NULL);
-        if (r < 0)
-                return r;
-
-        r = sd_event_add_memory_pressure(m->event, NULL, NULL, NULL);
-        if (r < 0)
-                log_full_errno(ERRNO_IS_NOT_SUPPORTED(r) || ERRNO_IS_PRIVILEGE(r) || (r == -EHOSTDOWN) ? LOG_DEBUG : LOG_WARNING, r,
-                               "Failed to allocate memory pressure watch, ignoring: %m");
-
-        r = sd_event_add_signal(m->event, NULL, SIGRTMIN+18, sigrtmin18_handler, NULL);
         if (r < 0)
                 return r;
 
@@ -265,8 +241,8 @@ Manager* manager_free(Manager *m) {
         HASHMAP_FOREACH(h, m->homes_by_worker_pid)
                 (void) home_wait_for_worker(h);
 
-        m->bus = sd_bus_flush_close_unref(m->bus);
-        m->polkit_registry = bus_verify_polkit_async_registry_free(m->polkit_registry);
+        sd_bus_flush_close_unref(m->bus);
+        bus_verify_polkit_async_registry_free(m->polkit_registry);
 
         m->device_monitor = sd_device_monitor_unref(m->device_monitor);
 
@@ -275,14 +251,13 @@ Manager* manager_free(Manager *m) {
         m->deferred_rescan_event_source = sd_event_source_unref(m->deferred_rescan_event_source);
         m->deferred_gc_event_source = sd_event_source_unref(m->deferred_gc_event_source);
         m->deferred_auto_login_event_source = sd_event_source_unref(m->deferred_auto_login_event_source);
-        m->rebalance_event_source = sd_event_source_unref(m->rebalance_event_source);
 
-        m->event = sd_event_unref(m->event);
+        sd_event_unref(m->event);
 
-        m->homes_by_uid = hashmap_free(m->homes_by_uid);
-        m->homes_by_name = hashmap_free(m->homes_by_name);
-        m->homes_by_worker_pid = hashmap_free(m->homes_by_worker_pid);
-        m->homes_by_sysfs = hashmap_free(m->homes_by_sysfs);
+        hashmap_free(m->homes_by_uid);
+        hashmap_free(m->homes_by_name);
+        hashmap_free(m->homes_by_worker_pid);
+        hashmap_free(m->homes_by_sysfs);
 
         if (m->private_key)
                 EVP_PKEY_free(m->private_key);
@@ -453,19 +428,20 @@ unlink_this_file:
         if (unlinkat(dir_fd, fname, 0) < 0)
                 return log_error_errno(errno, "Failed to remove empty user record file %s: %m", fname);
 
-        log_notice("Discovered empty user record file %s/%s, removed automatically.", home_record_dir(), fname);
+        log_notice("Discovered empty user record file /var/lib/systemd/home/%s, removed automatically.", fname);
         return 0;
 }
 
 static int manager_enumerate_records(Manager *m) {
         _cleanup_closedir_ DIR *d = NULL;
+        struct dirent *de;
 
         assert(m);
 
-        d = opendir(home_record_dir());
+        d = opendir("/var/lib/systemd/home/");
         if (!d)
                 return log_full_errno(errno == ENOENT ? LOG_DEBUG : LOG_ERR, errno,
-                                      "Failed to open %s: %m", home_record_dir());
+                                      "Failed to open /var/lib/systemd/home/: %m");
 
         FOREACH_DIRENT(de, d, return log_error_errno(errno, "Failed to read record directory: %m")) {
                 _cleanup_free_ char *n = NULL;
@@ -494,6 +470,7 @@ static int manager_enumerate_records(Manager *m) {
 static int search_quota(uid_t uid, const char *exclude_quota_path) {
         struct stat exclude_st = {};
         dev_t previous_devno = 0;
+        const char *where;
         int r;
 
         /* Checks whether the specified UID owns any files on the files system, but ignore any file system
@@ -509,7 +486,7 @@ static int search_quota(uid_t uid, const char *exclude_quota_path) {
          * comprehensive, but should cover most cases. Note that in an ideal world every user would be
          * registered in NSS and avoid our own UID range, but for all other cases, it's a good idea to be
          * paranoid and check quota if we can. */
-        FOREACH_STRING(where, get_home_root(), "/tmp/", "/var/", "/var/mail/", "/var/tmp/", "/var/spool/") {
+        FOREACH_STRING(where, "/home/", "/tmp/", "/var/", "/var/mail/", "/var/tmp/", "/var/spool/") {
                 struct dqblk req;
                 struct stat st;
 
@@ -539,7 +516,7 @@ static int search_quota(uid_t uid, const char *exclude_quota_path) {
 
                 previous_devno = st.st_dev;
 
-                r = quotactl_devnum(QCMD_FIXED(Q_GETQUOTA, USRQUOTA), st.st_dev, uid, &req);
+                r = quotactl_devno(QCMD_FIXED(Q_GETQUOTA, USRQUOTA), st.st_dev, uid, &req);
                 if (r < 0) {
                         if (ERRNO_IS_NOT_SUPPORTED(r))
                                 log_debug_errno(r, "No UID quota support on %s, ignoring.", where);
@@ -620,7 +597,7 @@ static int manager_acquire_uid(
                         break;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("unknown phase");
                 }
 
                 other = hashmap_get(m->homes_by_uid, UID_TO_PTR(candidate));
@@ -870,7 +847,7 @@ static int manager_assess_image(
 
         if (S_ISDIR(st.st_mode)) {
                 _cleanup_free_ char *n = NULL, *user_name = NULL, *realm = NULL;
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
                 UserStorage storage;
 
                 if (!directory_suffix)
@@ -929,25 +906,25 @@ static int manager_assess_image(
 
 int manager_enumerate_images(Manager *m) {
         _cleanup_closedir_ DIR *d = NULL;
+        struct dirent *de;
 
         assert(m);
 
         if (!m->scan_slash_home)
                 return 0;
 
-        d = opendir(get_home_root());
+        d = opendir("/home/");
         if (!d)
                 return log_full_errno(errno == ENOENT ? LOG_DEBUG : LOG_ERR, errno,
-                                      "Failed to open %s: %m", get_home_root());
+                                      "Failed to open /home/: %m");
 
-        FOREACH_DIRENT(de, d, return log_error_errno(errno, "Failed to read %s directory: %m", get_home_root()))
-                (void) manager_assess_image(m, dirfd(d), get_home_root(), de->d_name);
+        FOREACH_DIRENT(de, d, return log_error_errno(errno, "Failed to read /home/ directory: %m"))
+                (void) manager_assess_image(m, dirfd(d), "/home", de->d_name);
 
         return 0;
 }
 
 static int manager_connect_bus(Manager *m) {
-        _cleanup_free_ char *b = NULL;
         const char *suffix, *busname;
         int r;
 
@@ -962,17 +939,10 @@ static int manager_connect_bus(Manager *m) {
         if (r < 0)
                 return r;
 
-        r = bus_log_control_api_register(m->bus);
-        if (r < 0)
-                return r;
-
         suffix = getenv("SYSTEMD_HOME_DEBUG_SUFFIX");
-        if (suffix) {
-                b = strjoin("org.freedesktop.home1.", suffix);
-                if (!b)
-                        return log_oom();
-                busname = b;
-        } else
+        if (suffix)
+                busname = strjoina("org.freedesktop.home1.", suffix);
+        else
                 busname = "org.freedesktop.home1";
 
         r = sd_bus_request_name_async(m->bus, NULL, busname, 0, NULL, NULL);
@@ -989,7 +959,6 @@ static int manager_connect_bus(Manager *m) {
 }
 
 static int manager_bind_varlink(Manager *m) {
-        _cleanup_free_ char *p = NULL;
         const char *suffix, *socket_path;
         int r;
 
@@ -1015,12 +984,9 @@ static int manager_bind_varlink(Manager *m) {
         /* To make things easier to debug, when working from a homed managed home directory, let's optionally
          * use a different varlink socket name */
         suffix = getenv("SYSTEMD_HOME_DEBUG_SUFFIX");
-        if (suffix) {
-                p = strjoin("/run/systemd/userdb/io.systemd.Home.", suffix);
-                if (!p)
-                        return log_oom();
-                socket_path = p;
-        } else
+        if (suffix)
+                socket_path = strjoina("/run/systemd/userdb/io.systemd.Home.", suffix);
+        else
                 socket_path = "/run/systemd/userdb/io.systemd.Home";
 
         r = varlink_server_listen_address(m->varlink_server, socket_path, 0666);
@@ -1032,9 +998,9 @@ static int manager_bind_varlink(Manager *m) {
                 return log_error_errno(r, "Failed to attach varlink connection to event loop: %m");
 
         assert(!m->userdb_service);
-        r = path_extract_filename(socket_path, &m->userdb_service);
-        if (r < 0)
-                return log_error_errno(r, "Failed to extra filename from socket path '%s': %m", socket_path);
+        m->userdb_service = strdup(basename(socket_path));
+        if (!m->userdb_service)
+                return log_oom();
 
         /* Avoid recursion */
         if (setenv("SYSTEMD_BYPASS_USERDB", m->userdb_service, 1) < 0)
@@ -1043,25 +1009,13 @@ static int manager_bind_varlink(Manager *m) {
         return 0;
 }
 
-static ssize_t read_datagram(
-                int fd,
-                struct ucred *ret_sender,
-                void **ret,
-                int *ret_passed_fd) {
-
-        CMSG_BUFFER_TYPE(CMSG_SPACE(sizeof(struct ucred)) + CMSG_SPACE(sizeof(int))) control;
+static ssize_t read_datagram(int fd, struct ucred *ret_sender, void **ret) {
         _cleanup_free_ void *buffer = NULL;
-        _cleanup_close_ int passed_fd = -EBADF;
-        struct ucred *sender = NULL;
-        struct cmsghdr *cmsg;
-        struct msghdr mh;
-        struct iovec iov;
         ssize_t n, m;
 
         assert(fd >= 0);
         assert(ret_sender);
         assert(ret);
-        assert(ret_passed_fd);
 
         n = next_datagram_size_fd(fd);
         if (n < 0)
@@ -1071,53 +1025,57 @@ static ssize_t read_datagram(
         if (!buffer)
                 return -ENOMEM;
 
-        /* Pass one extra byte, as a size check */
-        iov = IOVEC_MAKE(buffer, n + 1);
+        if (ret_sender) {
+                CMSG_BUFFER_TYPE(CMSG_SPACE(sizeof(struct ucred))) control;
+                bool found_ucred = false;
+                struct cmsghdr *cmsg;
+                struct msghdr mh;
+                struct iovec iov;
 
-        mh = (struct msghdr) {
-                .msg_iov = &iov,
-                .msg_iovlen = 1,
-                .msg_control = &control,
-                .msg_controllen = sizeof(control),
-        };
+                /* Pass one extra byte, as a size check */
+                iov = IOVEC_MAKE(buffer, n + 1);
 
-        m = recvmsg_safe(fd, &mh, MSG_DONTWAIT|MSG_CMSG_CLOEXEC);
-        if (m < 0)
-                return m;
+                mh = (struct msghdr) {
+                        .msg_iov = &iov,
+                        .msg_iovlen = 1,
+                        .msg_control = &control,
+                        .msg_controllen = sizeof(control),
+                };
 
-        /* Ensure the size matches what we determined before */
-        if (m != n) {
+                m = recvmsg_safe(fd, &mh, MSG_DONTWAIT|MSG_CMSG_CLOEXEC);
+                if (m < 0)
+                        return m;
+
                 cmsg_close_all(&mh);
-                return -EMSGSIZE;
-        }
 
-        CMSG_FOREACH(cmsg, &mh) {
-                if (cmsg->cmsg_level == SOL_SOCKET &&
-                    cmsg->cmsg_type == SCM_CREDENTIALS &&
-                    cmsg->cmsg_len == CMSG_LEN(sizeof(struct ucred))) {
-                        assert(!sender);
-                        sender = CMSG_TYPED_DATA(cmsg, struct ucred);
-                }
+                /* Ensure the size matches what we determined before */
+                if (m != n)
+                        return -EMSGSIZE;
 
-                if (cmsg->cmsg_level == SOL_SOCKET &&
-                    cmsg->cmsg_type == SCM_RIGHTS) {
+                CMSG_FOREACH(cmsg, &mh)
+                        if (cmsg->cmsg_level == SOL_SOCKET &&
+                            cmsg->cmsg_type == SCM_CREDENTIALS &&
+                            cmsg->cmsg_len == CMSG_LEN(sizeof(struct ucred))) {
 
-                        if (cmsg->cmsg_len != CMSG_LEN(sizeof(int))) {
-                                cmsg_close_all(&mh);
-                                return -EMSGSIZE;
+                                memcpy(ret_sender, CMSG_DATA(cmsg), sizeof(struct ucred));
+                                found_ucred = true;
                         }
 
-                        assert(passed_fd < 0);
-                        passed_fd = *CMSG_TYPED_DATA(cmsg, int);
-                }
+                if (!found_ucred)
+                        *ret_sender = (struct ucred) {
+                                .pid = 0,
+                                .uid = UID_INVALID,
+                                .gid = GID_INVALID,
+                        };
+        } else {
+                m = recv(fd, buffer, n + 1, MSG_DONTWAIT);
+                if (m < 0)
+                        return -errno;
+
+                /* Ensure the size matches what we determined before */
+                if (m != n)
+                        return -EMSGSIZE;
         }
-
-        if (sender)
-                *ret_sender = *sender;
-        else
-                *ret_sender = (struct ucred) UCRED_INVALID;
-
-        *ret_passed_fd = TAKE_FD(passed_fd);
 
         /* For safety reasons: let's always NUL terminate.  */
         ((char*) buffer)[n] = 0;
@@ -1129,20 +1087,19 @@ static ssize_t read_datagram(
 static int on_notify_socket(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
         _cleanup_strv_free_ char **l = NULL;
         _cleanup_free_ void *datagram = NULL;
-        _cleanup_close_ int passed_fd = -EBADF;
-        struct ucred sender = UCRED_INVALID;
-        Manager *m = ASSERT_PTR(userdata);
+        struct ucred sender;
+        Manager *m = userdata;
         ssize_t n;
         Home *h;
 
         assert(s);
+        assert(m);
 
-        n = read_datagram(fd, &sender, &datagram, &passed_fd);
-        if (n < 0) {
-                if (ERRNO_IS_TRANSIENT(n))
-                        return 0;
+        n = read_datagram(fd, &sender, &datagram);
+        if (IN_SET(n, -EAGAIN, -EINTR))
+                return 0;
+        if (n < 0)
                 return log_error_errno(n, "Failed to read notify datagram: %m");
-        }
 
         if (sender.pid <= 0) {
                 log_warning("Received notify datagram without valid sender PID, ignoring.");
@@ -1159,12 +1116,12 @@ static int on_notify_socket(sd_event_source *s, int fd, uint32_t revents, void *
         if (!l)
                 return log_oom();
 
-        home_process_notify(h, l, TAKE_FD(passed_fd));
+        home_process_notify(h, l);
         return 0;
 }
 
 static int manager_listen_notify(Manager *m) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         union sockaddr_union sa = {
                 .un.sun_family = AF_UNIX,
                 .un.sun_path = "/run/systemd/home/notify",
@@ -1177,11 +1134,9 @@ static int manager_listen_notify(Manager *m) {
 
         suffix = getenv("SYSTEMD_HOME_DEBUG_SUFFIX");
         if (suffix) {
-                _cleanup_free_ char *unix_path = NULL;
+                const char *unix_path;
 
-                unix_path = strjoin("/run/systemd/home/notify.", suffix);
-                if (!unix_path)
-                        return log_oom();
+                unix_path = strjoina("/run/systemd/home/notify.", suffix);
                 r = sockaddr_un_set_path(&sa.un, unix_path);
                 if (r < 0)
                         return log_error_errno(r, "Socket path %s does not fit in sockaddr_un: %m", unix_path);
@@ -1249,7 +1204,10 @@ static int manager_add_device(Manager *m, sd_device *d) {
                 return 0;
         if (r < 0)
                 return log_error_errno(r, "Failed to acquire ID_PART_ENTRY_TYPE device property, ignoring: %m");
-        if (sd_id128_string_equal(parttype, SD_GPT_USER_HOME) <= 0) {
+        r = sd_id128_from_string(parttype, &id);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to parse ID_PART_ENTRY_TYPE field '%s', ignoring: %m", parttype);
+        if (!sd_id128_equal(id, GPT_USER_HOME)) {
                 log_debug("Found partition (%s) we don't care about, ignoring.", sysfs);
                 return 0;
         }
@@ -1279,9 +1237,10 @@ static int manager_add_device(Manager *m, sd_device *d) {
 }
 
 static int manager_on_device(sd_device_monitor *monitor, sd_device *d, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
         int r;
 
+        assert(m);
         assert(d);
 
         if (device_for_action(d, SD_DEVICE_REMOVE)) {
@@ -1337,6 +1296,7 @@ static int manager_watch_devices(Manager *m) {
 
 static int manager_enumerate_devices(Manager *m) {
         _cleanup_(sd_device_enumerator_unrefp) sd_device_enumerator *e = NULL;
+        sd_device *d;
         int r;
 
         assert(m);
@@ -1356,7 +1316,7 @@ static int manager_enumerate_devices(Manager *m) {
 }
 
 static int manager_load_key_pair(Manager *m) {
-        _cleanup_fclose_ FILE *f = NULL;
+        _cleanup_(fclosep) FILE *f = NULL;
         struct stat st;
         int r;
 
@@ -1455,10 +1415,9 @@ static int manager_generate_key_pair(Manager *m) {
                 return log_error_errno(errno, "Failed to move public key file into place: %m");
         temp_public = mfree(temp_public);
 
-        r = RET_NERRNO(rename(temp_private, "/var/lib/systemd/home/local.private"));
-        if (r < 0) {
-                (void) unlink("/var/lib/systemd/home/local.public"); /* try to remove the file we already created */
-                return log_error_errno(r, "Failed to move private key file into place: %m");
+        if (rename(temp_private, "/var/lib/systemd/home/local.private") < 0) {
+                (void) unlink_noerrno("/var/lib/systemd/home/local.public"); /* try to remove the file we already created */
+                return log_error_errno(errno, "Failed to move private key file into place: %m");
         }
         temp_private = mfree(temp_private);
 
@@ -1515,11 +1474,7 @@ static int manager_load_public_key_one(Manager *m, const char *path) {
 
         assert(m);
 
-        r = path_extract_filename(path, &fn);
-        if (r < 0)
-                return log_error_errno(r, "Failed to extract filename of path '%s': %m", path);
-
-        if (streq(fn, "local.public")) /* we already loaded the private key, which includes the public one */
+        if (streq(basename(path), "local.public")) /* we already loaded the private key, which includes the public one */
                 return 0;
 
         f = fopen(path, "re");
@@ -1548,6 +1503,10 @@ static int manager_load_public_key_one(Manager *m, const char *path) {
         if (!pkey)
                 return log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to parse public key file %s.", path);
 
+        fn = strdup(basename(path));
+        if (!fn)
+                return log_oom();
+
         r = hashmap_put(m->public_keys, fn, pkey);
         if (r < 0)
                 return log_error_errno(r, "Failed to add public key to set: %m");
@@ -1560,6 +1519,7 @@ static int manager_load_public_key_one(Manager *m, const char *path) {
 
 static int manager_load_public_keys(Manager *m) {
         _cleanup_strv_free_ char **files = NULL;
+        char **i;
         int r;
 
         assert(m);
@@ -1626,7 +1586,7 @@ void manager_revalidate_image(Manager *m, Home *h) {
         assert(h);
 
         /* Frees an automatically discovered image, if it's synthetic and its image disappeared. Unmounts any
-         * image if it's mounted but its image vanished. */
+         * image if it's mounted but it's image vanished. */
 
         if (h->current_operation || !ordered_set_isempty(h->pending_operations))
                 return;
@@ -1705,7 +1665,9 @@ int manager_gc_images(Manager *m) {
 }
 
 static int on_deferred_rescan(sd_event_source *s, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
+
+        assert(m);
 
         m->deferred_rescan_event_source = sd_event_source_disable_unref(m->deferred_rescan_event_source);
 
@@ -1741,7 +1703,9 @@ int manager_enqueue_rescan(Manager *m) {
 }
 
 static int on_deferred_gc(sd_event_source *s, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
+
+        assert(m);
 
         m->deferred_gc_event_source = sd_event_source_disable_unref(m->deferred_gc_event_source);
 
@@ -1783,439 +1747,5 @@ int manager_enqueue_gc(Manager *m, Home *focus) {
                 log_warning_errno(r, "Failed to tweak priority of event source, ignoring: %m");
 
         (void) sd_event_source_set_description(m->deferred_gc_event_source, "deferred-gc");
-        return 1;
-}
-
-static bool manager_shall_rebalance(Manager *m) {
-        Home *h;
-
-        assert(m);
-
-        if (IN_SET(m->rebalance_state, REBALANCE_PENDING, REBALANCE_SHRINKING, REBALANCE_GROWING))
-                return true;
-
-        HASHMAP_FOREACH(h, m->homes_by_name)
-                if (home_shall_rebalance(h))
-                        return true;
-
-        return false;
-}
-
-static int home_cmp(Home *const*a, Home *const*b) {
-        int r;
-
-        assert(a);
-        assert(*a);
-        assert(b);
-        assert(*b);
-
-        /* Order user records by their weight (and by their name, to make things stable). We put the records
-         * with the highest weight last, since we distribute space from the beginning and round down, hence
-         * later entries tend to get slightly more than earlier entries. */
-
-        r = CMP(user_record_rebalance_weight((*a)->record), user_record_rebalance_weight((*b)->record));
-        if (r != 0)
-                return r;
-
-        return strcmp((*a)->user_name, (*b)->user_name);
-}
-
-static int manager_rebalance_calculate(Manager *m) {
-        uint64_t weight_sum, free_sum, usage_sum = 0, min_free = UINT64_MAX;
-        _cleanup_free_ Home **array = NULL;
-        bool relevant = false;
-        struct statfs sfs;
-        int c = 0, r;
-        Home *h;
-
-        assert(m);
-
-        if (statfs(get_home_root(), &sfs) < 0)
-                return log_error_errno(errno, "Failed to statfs() /home: %m");
-
-        free_sum = (uint64_t) sfs.f_bsize * sfs.f_bavail; /* This much free space is available on the
-                                                           * underlying pool directory */
-
-        weight_sum = REBALANCE_WEIGHT_BACKING; /* Grant the underlying pool directory a fixed weight of 20
-                                                * (home dirs get 100 by default, i.e. 5x more). This weight
-                                                * is not configurable, the per-home weights are. */
-
-        HASHMAP_FOREACH(h, m->homes_by_name) {
-                statfs_f_type_t fstype;
-                h->rebalance_pending = false; /* First, reset the flag, we only want it to be true for the
-                                               * homes that qualify for rebalancing */
-
-                if (!home_shall_rebalance(h)) /* Only look at actual candidates */
-                        continue;
-
-                if (home_is_busy(h))
-                        return -EBUSY; /* Let's not rebalance if there's a busy home directory. */
-
-                r = home_get_disk_status(
-                                h,
-                                &h->rebalance_size,
-                                &h->rebalance_usage,
-                                &h->rebalance_free,
-                                NULL,
-                                NULL,
-                                &fstype,
-                                NULL);
-                if (r < 0) {
-                        log_warning_errno(r, "Failed to get free space of home '%s', ignoring.", h->user_name);
-                        continue;
-                }
-
-                if (h->rebalance_free > UINT64_MAX - free_sum)
-                        return log_error_errno(SYNTHETIC_ERRNO(EOVERFLOW), "Rebalance free overflow");
-                free_sum += h->rebalance_free;
-
-                if (h->rebalance_usage > UINT64_MAX - usage_sum)
-                        return log_error_errno(SYNTHETIC_ERRNO(EOVERFLOW), "Rebalance usage overflow");
-                usage_sum += h->rebalance_usage;
-
-                h->rebalance_weight = user_record_rebalance_weight(h->record);
-                if (h->rebalance_weight > UINT64_MAX - weight_sum)
-                        return log_error_errno(SYNTHETIC_ERRNO(EOVERFLOW), "Rebalance weight overflow");
-                weight_sum += h->rebalance_weight;
-
-                h->rebalance_min = minimal_size_by_fs_magic(fstype);
-
-                if (!GREEDY_REALLOC(array, c+1))
-                        return log_oom();
-
-                array[c++] = h;
-        }
-
-        if (c == 0) {
-                log_debug("No homes to rebalance.");
-                return 0;
-        }
-
-        assert(weight_sum > 0);
-
-        log_debug("Disk space usage by all home directories to rebalance: %s — available disk space: %s",
-                  FORMAT_BYTES(usage_sum), FORMAT_BYTES(free_sum));
-
-        /* Bring the home directories in a well-defined order, so that we distribute space in a reproducible
-         * way for the same parameters. */
-        typesafe_qsort(array, c, home_cmp);
-
-        for (int i = 0; i < c; i++) {
-                uint64_t new_free;
-                double d;
-
-                h = array[i];
-
-                assert(h->rebalance_free <= free_sum);
-                assert(h->rebalance_usage <= usage_sum);
-                assert(h->rebalance_weight <= weight_sum);
-
-                d = ((double) (free_sum / 4096) * (double) h->rebalance_weight) / (double) weight_sum; /* Calculate new space for this home in units of 4K */
-
-                /* Convert from units of 4K back to bytes */
-                if (d >= (double) (UINT64_MAX/4096))
-                        new_free = UINT64_MAX;
-                else
-                        new_free = (uint64_t) d * 4096;
-
-                /* Subtract the weight and assigned space from the sums now, to distribute the rounding noise
-                 * to the remaining home dirs */
-                free_sum = LESS_BY(free_sum, new_free);
-                weight_sum = LESS_BY(weight_sum, h->rebalance_weight);
-
-                /* Keep track of home directory with the least amount of space left: we want to schedule the
-                 * next rebalance more quickly if this is low */
-                if (new_free < min_free)
-                        min_free = h->rebalance_size;
-
-                if (new_free > UINT64_MAX - h->rebalance_usage)
-                        h->rebalance_goal = UINT64_MAX-1; /* maximum size */
-                else {
-                        h->rebalance_goal = h->rebalance_usage + new_free;
-
-                        if (h->rebalance_min != UINT64_MAX && h->rebalance_goal < h->rebalance_min)
-                                h->rebalance_goal = h->rebalance_min;
-                }
-
-                /* Skip over this home if the state doesn't match the operation */
-                if ((m->rebalance_state == REBALANCE_SHRINKING && h->rebalance_goal > h->rebalance_size) ||
-                    (m->rebalance_state == REBALANCE_GROWING && h->rebalance_goal < h->rebalance_size))
-                        h->rebalance_pending = false;
-                else {
-                        log_debug("Rebalancing home directory '%s' %s %s %s.", h->user_name,
-                                  FORMAT_BYTES(h->rebalance_size),
-                                  special_glyph(SPECIAL_GLYPH_ARROW_RIGHT),
-                                  FORMAT_BYTES(h->rebalance_goal));
-                        h->rebalance_pending = true;
-                }
-
-                if ((fabs((double) h->rebalance_size - (double) h->rebalance_goal) * 100 / (double) h->rebalance_size) >= 5.0)
-                        relevant = true;
-        }
-
-        /* Scale next rebalancing interval based on the least amount of space of any of the home
-         * directories. We pick a time in the range 1min … 15min, scaled by log2(min_free), so that:
-         * 10M → ~0.7min, 100M → ~2.7min, 1G → ~4.6min, 10G → ~6.5min, 100G ~8.4 */
-        m->rebalance_interval_usec = (usec_t) CLAMP((LESS_BY(log2(min_free), 22)*15*USEC_PER_MINUTE)/26,
-                                                    1 * USEC_PER_MINUTE,
-                                                    15 * USEC_PER_MINUTE);
-
-
-        log_debug("Rebalancing interval set to %s.", FORMAT_TIMESPAN(m->rebalance_interval_usec, USEC_PER_MSEC));
-
-        /* Let's suppress small resizes, growing/shrinking file systems isn't free after all */
-        if (!relevant) {
-                log_debug("Skipping rebalancing, since all calculated size changes are below ±5%%.");
-                return 0;
-        }
-
-        return c;
-}
-
-static int manager_rebalance_apply(Manager *m) {
-        int c = 0, r;
-        Home *h;
-
-        assert(m);
-
-        HASHMAP_FOREACH(h, m->homes_by_name) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-
-                if (!h->rebalance_pending)
-                        continue;
-
-                h->rebalance_pending = false;
-
-                r = home_resize(h, h->rebalance_goal, /* secret= */ NULL, /* automatic= */ true, &error);
-                if (r < 0)
-                        log_warning_errno(r, "Failed to resize home '%s' for rebalancing, ignoring: %s",
-                                          h->user_name, bus_error_message(&error, r));
-                else
-                        c++;
-        }
-
-        return c;
-}
-
-static void manager_rebalance_reply_messages(Manager *m) {
-        int r;
-
-        assert(m);
-
-        for (;;) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *msg =
-                        set_steal_first(m->rebalance_pending_method_calls);
-
-                if (!msg)
-                        break;
-
-                r = sd_bus_reply_method_return(msg, NULL);
-                if (r < 0)
-                        log_debug_errno(r, "Failed to reply to rebalance method call, ignoring: %m");
-        }
-}
-
-static int manager_rebalance_now(Manager *m) {
-        RebalanceState busy_state; /* the state to revert to when operation fails if busy */
-        int r;
-
-        assert(m);
-
-        log_debug("Rebalancing now...");
-
-        /* We maintain a simple state engine here to keep track of what we are doing. We'll first shrink all
-         * homes that shall be shrunk and then grow all homes that shall be grown, so that they can take up
-         * the space now freed. */
-
-        for (;;) {
-                switch (m->rebalance_state) {
-
-                case REBALANCE_IDLE:
-                case REBALANCE_PENDING:
-                case REBALANCE_WAITING:
-                        /* First shrink large home dirs */
-                        m->rebalance_state = REBALANCE_SHRINKING;
-                        busy_state = REBALANCE_PENDING;
-
-                        /* We are initiating the next rebalancing cycle now, let's make the queued methods
-                         * calls the pending ones, and flush out any pending ones (which shouldn't exist at
-                         * this time anyway) */
-                        set_clear(m->rebalance_pending_method_calls);
-                        SWAP_TWO(m->rebalance_pending_method_calls, m->rebalance_queued_method_calls);
-
-                        log_debug("Shrinking phase..");
-                        break;
-
-                case REBALANCE_SHRINKING:
-                        /* Then grow small home dirs */
-                        m->rebalance_state = REBALANCE_GROWING;
-                        busy_state = REBALANCE_SHRINKING;
-                        log_debug("Growing phase..");
-                        break;
-
-                case REBALANCE_GROWING:
-                        /* Finally, we are done */
-                        log_info("Rebalancing complete.");
-                        m->rebalance_state = REBALANCE_IDLE;
-                        r = 0;
-                        goto finish;
-
-                case REBALANCE_OFF:
-                default:
-                        assert_not_reached();
-                }
-
-                r = manager_rebalance_calculate(m);
-                if (r == -EBUSY) {
-                        /* Calculations failed because one home directory is currently busy. Revert to a state that
-                         * tells us what to do next. */
-                        log_debug("Can't enter phase, busy.");
-                        m->rebalance_state = busy_state;
-                        return r;
-                }
-                if (r < 0)
-                        goto finish;
-                if (r == 0)
-                        continue; /* got to next step immediately, if there's nothing to do */
-
-                r = manager_rebalance_apply(m);
-                if (r < 0)
-                        goto finish;
-                if (r > 0)
-                        break; /* At least one resize operation is now pending, we are done for now */
-
-                /* If there was nothing to apply, go for next state right-away */
-        }
-
-        return 0;
-
-finish:
-        /* Reset state and schedule next rebalance */
-        m->rebalance_state = REBALANCE_IDLE;
-        manager_rebalance_reply_messages(m);
-        (void) manager_schedule_rebalance(m, /* immediately= */ false);
-        return r;
-}
-
-static int on_rebalance_timer(sd_event_source *s, usec_t t, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
-
-        assert(s);
-        assert(IN_SET(m->rebalance_state, REBALANCE_WAITING, REBALANCE_PENDING, REBALANCE_SHRINKING, REBALANCE_GROWING));
-
-        (void) manager_rebalance_now(m);
-        return 0;
-}
-
-int manager_schedule_rebalance(Manager *m, bool immediately) {
-        int r;
-
-        assert(m);
-
-        /* Check if there are any records where rebalancing is requested */
-        if (!manager_shall_rebalance(m)) {
-                log_debug("Not scheduling rebalancing, not needed.");
-                r = 0; /* report that we didn't schedule anything because nothing needed it */
-                goto turn_off;
-        }
-
-        if (immediately) {
-                /* If we are told to rebalance immediately, then mark a rebalance as pending (even if we area
-                 * already running one) */
-
-                if (m->rebalance_event_source) {
-                        r = sd_event_source_set_time(m->rebalance_event_source, 0);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to schedule immediate rebalancing: %m");
-                                goto turn_off;
-                        }
-
-                        r = sd_event_source_set_enabled(m->rebalance_event_source, SD_EVENT_ONESHOT);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to enable rebalancing event source: %m");
-                                goto turn_off;
-                        }
-                } else {
-                        r = sd_event_add_time(m->event, &m->rebalance_event_source, CLOCK_MONOTONIC, 0, USEC_PER_SEC, on_rebalance_timer, m);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to allocate rebalance event source: %m");
-                                goto turn_off;
-                        }
-
-                        r = sd_event_source_set_priority(m->rebalance_event_source, SD_EVENT_PRIORITY_IDLE + 10);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to set rebalance event source priority: %m");
-                                goto turn_off;
-                        }
-
-                        (void) sd_event_source_set_description(m->rebalance_event_source, "rebalance");
-
-                }
-
-                if (!IN_SET(m->rebalance_state, REBALANCE_PENDING, REBALANCE_SHRINKING, REBALANCE_GROWING))
-                        m->rebalance_state = REBALANCE_PENDING;
-
-                log_debug("Scheduled immediate rebalancing...");
-                return 1; /* report that we scheduled something */
-        }
-
-        /* If we are told to schedule a rebalancing eventually, then do so only if we are not executing
-         * anything yet. Also if we have something scheduled already, leave it in place */
-        if (!IN_SET(m->rebalance_state, REBALANCE_OFF, REBALANCE_IDLE))
-                return 1; /* report that there's already something scheduled */
-
-        if (m->rebalance_event_source) {
-                r = sd_event_source_set_time_relative(m->rebalance_event_source, m->rebalance_interval_usec);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to schedule immediate rebalancing: %m");
-                        goto turn_off;
-                }
-
-                r = sd_event_source_set_enabled(m->rebalance_event_source, SD_EVENT_ONESHOT);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to enable rebalancing event source: %m");
-                        goto turn_off;
-                }
-        } else {
-                r = sd_event_add_time_relative(m->event, &m->rebalance_event_source, CLOCK_MONOTONIC, m->rebalance_interval_usec, USEC_PER_SEC, on_rebalance_timer, m);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to allocate rebalance event source: %m");
-                        goto turn_off;
-                }
-
-                r = sd_event_source_set_priority(m->rebalance_event_source, SD_EVENT_PRIORITY_IDLE + 10);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to set rebalance event source priority: %m");
-                        goto turn_off;
-                }
-
-                (void) sd_event_source_set_description(m->rebalance_event_source, "rebalance");
-        }
-
-        m->rebalance_state = REBALANCE_WAITING; /* We managed to enqueue a timer event, we now wait until it fires */
-        log_debug("Scheduled rebalancing in %s...", FORMAT_TIMESPAN(m->rebalance_interval_usec, 0));
-        return 1; /* report that we scheduled something */
-
-turn_off:
-        m->rebalance_event_source = sd_event_source_disable_unref(m->rebalance_event_source);
-        m->rebalance_state = REBALANCE_OFF;
-        manager_rebalance_reply_messages(m);
-        return r;
-}
-
-int manager_reschedule_rebalance(Manager *m) {
-        int r;
-
-        assert(m);
-
-        /* If a rebalance is pending reschedules it so it gets executed immediately */
-
-        if (!IN_SET(m->rebalance_state, REBALANCE_PENDING, REBALANCE_SHRINKING, REBALANCE_GROWING))
-                return 0;
-
-        r = manager_schedule_rebalance(m, /* immediately= */ true);
-        if (r < 0)
-                return r;
-
         return 1;
 }

@@ -29,8 +29,10 @@ bool object_path_is_valid(const char *p) {
                 } else {
                         bool good;
 
-                        good = ascii_isalpha(*q) ||
-                                ascii_isdigit(*q) ||
+                        good =
+                                (*q >= 'a' && *q <= 'z') ||
+                                (*q >= 'A' && *q <= 'Z') ||
+                                (*q >= '0' && *q <= '9') ||
                                 *q == '_';
 
                         if (!good)
@@ -85,8 +87,9 @@ bool interface_name_is_valid(const char *p) {
                         bool good;
 
                         good =
-                                ascii_isalpha(*q) ||
-                                (!dot && ascii_isdigit(*q)) ||
+                                (*q >= 'a' && *q <= 'z') ||
+                                (*q >= 'A' && *q <= 'Z') ||
+                                (!dot && *q >= '0' && *q <= '9') ||
                                 *q == '_';
 
                         if (!good) {
@@ -131,8 +134,9 @@ bool service_name_is_valid(const char *p) {
                         bool good;
 
                         good =
-                                ascii_isalpha(*q) ||
-                                ((!dot || unique) && ascii_isdigit(*q)) ||
+                                (*q >= 'a' && *q <= 'z') ||
+                                (*q >= 'A' && *q <= 'Z') ||
+                                ((!dot || unique) && *q >= '0' && *q <= '9') ||
                                 IN_SET(*q, '_', '-');
 
                         if (!good)
@@ -163,8 +167,9 @@ bool member_name_is_valid(const char *p) {
                 bool good;
 
                 good =
-                        ascii_isalpha(*q) ||
-                        ascii_isdigit(*q) ||
+                        (*q >= 'a' && *q <= 'z') ||
+                        (*q >= 'A' && *q <= 'Z') ||
+                        (*q >= '0' && *q <= '9') ||
                         *q == '_';
 
                 if (!good)
@@ -296,8 +301,9 @@ char *bus_address_escape(const char *v) {
 
         for (a = v, b = r; *a; a++) {
 
-                if (ascii_isdigit(*a) ||
-                    ascii_isalpha(*a) ||
+                if ((*a >= '0' && *a <= '9') ||
+                    (*a >= 'a' && *a <= 'z') ||
+                    (*a >= 'A' && *a <= 'Z') ||
                     strchr("_-/.", *a))
                         *(b++) = *a;
                 else {

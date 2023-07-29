@@ -11,6 +11,7 @@
 #include "special.h"
 #include "stat-util.h"
 #include "strv.h"
+#include "util.h"
 
 static int append_machine_properties(
                 sd_bus_message *m,

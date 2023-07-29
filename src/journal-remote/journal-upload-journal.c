@@ -10,6 +10,7 @@
 #include "log.h"
 #include "string-util.h"
 #include "utf8.h"
+#include "util.h"
 
 /**
  * Write up to size bytes to buf. Return negative on error, and number of
@@ -23,7 +24,7 @@ static ssize_t write_entry(char *buf, size_t size, Uploader *u) {
 
         for (;;) {
 
-                switch (u->entry_state) {
+                switch(u->entry_state) {
                 case ENTRY_CURSOR: {
                         u->current_cursor = mfree(u->current_cursor);
 
@@ -102,13 +103,14 @@ static ssize_t write_entry(char *buf, size_t size, Uploader *u) {
                         _fallthrough_;
                 case ENTRY_BOOT_ID: {
                         sd_id128_t boot_id;
+                        char sid[SD_ID128_STRING_MAX];
 
                         r = sd_journal_get_monotonic_usec(u->journal, NULL, &boot_id);
                         if (r < 0)
                                 return log_error_errno(r, "Failed to get monotonic timestamp: %m");
 
                         r = snprintf(buf + pos, size - pos,
-                                     "_BOOT_ID=%s\n", SD_ID128_TO_STRING(boot_id));
+                                     "_BOOT_ID=%s\n", sd_id128_to_string(boot_id, sid));
                         assert(r >= 0);
                         if ((size_t) r > size - pos)
                                 /* not enough space */
@@ -227,10 +229,10 @@ static ssize_t write_entry(char *buf, size_t size, Uploader *u) {
                         return pos;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("WTF?");
                 }
         }
-        assert_not_reached();
+        assert_not_reached("WTF?");
 }
 
 static void check_update_watchdog(Uploader *u) {
@@ -250,12 +252,13 @@ static void check_update_watchdog(Uploader *u) {
 }
 
 static size_t journal_input_callback(void *buf, size_t size, size_t nmemb, void *userp) {
-        Uploader *u = ASSERT_PTR(userp);
+        Uploader *u = userp;
         int r;
         sd_journal *j;
         size_t filled = 0;
         ssize_t w;
 
+        assert(u);
         assert(nmemb <= SSIZE_MAX / size);
 
         check_update_watchdog(u);
@@ -354,7 +357,9 @@ static int dispatch_journal_input(sd_event_source *event,
                                   int fd,
                                   uint32_t revents,
                                   void *userp) {
-        Uploader *u = ASSERT_PTR(userp);
+        Uploader *u = userp;
+
+        assert(u);
 
         if (u->uploading)
                 return 0;

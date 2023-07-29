@@ -16,8 +16,7 @@
 #include "log.h"
 #include "udev-builtin.h"
 
-static int builtin_uaccess(UdevEvent *event, int argc, char *argv[], bool test) {
-        sd_device *dev = ASSERT_PTR(ASSERT_PTR(event)->dev);
+static int builtin_uaccess(sd_device *dev, int argc, char *argv[], bool test) {
         const char *path = NULL, *seat;
         bool changed_acl = false;
         uid_t uid;

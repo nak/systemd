@@ -110,6 +110,8 @@ struct udev_list_entry *udev_list_entry_add(struct udev_list *list, const char *
 }
 
 void udev_list_cleanup(struct udev_list *list) {
+        struct udev_list_entry *i, *n;
+
         if (!list)
                 return;
 
@@ -117,7 +119,7 @@ void udev_list_cleanup(struct udev_list *list) {
                 list->uptodate = false;
                 hashmap_clear_with_destructor(list->unique_entries, udev_list_entry_free);
         } else
-                LIST_FOREACH(entries, i, list->entries)
+                LIST_FOREACH_SAFE(entries, i, n, list->entries)
                         udev_list_entry_free(i);
 }
 
@@ -152,6 +154,7 @@ struct udev_list_entry *udev_list_get_entry(struct udev_list *list) {
                 else {
                         _cleanup_free_ struct udev_list_entry **buf = NULL;
                         struct udev_list_entry *entry, **p;
+                        size_t j;
 
                         buf = new(struct udev_list_entry *, n);
                         if (!buf)
@@ -163,7 +166,7 @@ struct udev_list_entry *udev_list_get_entry(struct udev_list *list) {
 
                         typesafe_qsort(buf, n, udev_list_entry_compare_func);
 
-                        for (size_t j = n; j > 0; j--)
+                        for (j = n; j > 0; j--)
                                 LIST_PREPEND(entries, list->entries, buf[j-1]);
                 }
 

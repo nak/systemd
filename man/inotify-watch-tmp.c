@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: MIT-0 */
-
 #include <stdio.h>
 #include <string.h>
 #include <sys/inotify.h>

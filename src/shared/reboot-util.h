@@ -13,5 +13,3 @@ int read_reboot_parameter(char **parameter);
 int reboot_with_parameter(RebootFlags flags);
 
 int shall_restore_state(void);
-
-bool kexec_loaded(void);

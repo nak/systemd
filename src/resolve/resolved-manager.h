@@ -7,7 +7,6 @@
 #include "sd-netlink.h"
 #include "sd-network.h"
 
-#include "common-signal.h"
 #include "hashmap.h"
 #include "list.h"
 #include "ordered-set.h"
@@ -43,7 +42,6 @@ struct Manager {
         DnsCacheMode enable_cache;
         bool cache_from_localhost;
         DnsStubListenerMode dns_stub_listener_mode;
-        usec_t stale_retention_usec;
 
 #if ENABLE_DNS_OVER_TLS
         DnsTlsManagerData dnstls_data;
@@ -142,24 +140,15 @@ struct Manager {
         sd_event_source *dns_stub_udp_event_source;
         sd_event_source *dns_stub_tcp_event_source;
 
-        /* Local DNS proxy stub on 127.0.0.54:53 */
-        sd_event_source *dns_proxy_stub_udp_event_source;
-        sd_event_source *dns_proxy_stub_tcp_event_source;
-
         Hashmap *polkit_registry;
 
         VarlinkServer *varlink_server;
-        VarlinkServer *varlink_monitor_server;
-
-        Set *varlink_subscription;
 
         sd_event_source *clock_change_event_source;
 
         LIST_HEAD(SocketGraveyard, socket_graveyard);
         SocketGraveyard *socket_graveyard_oldest;
         size_t n_socket_graveyard;
-
-        struct sigrtmin18_info sigrtmin18_info;
 };
 
 /* Manager */
@@ -170,8 +159,6 @@ Manager* manager_free(Manager *m);
 int manager_start(Manager *m);
 
 uint32_t manager_find_mtu(Manager *m);
-
-int manager_monitor_send(Manager *m, int state, int rcode, int error, DnsQuestion *question_idna, DnsQuestion *question_utf8, DnsQuestion *collected_questions, DnsAnswer *answer);
 
 int manager_write(Manager *m, int fd, DnsPacket *p);
 int manager_send(Manager *m, int fd, int ifindex, int family, const union in_addr_union *destination, uint16_t port, const union in_addr_union *source, DnsPacket *p);

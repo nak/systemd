@@ -6,23 +6,23 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "sd-daemon.h"
+
 #include "alloc-util.h"
 #include "bus-error.h"
 #include "bus-locator.h"
 #include "bus-log-control-api.h"
 #include "bus-polkit.h"
 #include "cgroup-util.h"
-#include "common-signal.h"
-#include "daemon-util.h"
 #include "dirent-util.h"
 #include "discover-image.h"
 #include "fd-util.h"
 #include "format-util.h"
 #include "hostname-util.h"
+#include "label.h"
 #include "machined-varlink.h"
 #include "machined.h"
 #include "main-func.h"
-#include "mkdir-label.h"
 #include "process-util.h"
 #include "service-util.h"
 #include "signal-util.h"
@@ -61,15 +61,6 @@ static int manager_new(Manager **ret) {
         r = sd_event_add_signal(m->event, NULL, SIGTERM, NULL, NULL);
         if (r < 0)
                 return r;
-
-        r = sd_event_add_signal(m->event, NULL, SIGRTMIN+18, sigrtmin18_handler, NULL);
-        if (r < 0)
-                return r;
-
-        r = sd_event_add_memory_pressure(m->event, NULL, NULL, NULL);
-        if (r < 0)
-                log_full_errno(ERRNO_IS_NOT_SUPPORTED(r) || ERRNO_IS_PRIVILEGE(r) || r == -EHOSTDOWN ? LOG_DEBUG : LOG_NOTICE, r,
-                               "Unable to create memory pressure event source, ignoring: %m");
 
         (void) sd_event_set_watchdog(m->event, true);
 
@@ -127,9 +118,9 @@ static int manager_add_host_machine(Manager *m) {
         if (!unit)
                 return log_oom();
 
-        r = machine_new(m, MACHINE_HOST, ".host", &t);
-        if (r < 0)
-                return log_error_errno(r, "Failed to create machine: %m");
+        t = machine_new(m, MACHINE_HOST, ".host");
+        if (!t)
+                return log_oom();
 
         t->leader = 1;
         t->id = mid;
@@ -137,7 +128,7 @@ static int manager_add_host_machine(Manager *m) {
         t->root_directory = TAKE_PTR(rd);
         t->unit = TAKE_PTR(unit);
 
-        dual_timestamp_from_boottime(&t->timestamp, 0);
+        dual_timestamp_from_boottime_or_monotonic(&t->timestamp, 0);
 
         m->host_machine = t;
 
@@ -146,6 +137,7 @@ static int manager_add_host_machine(Manager *m) {
 
 static int manager_enumerate_machines(Manager *m) {
         _cleanup_closedir_ DIR *d = NULL;
+        struct dirent *de;
         int r;
 
         assert(m);
@@ -349,7 +341,7 @@ static int run(int argc, char *argv[]) {
          * make sure this check stays in. */
         (void) mkdir_label("/run/systemd/machines", 0755);
 
-        assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGCHLD, SIGTERM, SIGINT, SIGRTMIN+18, -1) >= 0);
+        assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGCHLD, SIGTERM, SIGINT, -1) >= 0);
 
         r = manager_new(&m);
         if (r < 0)
@@ -360,14 +352,17 @@ static int run(int argc, char *argv[]) {
                 return log_error_errno(r, "Failed to fully start up daemon: %m");
 
         log_debug("systemd-machined running as pid "PID_FMT, getpid_cached());
-        r = sd_notify(false, NOTIFY_READY);
-        if (r < 0)
-                log_warning_errno(r, "Failed to send readiness notification, ignoring: %m");
+        (void) sd_notify(false,
+                         "READY=1\n"
+                         "STATUS=Processing requests...");
 
         r = manager_run(m);
 
-        (void) sd_notify(false, NOTIFY_STOPPING);
         log_debug("systemd-machined stopped as pid "PID_FMT, getpid_cached());
+        (void) sd_notify(false,
+                         "STOPPING=1\n"
+                         "STATUS=Shutting down...");
+
         return r;
 }
 

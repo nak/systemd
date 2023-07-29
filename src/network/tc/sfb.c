@@ -13,15 +13,7 @@
 
 static int stochastic_fair_blue_fill_message(Link *link, QDisc *qdisc, sd_netlink_message *req) {
         StochasticFairBlue *sfb;
-        int r;
-
-        assert(link);
-        assert(qdisc);
-        assert(req);
-
-        assert_se(sfb = SFB(qdisc));
-
-        const struct tc_sfb_qopt opt = {
+        struct tc_sfb_qopt opt = {
             .rehash_interval = 600*1000,
             .warmup_time = 60*1000,
             .penalty_rate = 10,
@@ -30,20 +22,28 @@ static int stochastic_fair_blue_fill_message(Link *link, QDisc *qdisc, sd_netlin
             .decrement = (SFB_MAX_PROB + 10000) / 20000,
             .max = 25,
             .bin_size = 20,
-            .limit = sfb->packet_limit,
         };
+        int r;
+
+        assert(link);
+        assert(qdisc);
+        assert(req);
+
+        sfb = SFB(qdisc);
+
+        opt.limit = sfb->packet_limit;
 
         r = sd_netlink_message_open_container_union(req, TCA_OPTIONS, "sfb");
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not open container TCA_OPTIONS: %m");
 
-        r = sd_netlink_message_append_data(req, TCA_SFB_PARMS, &opt, sizeof(opt));
+        r = sd_netlink_message_append_data(req, TCA_SFB_PARMS, &opt, sizeof(struct tc_sfb_qopt));
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not append TCA_SFB_PARMS attribute: %m");
 
         r = sd_netlink_message_close_container(req);
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not close container TCA_OPTIONS: %m");
 
         return 0;
 }
@@ -62,12 +62,13 @@ int config_parse_stochastic_fair_blue_u32(
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
         StochasticFairBlue *sfb;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(QDISC_KIND_SFB, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)

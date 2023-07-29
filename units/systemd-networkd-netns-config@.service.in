@@ -1,0 +1,6 @@
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "cat /usr/share/dbus-1/system.d/org.freedesktop.network1.conf | sed 's/network1/network1\.%i/g' > /usr/share/dbus-1/system.d/org.freedesktop.network1.%i.conf"
+ExecStop=rm /usr/share/dbus-1/system.d/org.freedesktop.network1.%i.conf
+User=root

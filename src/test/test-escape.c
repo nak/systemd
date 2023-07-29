@@ -5,40 +5,38 @@
 #include "macro.h"
 #include "tests.h"
 
-TEST(cescape) {
-        _cleanup_free_ char *t = NULL;
+static void test_cescape(void) {
+        _cleanup_free_ char *t;
 
         assert_se(t = cescape("abc\\\"\b\f\n\r\t\v\a\003\177\234\313"));
         assert_se(streq(t, "abc\\\\\\\"\\b\\f\\n\\r\\t\\v\\a\\003\\177\\234\\313"));
 }
 
-TEST(xescape) {
-        _cleanup_free_ char *t = NULL;
+static void test_xescape(void) {
+        _cleanup_free_ char *t;
 
         assert_se(t = xescape("abc\\\"\b\f\n\r\t\v\a\003\177\234\313", ""));
         assert_se(streq(t, "abc\\x5c\"\\x08\\x0c\\x0a\\x0d\\x09\\x0b\\x07\\x03\\x7f\\x9c\\xcb"));
 }
 
-static void test_xescape_full_one(bool eight_bits) {
+static void test_xescape_full(bool eight_bits) {
         const char* escaped = !eight_bits ?
                 "a\\x62c\\x5c\"\\x08\\x0c\\x0a\\x0d\\x09\\x0b\\x07\\x03\\x7f\\x9c\\xcb" :
                 "a\\x62c\\x5c\"\\x08\\x0c\\x0a\\x0d\\x09\\x0b\\x07\\x03\177\234\313";
         const unsigned full_fit = !eight_bits ? 55 : 46;
         XEscapeFlags flags = eight_bits * XESCAPE_8_BIT;
 
-        log_info("/* %s */", __func__);
-
         for (unsigned i = 0; i < 60; i++) {
-                _cleanup_free_ char *t = NULL, *q = NULL;
+                _cleanup_free_ char *t, *q;
 
                 assert_se(t = xescape_full("abc\\\"\b\f\n\r\t\v\a\003\177\234\313", "b", i, flags));
 
-                log_info("%02u: <%s>", i, t);
+                log_info("%02d: <%s>", i, t);
 
                 if (i >= full_fit)
                         assert_se(streq(t, escaped));
                 else if (i >= 3) {
-                        /* We need up to four columns, so up to three columns may be wasted */
+                        /* We need up to four columns, so up to three three columns may be wasted */
                         assert_se(strlen(t) == i || strlen(t) == i - 1 || strlen(t) == i - 2 || strlen(t) == i - 3);
                         assert_se(strneq(t, escaped, i - 3) || strneq(t, escaped, i - 4) ||
                                   strneq(t, escaped, i - 5) || strneq(t, escaped, i - 6));
@@ -51,21 +49,16 @@ static void test_xescape_full_one(bool eight_bits) {
                 assert_se(q = xescape_full("abc\\\"\b\f\n\r\t\v\a\003\177\234\313", "b", i,
                                            flags | XESCAPE_FORCE_ELLIPSIS));
 
-                log_info("%02u: <%s>", i, q);
+                log_info("%02d: <%s>", i, q);
                 if (i > 0)
                         assert_se(endswith(q, "."));
-                assert_se(strlen(q) <= i);
-                assert_se(strlen(q) + 3 >= strlen(t));
+                assert(strlen(q) <= i);
+                assert(strlen(q) + 3 >= strlen(t));
         }
 }
 
-TEST(test_xescape_full) {
-        test_xescape_full_one(false);
-        test_xescape_full_one(true);
-}
-
-TEST(cunescape) {
-        _cleanup_free_ char *unescaped = NULL;
+static void test_cunescape(void) {
+        _cleanup_free_ char *unescaped;
 
         assert_se(cunescape("abc\\\\\\\"\\b\\f\\a\\n\\r\\t\\v\\003\\177\\234\\313\\000\\x00", 0, &unescaped) < 0);
         assert_se(cunescape("abc\\\\\\\"\\b\\f\\a\\n\\r\\t\\v\\003\\177\\234\\313\\000\\x00", UNESCAPE_RELAX, &unescaped) >= 0);
@@ -132,14 +125,14 @@ TEST(cunescape) {
 }
 
 static void test_shell_escape_one(const char *s, const char *bad, const char *expected) {
-        _cleanup_free_ char *r = NULL;
+        _cleanup_free_ char *r;
 
         assert_se(r = shell_escape(s, bad));
         log_debug("%s → %s (expected %s)", s, r, expected);
         assert_se(streq_ptr(r, expected));
 }
 
-TEST(shell_escape) {
+static void test_shell_escape(void) {
         test_shell_escape_one("", "", "");
         test_shell_escape_one("\\", "", "\\\\");
         test_shell_escape_one("foobar", "", "foobar");
@@ -156,7 +149,8 @@ static void test_shell_maybe_quote_one(const char *s, ShellEscapeFlags flags, co
         assert_se(streq(ret, expected));
 }
 
-TEST(shell_maybe_quote) {
+static void test_shell_maybe_quote(void) {
+
         test_shell_maybe_quote_one("", 0, "");
         test_shell_maybe_quote_one("", SHELL_ESCAPE_EMPTY, "\"\"");
         test_shell_maybe_quote_one("", SHELL_ESCAPE_POSIX, "");
@@ -196,21 +190,19 @@ TEST(shell_maybe_quote) {
 
         test_shell_maybe_quote_one("głąb\002\003rząd", 0, "\"głąb\\002\\003rząd\"");
         test_shell_maybe_quote_one("głąb\002\003rząd", SHELL_ESCAPE_POSIX, "$'głąb\\002\\003rząd'");
-
-        /* Bogus UTF-8 strings */
-        test_shell_maybe_quote_one("\250\350", 0, "\"\\250\\350\"");
-        test_shell_maybe_quote_one("\250\350", SHELL_ESCAPE_POSIX, "$'\\250\\350'");
 }
 
 static void test_quote_command_line_one(char **argv, const char *expected) {
-        _cleanup_free_ char *s = NULL;
+        _cleanup_free_ char *s;
 
-        assert_se(s = quote_command_line(argv, SHELL_ESCAPE_EMPTY));
+        assert_se(s = quote_command_line(argv));
         log_info("%s", s);
         assert_se(streq(s, expected));
 }
 
-TEST(quote_command_line) {
+static void test_quote_command_line(void) {
+        log_info("/* %s */", __func__);
+
         test_quote_command_line_one(STRV_MAKE("true", "true"),
                                     "true true");
         test_quote_command_line_one(STRV_MAKE("true", "with a space"),
@@ -223,20 +215,17 @@ TEST(quote_command_line) {
                                     "true \"\\$dollar\"");
 }
 
-static void test_octescape_one(const char *s, const char *expected) {
-        _cleanup_free_ char *ret = NULL;
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
 
-        assert_se(ret = octescape(s, strlen_ptr(s)));
-        log_debug("octescape(\"%s\") → \"%s\" (expected: \"%s\")", strnull(s), ret, expected);
-        assert_se(streq(ret, expected));
+        test_cescape();
+        test_xescape();
+        test_xescape_full(false);
+        test_xescape_full(true);
+        test_cunescape();
+        test_shell_escape();
+        test_shell_maybe_quote();
+        test_quote_command_line();
+
+        return 0;
 }
-
-TEST(octescape) {
-        test_octescape_one(NULL, "");
-        test_octescape_one("", "");
-        test_octescape_one("foo", "foo");
-        test_octescape_one("\"\\\"", "\\042\\134\\042");
-        test_octescape_one("\123\213\222", "\123\\213\\222");
-}
-
-DEFINE_TEST_MAIN(LOG_DEBUG);

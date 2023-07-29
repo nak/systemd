@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include "errno-util.h"
-#include "glyph-util.h"
 #include "homectl-recovery-key.h"
 #include "libcrypt-util.h"
+#include "locale-util.h"
 #include "memory-util.h"
 #include "qrcode-util.h"
 #include "random-util.h"
@@ -19,7 +19,7 @@ static int add_privileged(JsonVariant **v, const char *hashed) {
         assert(hashed);
 
         r = json_build(&e, JSON_BUILD_OBJECT(
-                                       JSON_BUILD_PAIR("type", JSON_BUILD_CONST_STRING("modhex64")),
+                                       JSON_BUILD_PAIR("type", JSON_BUILD_STRING("modhex64")),
                                        JSON_BUILD_PAIR("hashedPassword", JSON_BUILD_STRING(hashed))));
         if (r < 0)
                 return log_error_errno(r, "Failed to build recover key JSON object: %m");
@@ -67,7 +67,7 @@ static int add_public(JsonVariant **v) {
 
 static int add_secret(JsonVariant **v, const char *password) {
         _cleanup_(json_variant_unrefp) JsonVariant *w = NULL, *l = NULL;
-        _cleanup_strv_free_erase_ char **passwords = NULL;
+        _cleanup_(strv_free_erasep) char **passwords = NULL;
         int r;
 
         assert(v);

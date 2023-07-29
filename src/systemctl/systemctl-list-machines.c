@@ -15,15 +15,11 @@
 #include "terminal-util.h"
 
 const struct bus_properties_map machine_info_property_map[] = {
-        /* Might good to keep same order here as in bus_manager_vtable[], server side */
-        { "Version",            "s", NULL, offsetof(struct machine_info, version)        },
-        { "Tainted",            "s", NULL, offsetof(struct machine_info, tainted)        },
-        { "UserspaceTimestamp", "t", NULL, offsetof(struct machine_info, timestamp)      },
-        { "NNames",             "u", NULL, offsetof(struct machine_info, n_names)        },
-        { "NFailedUnits",       "u", NULL, offsetof(struct machine_info, n_failed_units) },
-        { "NJobs",              "u", NULL, offsetof(struct machine_info, n_jobs)         },
-        { "ControlGroup",       "s", NULL, offsetof(struct machine_info, control_group)  },
         { "SystemState",        "s", NULL, offsetof(struct machine_info, state)          },
+        { "NJobs",              "u", NULL, offsetof(struct machine_info, n_jobs)         },
+        { "NFailedUnits",       "u", NULL, offsetof(struct machine_info, n_failed_units) },
+        { "ControlGroup",       "s", NULL, offsetof(struct machine_info, control_group)  },
+        { "UserspaceTimestamp", "t", NULL, offsetof(struct machine_info, timestamp)      },
         {}
 };
 
@@ -31,10 +27,8 @@ void machine_info_clear(struct machine_info *info) {
         assert(info);
 
         free(info->name);
-        free(info->version);
-        free(info->tainted);
-        free(info->control_group);
         free(info->state);
+        free(info->control_group);
         zero(*info);
 }
 
@@ -99,6 +93,7 @@ static int get_machine_list(
         struct machine_info *machine_infos = NULL;
         _cleanup_strv_free_ char **m = NULL;
         _cleanup_free_ char *hn = NULL;
+        char **i;
         int c = 0, r;
 
         hn = gethostname_malloc();
@@ -171,7 +166,7 @@ static int output_machines_list(struct machine_info *machine_infos, unsigned n) 
         if (arg_full)
                 table_set_width(table, 0);
 
-        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
+        (void) table_set_empty_string(table, "-");
 
         for (struct machine_info *m = machine_infos; m < machine_infos + n; m++) {
                 _cleanup_free_ char *mname = NULL;
@@ -224,7 +219,7 @@ static int output_machines_list(struct machine_info *machine_infos, unsigned n) 
         return 0;
 }
 
-int verb_list_machines(int argc, char *argv[], void *userdata) {
+int list_machines(int argc, char *argv[], void *userdata) {
         struct machine_info *machine_infos = NULL;
         sd_bus *bus;
         int r, rc;
@@ -237,7 +232,7 @@ int verb_list_machines(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return r;
 
-        pager_open(arg_pager_flags);
+        (void) pager_open(arg_pager_flags);
 
         typesafe_qsort(machine_infos, r, compare_machine_info);
         rc = output_machines_list(machine_infos, r);

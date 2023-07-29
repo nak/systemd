@@ -3,12 +3,10 @@
 #include "sd-path.h"
 
 #include "conf-files.h"
-#include "constants.h"
+#include "def.h"
 #include "env-file.h"
 #include "escape.h"
-#include "glyph-util.h"
 #include "log.h"
-#include "main-func.h"
 #include "path-lookup.h"
 #include "strv.h"
 
@@ -43,6 +41,7 @@ static int environment_dirs(char ***ret) {
 
 static int load_and_print(void) {
         _cleanup_strv_free_ char **dirs = NULL, **files = NULL, **env = NULL;
+        char **i;
         int r;
 
         r = environment_dirs(&dirs);
@@ -57,7 +56,7 @@ static int load_and_print(void) {
          * that in case of failure, a partial update is better than none. */
 
         STRV_FOREACH(i, files) {
-                log_debug("Reading %s%s", *i, special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+                log_debug("Reading %s…", *i);
 
                 r = merge_env_file(&env, NULL, *i);
                 if (r == -ENOMEM)
@@ -81,19 +80,20 @@ static int load_and_print(void) {
         return 0;
 }
 
-static int run(int argc, char *argv[]) {
+int main(int argc, char *argv[]) {
         int r;
 
         log_parse_environment();
         log_open();
 
-        if (argc > 1)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "This program takes no arguments.");
+        if (argc > 1) {
+                log_error("This program takes no arguments.");
+                return EXIT_FAILURE;
+        }
 
         r = load_and_print();
         if (r < 0)
-                return log_error_errno(r, "Failed to load environment.d: %m");
-        return 0;
-}
+                log_error_errno(r, "Failed to load environment.d: %m");
 
-DEFINE_MAIN_FUNCTION(run);
+        return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+}

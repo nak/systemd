@@ -1,5 +1,4 @@
 #!/bin/sh
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -e
 
 if [ -z "$1" ]; then
@@ -14,11 +13,7 @@ target="man/$1.html"
 ninja -C "@BUILD_ROOT@" "$target"
 
 fullname="@BUILD_ROOT@/$target"
-if [ -f "$fullname" ]; then
-    redirect="$(readlink "$fullname" || :)"
-else
-    redirect=""
-fi
+redirect="$(test -f "$fullname" && readlink "$fullname" || :)"
 if [ -n "$redirect" ]; then
     ninja -C "@BUILD_ROOT@" "man/$redirect"
 

@@ -3,7 +3,6 @@
 
 typedef struct Path Path;
 typedef struct PathSpec PathSpec;
-typedef struct ActivationDetailsPath ActivationDetailsPath;
 
 #include "unit.h"
 
@@ -47,7 +46,6 @@ typedef enum PathResult {
         PATH_FAILURE_RESOURCES,
         PATH_FAILURE_START_LIMIT_HIT,
         PATH_FAILURE_UNIT_START_LIMIT_HIT,
-        PATH_FAILURE_TRIGGER_LIMIT_HIT,
         _PATH_RESULT_MAX,
         _PATH_RESULT_INVALID = -EINVAL,
 } PathResult;
@@ -63,21 +61,11 @@ struct Path {
         mode_t directory_mode;
 
         PathResult result;
-
-        RateLimit trigger_limit;
-
-        sd_event_source *trigger_notify_event_source;
-};
-
-struct ActivationDetailsPath {
-        ActivationDetails meta;
-        char *trigger_path_filename;
 };
 
 void path_free_specs(Path *p);
 
 extern const UnitVTable path_vtable;
-extern const ActivationDetailsVTable activation_details_path_vtable;
 
 const char* path_type_to_string(PathType i) _const_;
 PathType path_type_from_string(const char *s) _pure_;
@@ -86,4 +74,3 @@ const char* path_result_to_string(PathResult i) _const_;
 PathResult path_result_from_string(const char *s) _pure_;
 
 DEFINE_CAST(PATH, Path);
-DEFINE_ACTIVATION_DETAILS_CAST(ACTIVATION_DETAILS_PATH, ActivationDetailsPath, PATH);

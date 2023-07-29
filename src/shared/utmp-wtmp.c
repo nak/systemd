@@ -12,7 +12,6 @@
 #include <utmpx.h>
 
 #include "alloc-util.h"
-#include "errno-util.h"
 #include "fd-util.h"
 #include "hostname-util.h"
 #include "io-util.h"
@@ -284,7 +283,7 @@ int utmp_put_runlevel(int runlevel, int previous) {
 #define TIMEOUT_USEC (50 * USEC_PER_MSEC)
 
 static int write_to_terminal(const char *tty, const char *message) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *p;
         size_t left;
         usec_t end;
@@ -293,15 +292,13 @@ static int write_to_terminal(const char *tty, const char *message) {
         assert(message);
 
         fd = open(tty, O_WRONLY|O_NONBLOCK|O_NOCTTY|O_CLOEXEC);
-        if (fd < 0)
+        if (fd < 0 || !isatty(fd))
                 return -errno;
-        if (!isatty(fd))
-                return -ENOTTY;
 
         p = message;
         left = strlen(message);
 
-        end = usec_add(now(CLOCK_MONOTONIC), TIMEOUT_USEC);
+        end = now(CLOCK_MONOTONIC) + TIMEOUT_USEC;
 
         while (left > 0) {
                 ssize_t n;
@@ -309,21 +306,19 @@ static int write_to_terminal(const char *tty, const char *message) {
                 int k;
 
                 t = now(CLOCK_MONOTONIC);
+
                 if (t >= end)
                         return -ETIME;
 
                 k = fd_wait_for_event(fd, POLLOUT, end - t);
-                if (k < 0) {
-                        if (ERRNO_IS_TRANSIENT(k))
-                                continue;
+                if (k < 0)
                         return k;
-                }
                 if (k == 0)
                         return -ETIME;
 
                 n = write(fd, p, left);
                 if (n < 0) {
-                        if (ERRNO_IS_TRANSIENT(errno))
+                        if (errno == EAGAIN)
                                 continue;
 
                         return -errno;
@@ -342,11 +337,12 @@ int utmp_wall(
         const char *message,
         const char *username,
         const char *origin_tty,
-        bool (*match_tty)(const char *tty, bool is_local, void *userdata),
+        bool (*match_tty)(const char *tty, void *userdata),
         void *userdata) {
 
         _unused_ _cleanup_(utxent_cleanup) bool utmpx = false;
         _cleanup_free_ char *text = NULL, *hn = NULL, *un = NULL, *stdin_tty = NULL;
+        char date[FORMAT_TIMESTAMP_MAX];
         struct utmpx *u;
         int r;
 
@@ -365,12 +361,12 @@ int utmp_wall(
         }
 
         if (asprintf(&text,
-                     "\r\n"
+                     "\a\r\n"
                      "Broadcast message from %s@%s%s%s (%s):\r\n\r\n"
                      "%s\r\n\r\n",
                      un ?: username, hn,
                      origin_tty ? " on " : "", strempty(origin_tty),
-                     FORMAT_TIMESTAMP(now(CLOCK_REALTIME)),
+                     format_timestamp(date, sizeof(date), now(CLOCK_REALTIME)),
                      message) < 0)
                 return -ENOMEM;
 
@@ -386,20 +382,17 @@ int utmp_wall(
                 if (u->ut_type != USER_PROCESS || u->ut_user[0] == 0)
                         continue;
 
-                /* This access is fine, because strlen("/dev/") < 32 (UT_LINESIZE) */
+                /* this access is fine, because STRLEN("/dev/") << 32 (UT_LINESIZE) */
                 if (path_startswith(u->ut_line, "/dev/"))
                         path = u->ut_line;
                 else {
                         if (asprintf(&buf, "/dev/%.*s", (int) sizeof(u->ut_line), u->ut_line) < 0)
                                 return -ENOMEM;
+
                         path = buf;
                 }
 
-                /* It seems that the address field is always set for remote logins.
-                 * For local logins and other local entries, we get [0,0,0,0]. */
-                bool is_local = memeqzero(u->ut_addr_v6, sizeof(u->ut_addr_v6));
-
-                if (!match_tty || match_tty(path, is_local, userdata)) {
+                if (!match_tty || match_tty(path, userdata)) {
                         q = write_to_terminal(path, text);
                         if (q < 0)
                                 r = q;

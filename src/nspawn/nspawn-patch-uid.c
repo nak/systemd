@@ -22,23 +22,27 @@
 #if HAVE_ACL
 
 static int get_acl(int fd, const char *name, acl_type_t type, acl_t *ret) {
+        char procfs_path[STRLEN("/proc/self/fd/") + DECIMAL_STR_MAX(int) + 1];
         acl_t acl;
 
         assert(fd >= 0);
         assert(ret);
 
         if (name) {
-                _cleanup_close_ int child_fd = -EBADF;
+                _cleanup_close_ int child_fd = -1;
 
                 child_fd = openat(fd, name, O_PATH|O_CLOEXEC|O_NOFOLLOW);
                 if (child_fd < 0)
                         return -errno;
 
-                acl = acl_get_file(FORMAT_PROC_FD_PATH(child_fd), type);
+                xsprintf(procfs_path, "/proc/self/fd/%i", child_fd);
+                acl = acl_get_file(procfs_path, type);
         } else if (type == ACL_TYPE_ACCESS)
                 acl = acl_get_fd(fd);
-        else
-                acl = acl_get_file(FORMAT_PROC_FD_PATH(fd), type);
+        else {
+                xsprintf(procfs_path, "/proc/self/fd/%i", fd);
+                acl = acl_get_file(procfs_path, type);
+        }
         if (!acl)
                 return -errno;
 
@@ -47,23 +51,27 @@ static int get_acl(int fd, const char *name, acl_type_t type, acl_t *ret) {
 }
 
 static int set_acl(int fd, const char *name, acl_type_t type, acl_t acl) {
+        char procfs_path[STRLEN("/proc/self/fd/") + DECIMAL_STR_MAX(int) + 1];
         int r;
 
         assert(fd >= 0);
         assert(acl);
 
         if (name) {
-                _cleanup_close_ int child_fd = -EBADF;
+                _cleanup_close_ int child_fd = -1;
 
                 child_fd = openat(fd, name, O_PATH|O_CLOEXEC|O_NOFOLLOW);
                 if (child_fd < 0)
                         return -errno;
 
-                r = acl_set_file(FORMAT_PROC_FD_PATH(child_fd), type, acl);
+                xsprintf(procfs_path, "/proc/self/fd/%i", child_fd);
+                r = acl_set_file(procfs_path, type, acl);
         } else if (type == ACL_TYPE_ACCESS)
                 r = acl_set_fd(fd, acl);
-        else
-                r = acl_set_file(FORMAT_PROC_FD_PATH(fd), type, acl);
+        else {
+                xsprintf(procfs_path, "/proc/self/fd/%i", fd);
+                r = acl_set_file(procfs_path, type, acl);
+        }
         if (r < 0)
                 return -errno;
 
@@ -181,9 +189,7 @@ static int patch_acls(int fd, const char *name, const struct stat *st, uid_t shi
 
         if (S_ISDIR(st->st_mode)) {
                 acl_free(acl);
-
-                if (shifted)
-                        acl_free(shifted);
+                acl_free(shifted);
 
                 acl = shifted = NULL;
 
@@ -315,6 +321,8 @@ static int recurse_fd(int fd, bool donate_fd, const struct stat *st, uid_t shift
                 goto read_only;
 
         if (S_ISDIR(st->st_mode)) {
+                struct dirent *de;
+
                 if (!donate_fd) {
                         int copy;
 
@@ -408,7 +416,7 @@ static int fd_patch_uid_internal(int fd, bool donate_fd, uid_t shift, uid_t rang
 
         /* Recursively adjusts the UID/GIDs of all files of a directory tree. This is used to automatically fix up an
          * OS tree to the used user namespace UID range. Note that this automatic adjustment only works for UID ranges
-         * following the concept that the upper 16-bit of a UID identify the container, and the lower 16-bit are the actual
+         * following the concept that the upper 16bit of a UID identify the container, and the lower 16bit are the actual
          * UID within the container. */
 
         if ((shift & 0xFFFF) != 0) {
@@ -423,7 +431,7 @@ static int fd_patch_uid_internal(int fd, bool donate_fd, uid_t shift, uid_t rang
         }
 
         if (range != 0x10000) {
-                /* We only support containers with 16-bit UID ranges for the patching logic */
+                /* We only support containers with 16bit UID ranges for the patching logic */
                 r = -EOPNOTSUPP;
                 goto finish;
         }
@@ -440,7 +448,7 @@ static int fd_patch_uid_internal(int fd, bool donate_fd, uid_t shift, uid_t rang
         }
 
         /* Try to detect if the range is already right. Of course, this a pretty drastic optimization, as we assume
-         * that if the top-level dir has the right upper 16-bit assigned, then everything below will have too... */
+         * that if the top-level dir has the right upper 16bit assigned, then everything below will have too... */
         if (((uint32_t) (st.st_uid ^ shift) >> 16) == 0)
                 return 0;
 

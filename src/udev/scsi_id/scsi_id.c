@@ -16,7 +16,6 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
-#include "build.h"
 #include "device-nodes.h"
 #include "extract-word.h"
 #include "fd-util.h"
@@ -27,15 +26,14 @@
 #include "strv.h"
 #include "strxcpyx.h"
 #include "udev-util.h"
+#include "version.h"
 
 static const struct option options[] = {
         { "device",             required_argument, NULL, 'd' },
         { "config",             required_argument, NULL, 'f' },
         { "page",               required_argument, NULL, 'p' },
-        { "denylisted",         no_argument,       NULL, 'b' },
-        { "allowlisted",        no_argument,       NULL, 'g' },
-        { "blacklisted",        no_argument,       NULL, 'b' }, /* backward compat */
-        { "whitelisted",        no_argument,       NULL, 'g' }, /* backward compat */
+        { "blacklisted",        no_argument,       NULL, 'b' },
+        { "whitelisted",        no_argument,       NULL, 'g' },
         { "replace-whitespace", no_argument,       NULL, 'u' },
         { "sg-version",         required_argument, NULL, 's' },
         { "verbose",            no_argument,       NULL, 'v' },
@@ -224,8 +222,8 @@ static void help(void) {
                "  -f --config=                     Location of config file\n"
                "  -p --page=0x80|0x83|pre-spc3-83  SCSI page (0x80, 0x83, pre-spc3-83)\n"
                "  -s --sg-version=3|4              Use SGv3 or SGv4\n"
-               "  -b --denylisted                  Treat device as denylisted\n"
-               "  -g --allowlisted                 Treat device as allowlisted\n"
+               "  -b --blacklisted                 Treat device as blacklisted\n"
+               "  -g --whitelisted                 Treat device as whitelisted\n"
                "  -u --replace-whitespace          Replace all whitespace by underscores\n"
                "  -v --verbose                     Verbose logging\n"
                "  -x --export                      Print values as environment keys\n",
@@ -297,7 +295,7 @@ static int set_options(int argc, char **argv,
                         break;
 
                 case 'V':
-                        version();
+                        printf("%s\n", GIT_VERSION);
                         exit(EXIT_SUCCESS);
 
                 case 'x':
@@ -308,7 +306,7 @@ static int set_options(int argc, char **argv,
                         return -1;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option");
                 }
 
         if (optind < argc && !dev_specified) {
@@ -359,7 +357,7 @@ static int per_dev_options(struct scsi_id_device *dev_scsi, int *good_bad, int *
                         break;
 
                 default:
-                        log_error("Unknown or bad option '%c' (0x%x)", option, (unsigned) option);
+                        log_error("Unknown or bad option '%c' (0x%x)", option, option);
                         retval = -1;
                         break;
                 }

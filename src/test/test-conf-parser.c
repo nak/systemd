@@ -7,8 +7,8 @@
 #include "macro.h"
 #include "string-util.h"
 #include "strv.h"
-#include "tests.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
 static void test_config_parse_path_one(const char *rvalue, const char *expected) {
         _cleanup_free_ char *path = NULL;
@@ -87,7 +87,7 @@ static void test_config_parse_nsec_one(const char *rvalue, nsec_t expected) {
         assert_se(expected == v);
 }
 
-TEST(config_parse_path) {
+static void test_config_parse_path(void) {
         test_config_parse_path_one("/path", "/path");
         test_config_parse_path_one("/path//////////", "/path");
         test_config_parse_path_one("///path/foo///bar////bar//", "/path/foo/bar/bar");
@@ -98,21 +98,21 @@ TEST(config_parse_path) {
         test_config_parse_path_one("/path/\xc3\x7f", NULL);
 }
 
-TEST(config_parse_log_level) {
+static void test_config_parse_log_level(void) {
         test_config_parse_log_level_one("debug", LOG_DEBUG);
         test_config_parse_log_level_one("info", LOG_INFO);
 
         test_config_parse_log_level_one("garbage", 0);
 }
 
-TEST(config_parse_log_facility) {
+static void test_config_parse_log_facility(void) {
         test_config_parse_log_facility_one("mail", LOG_MAIL);
         test_config_parse_log_facility_one("user", LOG_USER);
 
         test_config_parse_log_facility_one("garbage", 0);
 }
 
-TEST(config_parse_iec_size) {
+static void test_config_parse_iec_size(void) {
         test_config_parse_iec_size_one("1024", 1024);
         test_config_parse_iec_size_one("2K", 2048);
         test_config_parse_iec_size_one("10M", 10 * 1024 * 1024);
@@ -125,7 +125,7 @@ TEST(config_parse_iec_size) {
         test_config_parse_iec_size_one("garbage", 0);
 }
 
-TEST(config_parse_si_uint64) {
+static void test_config_parse_si_uint64(void) {
         test_config_parse_si_uint64_one("1024", 1024);
         test_config_parse_si_uint64_one("2K", 2000);
         test_config_parse_si_uint64_one("10M", 10 * 1000 * 1000);
@@ -138,7 +138,7 @@ TEST(config_parse_si_uint64) {
         test_config_parse_si_uint64_one("garbage", 0);
 }
 
-TEST(config_parse_int) {
+static void test_config_parse_int(void) {
         test_config_parse_int_one("1024", 1024);
         test_config_parse_int_one("-1024", -1024);
         test_config_parse_int_one("0", 0);
@@ -149,7 +149,7 @@ TEST(config_parse_int) {
         test_config_parse_int_one("garbage", -1);
 }
 
-TEST(config_parse_unsigned) {
+static void test_config_parse_unsigned(void) {
         test_config_parse_unsigned_one("10241024", 10241024);
         test_config_parse_unsigned_one("1024", 1024);
         test_config_parse_unsigned_one("0", 0);
@@ -160,7 +160,7 @@ TEST(config_parse_unsigned) {
         test_config_parse_unsigned_one("1000garbage", 0);
 }
 
-TEST(config_parse_strv) {
+static void test_config_parse_strv(void) {
         test_config_parse_strv_one("", STRV_MAKE_EMPTY);
         test_config_parse_strv_one("foo", STRV_MAKE("foo"));
         test_config_parse_strv_one("foo bar foo", STRV_MAKE("foo", "bar", "foo"));
@@ -169,7 +169,7 @@ TEST(config_parse_strv) {
         test_config_parse_strv_one("\xc3\x7f", STRV_MAKE("\xc3\x7f"));
 }
 
-TEST(config_parse_mode) {
+static void test_config_parse_mode(void) {
         test_config_parse_mode_one("777", 0777);
         test_config_parse_mode_one("644", 0644);
 
@@ -180,7 +180,7 @@ TEST(config_parse_mode) {
         test_config_parse_mode_one("777 garbage", 0);
 }
 
-TEST(config_parse_sec) {
+static void test_config_parse_sec(void) {
         test_config_parse_sec_one("1", 1 * USEC_PER_SEC);
         test_config_parse_sec_one("1s", 1 * USEC_PER_SEC);
         test_config_parse_sec_one("100ms", 100 * USEC_PER_MSEC);
@@ -191,7 +191,7 @@ TEST(config_parse_sec) {
         test_config_parse_sec_one("garbage", 0);
 }
 
-TEST(config_parse_nsec) {
+static void test_config_parse_nsec(void) {
         test_config_parse_nsec_one("1", 1);
         test_config_parse_nsec_one("1s", 1 * NSEC_PER_SEC);
         test_config_parse_nsec_one("100ms", 100 * NSEC_PER_MSEC);
@@ -202,7 +202,7 @@ TEST(config_parse_nsec) {
         test_config_parse_nsec_one("garbage", 0);
 }
 
-TEST(config_parse_iec_uint64) {
+static void test_config_parse_iec_uint64(void) {
         uint64_t offset = 0;
         assert_se(config_parse_iec_uint64(NULL, "/this/file", 11, "Section", 22, "Size", 0, "4M", &offset, NULL) == 0);
         assert_se(offset == 4 * 1024 * 1024);
@@ -310,7 +310,7 @@ static const char* const config_file[] = {
         "setting1=3\n",
 };
 
-static void test_config_parse_one(unsigned i, const char *s) {
+static void test_config_parse(unsigned i, const char *s) {
         _cleanup_(unlink_tempfilep) char name[] = "/tmp/test-conf-parser.XXXXXX";
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *setting1 = NULL;
@@ -321,7 +321,7 @@ static void test_config_parse_one(unsigned i, const char *s) {
                 {}
         };
 
-        log_info("== %s[%u] ==", __func__, i);
+        log_info("== %s[%i] ==", __func__, i);
 
         assert_se(fmkostemp_safe(name, "r+", &f) == 0);
         assert_se(fwrite(s, strlen(s), 1, f) == 1);
@@ -336,7 +336,7 @@ static void test_config_parse_one(unsigned i, const char *s) {
                          const void *table,
                          ConfigParseFlags flags,
                          void *userdata,
-                         struct stat *ret_stat);
+                         usec_t *ret_mtime)
         */
 
         r = config_parse(NULL, name, f,
@@ -385,9 +385,27 @@ static void test_config_parse_one(unsigned i, const char *s) {
         }
 }
 
-TEST(config_parse) {
-        for (unsigned i = 0; i < ELEMENTSOF(config_file); i++)
-                test_config_parse_one(i, config_file[i]);
-}
+int main(int argc, char **argv) {
+        unsigned i;
 
-DEFINE_TEST_MAIN(LOG_INFO);
+        log_parse_environment();
+        log_open();
+
+        test_config_parse_path();
+        test_config_parse_log_level();
+        test_config_parse_log_facility();
+        test_config_parse_iec_size();
+        test_config_parse_si_uint64();
+        test_config_parse_int();
+        test_config_parse_unsigned();
+        test_config_parse_strv();
+        test_config_parse_mode();
+        test_config_parse_sec();
+        test_config_parse_nsec();
+        test_config_parse_iec_uint64();
+
+        for (i = 0; i < ELEMENTSOF(config_file); i++)
+                test_config_parse(i, config_file[i]);
+
+        return 0;
+}

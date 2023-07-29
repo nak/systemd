@@ -3,7 +3,9 @@
 #include "tests.h"
 #include "udev-builtin.h"
 
-TEST(udev_builtin_cmd_to_ptr) {
+static void test_udev_builtin_cmd_to_ptr(void) {
+        log_info("/* %s */", __func__);
+
         /* Those could have been static asserts, but ({}) is not allowed there. */
 #if HAVE_BLKID
         assert_se(UDEV_BUILTIN_CMD_TO_PTR(UDEV_BUILTIN_BLKID));
@@ -17,4 +19,8 @@ TEST(udev_builtin_cmd_to_ptr) {
         assert_se(PTR_TO_UDEV_BUILTIN_CMD((void*) 10000) == _UDEV_BUILTIN_INVALID);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_udev_builtin_cmd_to_ptr();
+}

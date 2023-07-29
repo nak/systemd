@@ -4,10 +4,6 @@
 ACTION=="remove", ENV{REMOVE_CMD}!="", RUN+="$env{REMOVE_CMD}"
 ACTION=="remove", GOTO="default_end"
 
-# The md driver increments diskseq *after* emitting 'change' uevent.
-# Drop the line below if it is fixed on the kernel side.
-SUBSYSTEM=="block", KERNEL=="md*", ENV{ID_IGNORE_DISKSEQ}="1"
-
 SUBSYSTEM=="virtio-ports", KERNEL=="vport*", ATTR{name}=="?*", SYMLINK+="virtio-ports/$attr{name}"
 
 # select "system RTC" or just use the first one
@@ -42,7 +38,6 @@ SUBSYSTEM=="cec", GROUP="video"
 
 SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="render", MODE="{{GROUP_RENDER_MODE}}"
 SUBSYSTEM=="kfd", GROUP="render", MODE="{{GROUP_RENDER_MODE}}"
-SUBSYSTEM=="accel", GROUP="render", MODE="{{GROUP_RENDER_MODE}}"
 
 SUBSYSTEM=="misc", KERNEL=="sgx_enclave", GROUP="sgx", MODE="0660"
 SUBSYSTEM=="misc", KERNEL=="sgx_vepc", GROUP="sgx", MODE="0660"
@@ -106,7 +101,11 @@ KERNEL=="vhost-net", GROUP="kvm", MODE="{{DEV_KVM_MODE}}", OPTIONS+="static_node
 
 KERNEL=="udmabuf", GROUP="kvm"
 
-SUBSYSTEM=="ptp", ATTR{clock_name}=="KVM virtual PTP", SYMLINK+="ptp_kvm"
-SUBSYSTEM=="ptp", ATTR{clock_name}=="hyperv", SYMLINK+="ptp_hyperv"
+SUBSYSTEM=="ptp", ATTR{clock_name}=="KVM virtual PTP", SYMLINK += "ptp_kvm"
+
+SUBSYSTEM=="ptp", ATTR{clock_name}=="hyperv", SYMLINK += "ptp_hyperv"
+
+SUBSYSTEM=="dmi", ENV{ID_SYSFS_ATTRIBUTE_MODEL}=="", ENV{ID_VENDOR}="$attr{sys_vendor}", ENV{ID_MODEL}="$attr{product_name}"
+SUBSYSTEM=="dmi", ENV{ID_SYSFS_ATTRIBUTE_MODEL}=="product_version", ENV{ID_VENDOR}="$attr{sys_vendor}", ENV{ID_MODEL}="$attr{product_version}"
 
 LABEL="default_end"

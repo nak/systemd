@@ -11,9 +11,10 @@ Image *manager_image_cache_get(Manager *m, const char *name_or_path) {
 }
 
 static int image_cache_flush(sd_event_source *s, void *userdata) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
 
         assert(s);
+        assert(m);
 
         hashmap_clear(m->image_cache);
         return 0;

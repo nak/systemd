@@ -12,16 +12,18 @@
 #include "fd-util.h"
 #include "log.h"
 #include "memory-util.h"
-#include "sleep-util.h"
+#include "sleep-config.h"
 #include "strv.h"
 #include "tests.h"
+#include "util.h"
 
-TEST(parse_sleep_config) {
+static void test_parse_sleep_config(void) {
         _cleanup_(free_sleep_configp) SleepConfig *sleep_config = NULL;
+        log_info("/* %s */", __func__);
 
         assert_se(parse_sleep_config(&sleep_config) == 0);
 
-        _cleanup_free_ char *sum = NULL, *sus = NULL, *him = NULL, *his = NULL, *hym = NULL, *hys = NULL;
+        _cleanup_free_ char *sum, *sus, *him, *his, *hym, *hys;
 
         sum = strv_join(sleep_config->modes[SLEEP_SUSPEND], ", ");
         sus = strv_join(sleep_config->states[SLEEP_SUSPEND], ", ");
@@ -29,10 +31,10 @@ TEST(parse_sleep_config) {
         his = strv_join(sleep_config->states[SLEEP_HIBERNATE], ", ");
         hym = strv_join(sleep_config->modes[SLEEP_HYBRID_SLEEP], ", ");
         hys = strv_join(sleep_config->states[SLEEP_HYBRID_SLEEP], ", ");
-        log_debug("  allow_suspend: %s", yes_no(sleep_config->allow[SLEEP_SUSPEND]));
-        log_debug("  allow_hibernate: %s", yes_no(sleep_config->allow[SLEEP_HIBERNATE]));
-        log_debug("  allow_s2h: %s", yes_no(sleep_config->allow[SLEEP_SUSPEND_THEN_HIBERNATE]));
-        log_debug("  allow_hybrid_sleep: %s", yes_no(sleep_config->allow[SLEEP_HYBRID_SLEEP]));
+        log_debug("  allow_suspend: %u", sleep_config->allow[SLEEP_SUSPEND]);
+        log_debug("  allow_hibernate: %u", sleep_config->allow[SLEEP_HIBERNATE]);
+        log_debug("  allow_s2h: %u", sleep_config->allow[SLEEP_SUSPEND_THEN_HIBERNATE]);
+        log_debug("  allow_hybrid_sleep: %u", sleep_config->allow[SLEEP_HYBRID_SLEEP]);
         log_debug("  suspend modes: %s", sum);
         log_debug("         states: %s", sus);
         log_debug("  hibernate modes: %s", him);
@@ -41,9 +43,9 @@ TEST(parse_sleep_config) {
         log_debug("        states: %s", hys);
 }
 
-static int test_fiemap_one(const char *path) {
+static int test_fiemap(const char *path) {
         _cleanup_free_ struct fiemap *fiemap = NULL;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         int r;
 
         log_info("/* %s */", __func__);
@@ -52,7 +54,7 @@ static int test_fiemap_one(const char *path) {
         if (fd < 0)
                 return log_error_errno(errno, "failed to open %s: %m", path);
         r = read_fiemap(fd, &fiemap);
-        if (r == -EOPNOTSUPP)
+        if (IN_SET(r, -EOPNOTSUPP, -ENOTTY))
                 exit(log_tests_skipped("Not supported"));
         if (r < 0)
                 return log_error_errno(r, "Unable to read extent map for '%s': %m", path);
@@ -69,20 +71,7 @@ static int test_fiemap_one(const char *path) {
         return 0;
 }
 
-TEST_RET(fiemap) {
-        int r = 0;
-
-        assert_se(test_fiemap_one(saved_argv[0]) == 0);
-        for (int i = 1; i < saved_argc; i++) {
-                int k = test_fiemap_one(saved_argv[i]);
-                if (r == 0)
-                        r = k;
-        }
-
-        return r;
-}
-
-TEST(sleep) {
+static void test_sleep(void) {
         _cleanup_strv_free_ char
                 **standby = strv_new("standby"),
                 **mem = strv_new("mem"),
@@ -93,6 +82,8 @@ TEST(sleep) {
                 **shutdown = strv_new("shutdown"),
                 **freeze = strv_new("freeze");
         int r;
+
+        log_info("/* %s */", __func__);
 
         printf("Secure boot: %sd\n", enable_disable(is_efi_secure_boot()));
 
@@ -108,47 +99,34 @@ TEST(sleep) {
 
         log_info("/= high-level sleep verbs =/");
         r = can_sleep(SLEEP_SUSPEND);
-        log_info("Suspend configured and possible: %s", r >= 0 ? yes_no(r) : STRERROR(r));
+        log_info("Suspend configured and possible: %s", r >= 0 ? yes_no(r) : strerror_safe(r));
         r = can_sleep(SLEEP_HIBERNATE);
-        log_info("Hibernation configured and possible: %s", r >= 0 ? yes_no(r) : STRERROR(r));
+        log_info("Hibernation configured and possible: %s", r >= 0 ? yes_no(r) : strerror_safe(r));
         r = can_sleep(SLEEP_HYBRID_SLEEP);
-        log_info("Hybrid-sleep configured and possible: %s", r >= 0 ? yes_no(r) : STRERROR(r));
+        log_info("Hybrid-sleep configured and possible: %s", r >= 0 ? yes_no(r) : strerror_safe(r));
         r = can_sleep(SLEEP_SUSPEND_THEN_HIBERNATE);
-        log_info("Suspend-then-Hibernate configured and possible: %s", r >= 0 ? yes_no(r) : STRERROR(r));
+        log_info("Suspend-then-Hibernate configured and possible: %s", r >= 0 ? yes_no(r) : strerror_safe(r));
 }
 
-TEST(fetch_batteries_capacity_by_name) {
-        _cleanup_hashmap_free_ Hashmap *capacity = NULL;
-        int r;
+int main(int argc, char* argv[]) {
+        int i, r = 0, k;
 
-        assert_se(fetch_batteries_capacity_by_name(&capacity) >= 0);
-        log_debug("fetch_batteries_capacity_by_name: %u entries", hashmap_size(capacity));
+        test_setup_logging(LOG_DEBUG);
 
-        const char *name;
-        void *cap;
-        HASHMAP_FOREACH_KEY(cap, name, capacity) {
-                assert(cap);  /* Anything non-null is fine. */
-                log_info("Battery %s: capacity = %i", name, get_capacity_by_name(capacity, name));
-        }
-
-        for (int i = 0; i < 2; i++) {
-                usec_t interval;
-
-                if (i > 0)
-                        sleep(1);
-
-                r = get_total_suspend_interval(capacity, &interval);
-                assert_se(r >= 0 || r == -ENOENT);
-                log_info("%d: get_total_suspend_interval: %s", i,
-                         r < 0 ? STRERROR(r) : FORMAT_TIMESPAN(interval, USEC_PER_SEC));
-        }
-}
-
-static int intro(void) {
         if (getuid() != 0)
                 log_warning("This program is unlikely to work for unprivileged users");
 
-        return EXIT_SUCCESS;
-}
+        test_parse_sleep_config();
+        test_sleep();
 
-DEFINE_TEST_MAIN_WITH_INTRO(LOG_DEBUG, intro);
+        if (argc <= 1)
+                assert_se(test_fiemap(argv[0]) == 0);
+        else
+                for (i = 1; i < argc; i++) {
+                        k = test_fiemap(argv[i]);
+                        if (r == 0)
+                                r = k;
+                }
+
+        return r;
+}

@@ -11,6 +11,7 @@
 #include "string-util.h"
 
 static int fifo_fill_message(Link *link, QDisc *qdisc, sd_netlink_message *req) {
+        struct tc_fifo_qopt opt = {};
         FirstInFirstOut *fifo;
         int r;
 
@@ -18,24 +19,25 @@ static int fifo_fill_message(Link *link, QDisc *qdisc, sd_netlink_message *req) 
         assert(qdisc);
         assert(req);
 
-        switch (qdisc->kind) {
+        switch(qdisc->kind) {
         case QDISC_KIND_PFIFO:
-                assert_se(fifo = PFIFO(qdisc));
+                fifo = PFIFO(qdisc);
                 break;
         case QDISC_KIND_BFIFO:
-                assert_se(fifo = BFIFO(qdisc));
+                fifo = BFIFO(qdisc);
                 break;
         case QDISC_KIND_PFIFO_HEAD_DROP:
-                assert_se(fifo = PFIFO_HEAD_DROP(qdisc));
+                fifo = PFIFO_HEAD_DROP(qdisc);
                 break;
         default:
-                assert_not_reached();
+                assert_not_reached("Invalid QDisc kind.");
         }
 
-        const struct tc_fifo_qopt opt = { .limit = fifo->limit };
-        r = sd_netlink_message_append_data(req, TCA_OPTIONS, &opt, sizeof(opt));
+        opt.limit = fifo->limit;
+
+        r = sd_netlink_message_append_data(req, TCA_OPTIONS, &opt, sizeof(struct tc_fifo_qopt));
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not append TCA_OPTIONS attribute: %m");
 
         return 0;
 }
@@ -53,13 +55,14 @@ int config_parse_pfifo_size(
                 void *userdata) {
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         FirstInFirstOut *fifo;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(ltype, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)
@@ -70,7 +73,7 @@ int config_parse_pfifo_size(
                 return 0;
         }
 
-        switch (qdisc->kind) {
+        switch(qdisc->kind) {
         case QDISC_KIND_PFIFO:
                 fifo = PFIFO(qdisc);
                 break;
@@ -78,7 +81,7 @@ int config_parse_pfifo_size(
                 fifo = PFIFO_HEAD_DROP(qdisc);
                 break;
         default:
-                assert_not_reached();
+                assert_not_reached("Invalid QDisc kind.");
         }
 
         if (isempty(rvalue)) {
@@ -113,7 +116,7 @@ int config_parse_bfifo_size(
                 void *userdata) {
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         FirstInFirstOut *fifo;
         uint64_t u;
         int r;
@@ -121,6 +124,7 @@ int config_parse_bfifo_size(
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(QDISC_KIND_BFIFO, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)

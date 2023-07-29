@@ -2,9 +2,10 @@
 
 #include "cgroup.h"
 #include "log.h"
-#include "tests.h"
 
-TEST(group_cpu_adjust_period) {
+static void test_cgroup_cpu_adjust_period(void) {
+        log_info("/* %s */", __func__);
+
         /* Period 1ms, quota 40% -> Period 2.5ms */
         assert_se(2500 == cgroup_cpu_adjust_period(USEC_PER_MSEC, 400 * USEC_PER_MSEC, USEC_PER_MSEC, USEC_PER_SEC));
         /* Period 10ms, quota 10% -> keep. */
@@ -31,4 +32,7 @@ TEST(group_cpu_adjust_period) {
         assert_se(2500 == cgroup_cpu_adjust_period(0, 400 * USEC_PER_MSEC, USEC_PER_MSEC, USEC_PER_SEC));
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_cgroup_cpu_adjust_period();
+        return 0;
+}

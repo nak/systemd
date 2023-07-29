@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: MIT-0 */
-
 #include <systemd/sd-bus.h>
 #define _cleanup_(f) __attribute__((cleanup(f)))
 

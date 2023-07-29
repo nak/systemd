@@ -1,12 +1,10 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include "sd-event.h"
 
 #include "alloc-util.h"
-#include "exec-util.h"
 #include "fd-util.h"
 #include "fs-util.h"
 #include "log.h"
@@ -22,6 +20,7 @@
 #include "string-util.h"
 #include "tests.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
 static int prepare_handler(sd_event_source *s, void *userdata) {
         log_info("preparing %c", PTR_TO_INT(userdata));
@@ -55,7 +54,7 @@ static int io_handler(sd_event_source *s, int fd, uint32_t revents, void *userda
                 else
                         assert_se(sd_event_source_set_enabled(s, SD_EVENT_OFF) >= 0);
         } else
-                assert_not_reached();
+                assert_not_reached("Yuck!");
 
         return 1;
 }
@@ -122,7 +121,7 @@ static int signal_handler(sd_event_source *s, const struct signalfd_siginfo *si,
         zero(plain_si);
         plain_si.si_signo = SIGUSR2;
         plain_si.si_code = SI_QUEUE;
-        plain_si.si_pid = getpid_cached();
+        plain_si.si_pid = getpid();
         plain_si.si_uid = getuid();
         plain_si.si_value.sival_int = 4711;
 
@@ -170,7 +169,7 @@ static int time_handler(sd_event_source *s, uint64_t usec, void *userdata) {
                         got_c = true;
                 }
         } else
-                assert_not_reached();
+                assert_not_reached("Huh?");
 
         return 2;
 }
@@ -195,12 +194,11 @@ static int post_handler(sd_event_source *s, void *userdata) {
         return 2;
 }
 
-static void test_basic_one(bool with_pidfd) {
+static void test_basic(bool with_pidfd) {
         sd_event *e = NULL;
         sd_event_source *w = NULL, *x = NULL, *y = NULL, *z = NULL, *q = NULL, *t = NULL;
         static const char ch = 'x';
-        int a[2] = PIPE_EBADF, b[2] = PIPE_EBADF,
-            d[2] = PIPE_EBADF, k[2] = PIPE_EBADF;
+        int a[2] = { -1, -1 }, b[2] = { -1, -1}, d[2] = { -1, -1}, k[2] = { -1, -1 };
         uint64_t event_now;
         int64_t priority;
 
@@ -227,7 +225,8 @@ static void test_basic_one(bool with_pidfd) {
 
         got_a = false, got_b = false, got_c = false, got_d = 0;
 
-        /* Add a oneshot handler, trigger it, reenable it, and trigger it again. */
+        /* Add a oneshot handler, trigger it, reenable it, and trigger
+         * it again. */
         assert_se(sd_event_add_io(e, &w, d[0], EPOLLIN, io_handler, INT_TO_PTR('d')) >= 0);
         assert_se(sd_event_source_set_enabled(w, SD_EVENT_ONESHOT) >= 0);
         assert_se(write(d[1], &ch, 1) >= 0);
@@ -302,21 +301,20 @@ static void test_basic_one(bool with_pidfd) {
         assert_se(unsetenv("SYSTEMD_PIDFD") >= 0);
 }
 
-TEST(basic) {
-        test_basic_one(true);   /* test with pidfd */
-        test_basic_one(false);  /* test without pidfd */
-}
-
-TEST(sd_event_now) {
+static void test_sd_event_now(void) {
         _cleanup_(sd_event_unrefp) sd_event *e = NULL;
         uint64_t event_now;
+
+        log_info("/* %s */", __func__);
 
         assert_se(sd_event_new(&e) >= 0);
         assert_se(sd_event_now(e, CLOCK_MONOTONIC, &event_now) > 0);
         assert_se(sd_event_now(e, CLOCK_REALTIME, &event_now) > 0);
         assert_se(sd_event_now(e, CLOCK_REALTIME_ALARM, &event_now) > 0);
-        assert_se(sd_event_now(e, CLOCK_BOOTTIME, &event_now) > 0);
-        assert_se(sd_event_now(e, CLOCK_BOOTTIME_ALARM, &event_now) > 0);
+        if (clock_boottime_supported()) {
+                assert_se(sd_event_now(e, CLOCK_BOOTTIME, &event_now) > 0);
+                assert_se(sd_event_now(e, CLOCK_BOOTTIME_ALARM, &event_now) > 0);
+        }
         assert_se(sd_event_now(e, -1, &event_now) == -EOPNOTSUPP);
         assert_se(sd_event_now(e, 900 /* arbitrary big number */, &event_now) == -EOPNOTSUPP);
 
@@ -325,8 +323,10 @@ TEST(sd_event_now) {
         assert_se(sd_event_now(e, CLOCK_MONOTONIC, &event_now) == 0);
         assert_se(sd_event_now(e, CLOCK_REALTIME, &event_now) == 0);
         assert_se(sd_event_now(e, CLOCK_REALTIME_ALARM, &event_now) == 0);
-        assert_se(sd_event_now(e, CLOCK_BOOTTIME, &event_now) == 0);
-        assert_se(sd_event_now(e, CLOCK_BOOTTIME_ALARM, &event_now) == 0);
+        if (clock_boottime_supported()) {
+                assert_se(sd_event_now(e, CLOCK_BOOTTIME, &event_now) == 0);
+                assert_se(sd_event_now(e, CLOCK_BOOTTIME_ALARM, &event_now) == 0);
+        }
         assert_se(sd_event_now(e, -1, &event_now) == -EOPNOTSUPP);
         assert_se(sd_event_now(e, 900 /* arbitrary big number */, &event_now) == -EOPNOTSUPP);
 }
@@ -340,9 +340,11 @@ static int rtqueue_handler(sd_event_source *s, const struct signalfd_siginfo *si
         return 0;
 }
 
-TEST(rtqueue) {
+static void test_rtqueue(void) {
         sd_event_source *u = NULL, *v = NULL, *s = NULL;
         sd_event *e = NULL;
+
+        log_info("/* %s */", __func__);
 
         assert_se(sd_event_default(&e) >= 0);
 
@@ -401,8 +403,8 @@ struct inotify_context {
 static void maybe_exit(sd_event_source *s, struct inotify_context *c) {
         unsigned n;
 
-        assert_se(s);
-        assert_se(c);
+        assert(s);
+        assert(c);
 
         if (!c->delete_self_handler_called)
                 return;
@@ -449,7 +451,7 @@ static int inotify_handler(sd_event_source *s, const struct inotify_event *ev, v
                 log_info("inotify-handler <%s>: delete of %s", description, ev->name);
                 assert_se(streq(ev->name, "sub"));
         } else
-                assert_not_reached();
+                assert_not_reached("unexpected inotify event");
 
         maybe_exit(s, c);
         return 1;
@@ -467,13 +469,13 @@ static int delete_self_handler(sd_event_source *s, const struct inotify_event *e
         } else if (ev->mask & IN_IGNORED) {
                 log_info("delete-self-handler: ignore");
         } else
-                assert_not_reached();
+                assert_not_reached("unexpected inotify event (delete-self)");
 
         maybe_exit(s, c);
         return 1;
 }
 
-static void test_inotify_one(unsigned n_create_events) {
+static void test_inotify(unsigned n_create_events) {
         _cleanup_(rm_rf_physical_and_freep) char *p = NULL;
         sd_event_source *a = NULL, *b = NULL, *c = NULL, *d = NULL;
         struct inotify_context context = {
@@ -506,7 +508,7 @@ static void test_inotify_one(unsigned n_create_events) {
 
         for (i = 0; i < n_create_events; i++) {
                 char buf[DECIMAL_STR_MAX(unsigned)+1];
-                _cleanup_free_ char *z = NULL;
+                _cleanup_free_ char *z;
 
                 xsprintf(buf, "%u", i);
                 assert_se(z = path_join(p, buf));
@@ -524,11 +526,6 @@ static void test_inotify_one(unsigned n_create_events) {
         sd_event_source_unref(d);
 
         sd_event_unref(e);
-}
-
-TEST(inotify) {
-        test_inotify_one(100); /* should work without overflow */
-        test_inotify_one(33000); /* should trigger a q overflow */
 }
 
 static int pidfd_handler(sd_event_source *s, const siginfo_t *si, void *userdata) {
@@ -550,11 +547,13 @@ static int pidfd_handler(sd_event_source *s, const siginfo_t *si, void *userdata
         return 0;
 }
 
-TEST(pidfd) {
+static void test_pidfd(void) {
         sd_event_source *s = NULL, *t = NULL;
         sd_event *e = NULL;
         int pidfd;
         pid_t pid, pid2;
+
+        log_info("/* %s */", __func__);
 
         assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGCHLD, -1) >= 0);
 
@@ -623,17 +622,14 @@ static int ratelimit_time_handler(sd_event_source *s, uint64_t usec, void *userd
         return 0;
 }
 
-static int expired = -1;
-static int ratelimit_expired(sd_event_source *s, void *userdata) {
-        return ++expired;
-}
-
-TEST(ratelimit) {
-        _cleanup_close_pair_ int p[2] = PIPE_EBADF;
+static void test_ratelimit(void) {
+        _cleanup_close_pair_ int p[2] = {-1, -1};
         _cleanup_(sd_event_unrefp) sd_event *e = NULL;
         _cleanup_(sd_event_source_unrefp) sd_event_source *s = NULL;
         uint64_t interval;
         unsigned count, burst;
+
+        log_info("/* %s */", __func__);
 
         assert_se(sd_event_default(&e) >= 0);
         assert_se(pipe2(p, O_CLOEXEC|O_NONBLOCK) >= 0);
@@ -650,12 +646,12 @@ TEST(ratelimit) {
         for (unsigned i = 0; i < 10; i++) {
                 log_debug("slow loop iteration %u", i);
                 assert_se(sd_event_run(e, UINT64_MAX) >= 0);
-                assert_se(usleep_safe(250 * USEC_PER_MSEC) >= 0);
+                assert_se(usleep(250 * USEC_PER_MSEC) >= 0);
         }
 
         assert_se(sd_event_source_is_ratelimited(s) == 0);
         assert_se(count == 10);
-        log_info("ratelimit_io_handler: called %u times, event source not ratelimited", count);
+        log_info("ratelimit_io_handler: called %d times, event source not ratelimited", count);
 
         assert_se(sd_event_source_set_ratelimit(s, 0, 0) >= 0);
         assert_se(sd_event_source_set_ratelimit(s, 1 * USEC_PER_SEC, 5) >= 0);
@@ -664,9 +660,9 @@ TEST(ratelimit) {
         for (unsigned i = 0; i < 10; i++) {
                 log_debug("fast event loop iteration %u", i);
                 assert_se(sd_event_run(e, UINT64_MAX) >= 0);
-                assert_se(usleep_safe(10) >= 0);
+                assert_se(usleep(10) >= 0);
         }
-        log_info("ratelimit_io_handler: called %u times, event source got ratelimited", count);
+        log_info("ratelimit_io_handler: called %d times, event source got ratelimited", count);
         assert_se(count < 10);
 
         s = sd_event_source_unref(s);
@@ -680,7 +676,7 @@ TEST(ratelimit) {
                 assert_se(sd_event_run(e, UINT64_MAX) >= 0);
         } while (!sd_event_source_is_ratelimited(s));
 
-        log_info("ratelimit_time_handler: called %u times, event source got ratelimited", count);
+        log_info("ratelimit_time_handler: called %d times, event source got ratelimited", count);
         assert_se(count == 10);
 
         /* In order to get rid of active rate limit client needs to disable it explicitly */
@@ -689,22 +685,15 @@ TEST(ratelimit) {
 
         assert_se(sd_event_source_set_ratelimit(s, 1 * USEC_PER_SEC, 10) >= 0);
 
-        /* Set callback that will be invoked when we leave rate limited state. */
-        assert_se(sd_event_source_set_ratelimit_expire_callback(s, ratelimit_expired) >= 0);
-
         do {
                 assert_se(sd_event_run(e, UINT64_MAX) >= 0);
         } while (!sd_event_source_is_ratelimited(s));
 
         log_info("ratelimit_time_handler: called 10 more times, event source got ratelimited");
         assert_se(count == 20);
-
-        /* Dispatch the event loop once more and check that ratelimit expiration callback got called */
-        assert_se(sd_event_run(e, UINT64_MAX) >= 0);
-        assert_se(expired == 0);
 }
 
-TEST(simple_timeout) {
+static void test_simple_timeout(void) {
         _cleanup_(sd_event_unrefp) sd_event *e = NULL;
         usec_t f, t, some_time;
 
@@ -723,180 +712,23 @@ TEST(simple_timeout) {
         assert_se(t >= usec_add(f, some_time));
 }
 
-static int inotify_self_destroy_handler(sd_event_source *s, const struct inotify_event *ev, void *userdata) {
-        sd_event_source **p = userdata;
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_DEBUG);
 
-        assert_se(ev);
-        assert_se(p);
-        assert_se(*p == s);
+        test_simple_timeout();
 
-        assert_se(FLAGS_SET(ev->mask, IN_ATTRIB));
+        test_basic(true);   /* test with pidfd */
+        test_basic(false);  /* test without pidfd */
 
-        assert_se(sd_event_exit(sd_event_source_get_event(s), 0) >= 0);
+        test_sd_event_now();
+        test_rtqueue();
 
-        *p = sd_event_source_unref(*p); /* here's what we actually intend to test: we destroy the event
-                                         * source from inside the event source handler */
-        return 1;
-}
+        test_inotify(100); /* should work without overflow */
+        test_inotify(33000); /* should trigger a q overflow */
 
-TEST(inotify_self_destroy) {
-        _cleanup_(sd_event_source_unrefp) sd_event_source *s = NULL;
-        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
-        char path[] = "/tmp/inotifyXXXXXX";
-        _cleanup_close_ int fd = -EBADF;
+        test_pidfd();
 
-        /* Tests that destroying an inotify event source from its own handler is safe */
+        test_ratelimit();
 
-        assert_se(sd_event_default(&e) >= 0);
-
-        fd = mkostemp_safe(path);
-        assert_se(fd >= 0);
-        assert_se(sd_event_add_inotify_fd(e, &s, fd, IN_ATTRIB, inotify_self_destroy_handler, &s) >= 0);
-        fd = safe_close(fd);
-        assert_se(unlink(path) >= 0); /* This will trigger IN_ATTRIB because link count goes to zero */
-        assert_se(sd_event_loop(e) >= 0);
-}
-
-struct inotify_process_buffered_data_context {
-        const char *path[2];
-        unsigned i;
-};
-
-static int inotify_process_buffered_data_handler(sd_event_source *s, const struct inotify_event *ev, void *userdata) {
-        struct inotify_process_buffered_data_context *c = ASSERT_PTR(userdata);
-        const char *description;
-
-        assert_se(sd_event_source_get_description(s, &description) >= 0);
-
-        assert_se(c->i < 2);
-        assert_se(streq(c->path[c->i], description));
-        c->i++;
-
-        return 1;
-}
-
-TEST(inotify_process_buffered_data) {
-        _cleanup_(rm_rf_physical_and_freep) char *p = NULL, *q = NULL;
-        _cleanup_(sd_event_source_unrefp) sd_event_source *a = NULL, *b = NULL;
-        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
-        _cleanup_free_ char *z = NULL;
-
-        /* For issue #23826 */
-
-        assert_se(sd_event_default(&e) >= 0);
-
-        assert_se(mkdtemp_malloc("/tmp/test-inotify-XXXXXX", &p) >= 0);
-        assert_se(mkdtemp_malloc("/tmp/test-inotify-XXXXXX", &q) >= 0);
-
-        struct inotify_process_buffered_data_context context = {
-                .path = { p, q },
-        };
-
-        assert_se(sd_event_add_inotify(e, &a, p, IN_CREATE, inotify_process_buffered_data_handler, &context) >= 0);
-        assert_se(sd_event_add_inotify(e, &b, q, IN_CREATE, inotify_process_buffered_data_handler, &context) >= 0);
-
-        assert_se(z = path_join(p, "aaa"));
-        assert_se(touch(z) >= 0);
-        z = mfree(z);
-        assert_se(z = path_join(q, "bbb"));
-        assert_se(touch(z) >= 0);
-        z = mfree(z);
-
-        assert_se(sd_event_run(e, 10 * USEC_PER_SEC) > 0);
-        assert_se(sd_event_prepare(e) > 0); /* issue #23826: this was 0. */
-        assert_se(sd_event_dispatch(e) > 0);
-        assert_se(sd_event_prepare(e) == 0);
-        assert_se(sd_event_wait(e, 0) == 0);
-}
-
-TEST(fork) {
-        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
-        int r;
-
-        assert_se(sd_event_default(&e) >= 0);
-        assert_se(sd_event_prepare(e) == 0);
-
-        /* Check that after a fork the cleanup functions return NULL */
-        r = safe_fork("(bus-fork-test)", FORK_WAIT|FORK_LOG, NULL);
-        if (r == 0) {
-                assert_se(e);
-                assert_se(sd_event_ref(e) == NULL);
-                assert_se(sd_event_unref(e) == NULL);
-                _exit(EXIT_SUCCESS);
-        }
-
-        assert_se(r >= 0);
-}
-
-static int hup_callback(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
-        unsigned *c = userdata;
-
-        assert_se(revents == EPOLLHUP);
-
-        (*c)++;
         return 0;
 }
-
-TEST(leave_ratelimit) {
-        bool expect_ratelimit = false, manually_left_ratelimit = false;
-        _cleanup_(sd_event_source_unrefp) sd_event_source *s = NULL;
-        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
-        _cleanup_close_pair_ int pfd[2] = PIPE_EBADF;
-        unsigned c = 0;
-        int r;
-
-        assert_se(sd_event_default(&e) >= 0);
-
-        /* Create an event source that will continuously fire by creating a pipe whose write side is closed,
-         * and which hence will only see EOF and constant EPOLLHUP */
-        assert_se(pipe2(pfd, O_CLOEXEC) >= 0);
-        assert_se(sd_event_add_io(e, &s, pfd[0], EPOLLIN, hup_callback, &c) >= 0);
-        assert_se(sd_event_source_set_io_fd_own(s, true) >= 0);
-        assert_se(sd_event_source_set_ratelimit(s, 5*USEC_PER_MINUTE, 5) >= 0);
-
-        pfd[0] = -EBADF;
-        pfd[1] = safe_close(pfd[1]); /* Trigger continuous EOF */
-
-        for (;;) {
-                r = sd_event_prepare(e);
-                assert_se(r >= 0);
-
-                if (r == 0) {
-                        r = sd_event_wait(e, UINT64_MAX);
-                        assert_se(r > 0);
-                }
-
-                r = sd_event_dispatch(e);
-                assert_se(r > 0);
-
-                r = sd_event_source_is_ratelimited(s);
-                assert_se(r >= 0);
-
-                if (c < 5)
-                        /* First four dispatches should just work */
-                        assert_se(!r);
-                else if (c == 5) {
-                        /* The fifth dispatch should still work, but we now expect the ratelimit to be hit subsequently */
-                        if (!expect_ratelimit) {
-                                assert_se(!r);
-                                assert_se(sd_event_source_leave_ratelimit(s) == 0); /* this should be a NOP, and return 0 hence */
-                                expect_ratelimit = true;
-                        } else {
-                                /* We expected the ratelimit, let's leave it manually, and verify it */
-                                assert_se(r);
-                                assert_se(sd_event_source_leave_ratelimit(s) > 0); /* we are ratelimited, hence should return > 0 */
-                                assert_se(sd_event_source_is_ratelimited(s) == 0);
-
-                                manually_left_ratelimit = true;
-                        }
-
-                } else if (c == 6)
-                        /* On the sixth iteration let's just exit */
-                        break;
-        }
-
-        /* Verify we definitely hit the ratelimit and left it manually again */
-        assert_se(manually_left_ratelimit);
-}
-
-DEFINE_TEST_MAIN(LOG_DEBUG);

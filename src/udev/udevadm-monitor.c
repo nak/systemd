@@ -48,6 +48,8 @@ static int device_monitor_handler(sd_device_monitor *monitor, sd_device *device,
                devpath, subsystem);
 
         if (arg_show_property) {
+                const char *key, *value;
+
                 FOREACH_DEVICE_PROPERTY(device, key, value)
                         printf("%s=%s\n", key, value);
 
@@ -89,7 +91,8 @@ static int setup_monitor(MonitorNetlinkGroup sender, sd_event *event, sd_device_
         if (r < 0)
                 return log_error_errno(r, "Failed to start device monitor: %m");
 
-        (void) sd_device_monitor_set_description(monitor, sender == MONITOR_GROUP_UDEV ? "udev" : "kernel");
+        (void) sd_event_source_set_description(sd_device_monitor_get_event_source(monitor),
+                                               sender == MONITOR_GROUP_UDEV ? "device-monitor-udev" : "device-monitor-kernel");
 
         *ret = TAKE_PTR(monitor);
         return 0;
@@ -176,7 +179,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case '?':
                         return -EINVAL;
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unknown option.");
                 }
 
         if (!arg_print_kernel && !arg_print_udev) {

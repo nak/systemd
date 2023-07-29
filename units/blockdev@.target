@@ -10,5 +10,4 @@
 [Unit]
 Description=Block Device Preparation for %f
 Documentation=man:systemd.special(7)
-DefaultDependencies=no
 StopWhenUnneeded=yes

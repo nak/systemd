@@ -125,12 +125,15 @@ static char *combine_entries(const char *one, const char *two) {
 
         /* Body from @one */
         n = l1 - (b1 - one);
-        if (n > 0)
-                p = mempcpy(p, b1, n);
+        if (n > 0) {
+                memcpy(p, b1, n);
+                p += n;
+
         /* Body from @two */
-        else {
+        } else {
                 n = l2 - (b2 - two);
-                p = mempcpy(p, b2, n);
+                memcpy(p, b2, n);
+                p += n;
         }
 
         assert(p - dest <= (ptrdiff_t)(l1 + l2));
@@ -145,9 +148,7 @@ static int finish_item(
                 char *payload, size_t payload_size) {
 
         _cleanup_free_ CatalogItem *i = NULL;
-        _cleanup_free_ char *combined = NULL;
-        char *prev;
-        int r;
+        _cleanup_free_ char *prev = NULL, *combined = NULL;
 
         assert(h);
         assert(payload);
@@ -170,24 +171,19 @@ static int finish_item(
                 if (!combined)
                         return log_oom();
 
-                r = ordered_hashmap_update(h, i, combined);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to update catalog item: %m");
-
-                TAKE_PTR(combined);
-                free(prev);
+                if (ordered_hashmap_update(h, i, combined) < 0)
+                        return log_oom();
+                combined = NULL;
         } else {
                 /* A new item */
                 combined = memdup(payload, payload_size + 1);
                 if (!combined)
                         return log_oom();
 
-                r = ordered_hashmap_put(h, i, combined);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to insert catalog item: %m");
-
-                TAKE_PTR(i);
-                TAKE_PTR(combined);
+                if (ordered_hashmap_put(h, i, combined) < 0)
+                        return log_oom();
+                i = NULL;
+                combined = NULL;
         }
 
         return 0;
@@ -399,7 +395,7 @@ static int64_t write_catalog(
 
         header = (CatalogHeader) {
                 .signature = CATALOG_SIGNATURE,
-                .header_size = htole64(CONST_ALIGN_TO(sizeof(CatalogHeader), 8)),
+                .header_size = htole64(ALIGN_TO(sizeof(CatalogHeader), 8)),
                 .catalog_item_size = htole64(sizeof(CatalogItem)),
                 .n_items = htole64(n),
         };
@@ -446,6 +442,7 @@ error:
 
 int catalog_update(const char* database, const char* root, const char* const* dirs) {
         _cleanup_strv_free_ char **files = NULL;
+        char **f;
         _cleanup_(strbuf_freep) struct strbuf *sb = NULL;
         _cleanup_ordered_hashmap_free_free_free_ OrderedHashmap *h = NULL;
         _cleanup_free_ CatalogItem *items = NULL;
@@ -484,7 +481,7 @@ int catalog_update(const char* database, const char* root, const char* const* di
 
         n = 0;
         ORDERED_HASHMAP_FOREACH_KEY(payload, i, h) {
-                log_trace("Found " SD_ID128_FORMAT_STR ", language %s",
+                log_debug("Found " SD_ID128_FORMAT_STR ", language %s",
                           SD_ID128_FORMAT_VAL(i->id),
                           isempty(i->language) ? "C" : i->language);
 
@@ -511,7 +508,7 @@ int catalog_update(const char* database, const char* root, const char* const* di
 }
 
 static int open_mmap(const char *database, int *_fd, struct stat *_st, void **_p) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const CatalogHeader *h;
         struct stat st;
         void *p;
@@ -608,7 +605,7 @@ static const char *find_id(void *p, sd_id128_t id) {
 }
 
 int catalog_get(const char* database, sd_id128_t id, char **_text) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         void *p = NULL;
         struct stat st = {};
         char *text = NULL;
@@ -675,7 +672,7 @@ static void dump_catalog_entry(FILE *f, sd_id128_t id, const char *s, bool oneli
 }
 
 int catalog_list(FILE *f, const char *database, bool oneline) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         void *p = NULL;
         struct stat st;
         const CatalogHeader *h;
@@ -712,6 +709,7 @@ int catalog_list(FILE *f, const char *database, bool oneline) {
 }
 
 int catalog_list_items(FILE *f, const char *database, bool oneline, char **items) {
+        char **item;
         int r = 0;
 
         STRV_FOREACH(item, items) {

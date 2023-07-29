@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
-#ifndef _UAPI_NFNETLINK_H
-#define _UAPI_NFNETLINK_H
+#ifndef _NFNETLINK_H
+#define _NFNETLINK_H
 #include <linux/types.h>
 #include <linux/netfilter/nfnetlink_compat.h>
 
@@ -60,8 +60,7 @@ struct nfgenmsg {
 #define NFNL_SUBSYS_CTHELPER		9
 #define NFNL_SUBSYS_NFTABLES		10
 #define NFNL_SUBSYS_NFT_COMPAT		11
-#define NFNL_SUBSYS_HOOK		12
-#define NFNL_SUBSYS_COUNT		13
+#define NFNL_SUBSYS_COUNT		12
 
 /* Reserved control nfnetlink messages */
 #define NFNL_MSG_BATCH_BEGIN		NLMSG_MIN_TYPE
@@ -79,4 +78,4 @@ enum nfnl_batch_attributes {
 };
 #define NFNL_BATCH_MAX			(__NFNL_BATCH_MAX - 1)
 
-#endif /* _UAPI_NFNETLINK_H */
+#endif /* _NFNETLINK_H */

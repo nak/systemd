@@ -9,23 +9,21 @@
 #include "alloc-util.h"
 #include "env-file.h"
 #include "errno-list.h"
-#include "errno-util.h"
 #include "escape.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "format-util.h"
-#include "fs-util.h"
 #include "io-util.h"
 #include "logind-dbus.h"
 #include "logind-inhibit.h"
-#include "missing_threads.h"
-#include "mkdir-label.h"
+#include "mkdir.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "string-table.h"
 #include "string-util.h"
 #include "tmpfile-util.h"
 #include "user-util.h"
+#include "util.h"
 
 static void inhibitor_remove_fifo(Inhibitor *i);
 
@@ -46,7 +44,7 @@ int inhibitor_new(Inhibitor **ret, Manager *m, const char* id) {
                 .what = _INHIBIT_WHAT_INVALID,
                 .mode = _INHIBIT_MODE_INVALID,
                 .uid = UID_INVALID,
-                .fifo_fd = -EBADF,
+                .fifo_fd = -1,
         };
 
         i->state_file = path_join("/run/systemd/inhibit", id);
@@ -85,7 +83,7 @@ Inhibitor* inhibitor_free(Inhibitor *i) {
 }
 
 static int inhibitor_save(Inhibitor *i) {
-        _cleanup_(unlink_and_freep) char *temp_path = NULL;
+        _cleanup_free_ char *temp_path = NULL;
         _cleanup_fclose_ FILE *f = NULL;
         int r;
 
@@ -148,11 +146,13 @@ static int inhibitor_save(Inhibitor *i) {
                 goto fail;
         }
 
-        temp_path = mfree(temp_path);
         return 0;
 
 fail:
         (void) unlink(i->state_file);
+
+        if (temp_path)
+                (void) unlink(temp_path);
 
         return log_error_errno(r, "Failed to save inhibit data %s: %m", i->state_file);
 }
@@ -209,11 +209,18 @@ void inhibitor_stop(Inhibitor *i) {
 }
 
 int inhibitor_load(Inhibitor *i) {
-        _cleanup_free_ char *what = NULL, *uid = NULL, *pid = NULL, *who = NULL, *why = NULL, *mode = NULL;
+
+        _cleanup_free_ char
+                *what = NULL,
+                *uid = NULL,
+                *pid = NULL,
+                *who = NULL,
+                *why = NULL,
+                *mode = NULL;
+
         InhibitWhat w;
         InhibitMode mm;
         char *cc;
-        ssize_t l;
         int r;
 
         r = parse_env_file(NULL, i->state_file,
@@ -248,23 +255,23 @@ int inhibitor_load(Inhibitor *i) {
         }
 
         if (who) {
-                l = cunescape(who, 0, &cc);
-                if (l < 0)
-                        return log_debug_errno(l, "Failed to unescape \"who\" of inhibitor: %m");
+                r = cunescape(who, 0, &cc);
+                if (r < 0)
+                        return log_oom();
 
                 free_and_replace(i->who, cc);
         }
 
         if (why) {
-                l = cunescape(why, 0, &cc);
-                if (l < 0)
-                        return log_debug_errno(l, "Failed to unescape \"why\" of inhibitor: %m");
+                r = cunescape(why, 0, &cc);
+                if (r < 0)
+                        return log_oom();
 
                 free_and_replace(i->why, cc);
         }
 
         if (i->fifo_path) {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
 
                 /* Let's re-open the FIFO on both sides, and close the writing side right away */
                 fd = inhibitor_create_fifo(i);
@@ -276,10 +283,11 @@ int inhibitor_load(Inhibitor *i) {
 }
 
 static int inhibitor_dispatch_fifo(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
-        Inhibitor *i = ASSERT_PTR(userdata);
+        Inhibitor *i = userdata;
 
         assert(s);
         assert(fd == i->fifo_fd);
+        assert(i);
 
         inhibitor_stop(i);
         inhibitor_free(i);
@@ -326,7 +334,11 @@ int inhibitor_create_fifo(Inhibitor *i) {
         }
 
         /* Open writing side */
-        return RET_NERRNO(open(i->fifo_path, O_WRONLY|O_CLOEXEC|O_NONBLOCK));
+        r = open(i->fifo_path, O_WRONLY|O_CLOEXEC|O_NONBLOCK);
+        if (r < 0)
+                return -errno;
+
+        return r;
 }
 
 static void inhibitor_remove_fifo(Inhibitor *i) {

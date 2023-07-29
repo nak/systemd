@@ -13,21 +13,20 @@
 
 static int stochastic_fairness_queueing_fill_message(Link *link, QDisc *qdisc, sd_netlink_message *req) {
         StochasticFairnessQueueing *sfq;
+        struct tc_sfq_qopt_v1 opt = {};
         int r;
 
         assert(link);
         assert(qdisc);
         assert(req);
 
-        assert_se(sfq = SFQ(qdisc));
+        sfq = SFQ(qdisc);
 
-        const struct tc_sfq_qopt_v1 opt = {
-                .v0.perturb_period = sfq->perturb_period / USEC_PER_SEC,
-        };
+        opt.v0.perturb_period = sfq->perturb_period / USEC_PER_SEC;
 
-        r = sd_netlink_message_append_data(req, TCA_OPTIONS, &opt, sizeof(opt));
+        r = sd_netlink_message_append_data(req, TCA_OPTIONS, &opt, sizeof(struct tc_sfq_qopt_v1));
         if (r < 0)
-                return r;
+                return log_link_error_errno(link, r, "Could not append TCA_OPTIONS attribute: %m");
 
         return 0;
 }
@@ -46,12 +45,13 @@ int config_parse_stochastic_fairness_queueing_perturb_period(
 
         _cleanup_(qdisc_free_or_set_invalidp) QDisc *qdisc = NULL;
         StochasticFairnessQueueing *sfq;
-        Network *network = ASSERT_PTR(data);
+        Network *network = data;
         int r;
 
         assert(filename);
         assert(lvalue);
         assert(rvalue);
+        assert(data);
 
         r = qdisc_new_static(QDISC_KIND_SFQ, network, filename, section_line, &qdisc);
         if (r == -ENOMEM)

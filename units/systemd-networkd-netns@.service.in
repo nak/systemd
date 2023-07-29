@@ -1,0 +1,8 @@
+[Unit]
+BindsTo=systemd-networkd-netns-config@%i.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "/usr/sbin/ip netns | grep %I || /usr/sbin/ip netns add %I"
+ExecStop=/usr/sbin/ip netns del %I

@@ -5,28 +5,25 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
-#include "creds-util.h"
 #include "errno-util.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "generator.h"
-#include "initrd-util.h"
 #include "log.h"
-#include "mkdir-label.h"
-#include "parse-util.h"
+#include "mkdir.h"
 #include "path-util.h"
-#include "proc-cmdline.h"
 #include "process-util.h"
 #include "strv.h"
 #include "terminal-util.h"
 #include "unit-name.h"
+#include "util.h"
 #include "virt.h"
 
 static const char *arg_dest = NULL;
-static bool arg_enabled = true;
 
 static int add_symlink(const char *fservice, const char *tservice) {
-        const char *from, *to;
+        char *from, *to;
+        int r;
 
         assert(fservice);
         assert(tservice);
@@ -34,9 +31,10 @@ static int add_symlink(const char *fservice, const char *tservice) {
         from = strjoina(SYSTEM_DATA_UNIT_DIR "/", fservice);
         to = strjoina(arg_dest, "/getty.target.wants/", tservice);
 
-        (void) mkdir_parents_label(to, 0755);
+        mkdir_parents_label(to, 0755);
 
-        if (symlink(from, to) < 0) {
+        r = symlink(from, to);
+        if (r < 0) {
                 /* In case console=hvc0 is passed this will very likely result in EEXIST */
                 if (errno == EEXIST)
                         return 0;
@@ -78,7 +76,7 @@ static int add_container_getty(const char *tty) {
 }
 
 static int verify_tty(const char *name) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         const char *p;
 
         /* Some TTYs are weird and have been enumerated but don't work
@@ -141,106 +139,10 @@ static int run_container(void) {
         }
 }
 
-static int add_credential_gettys(void) {
-        static const struct {
-                const char *credential_name;
-                int (*func)(const char *tty);
-        } table[] = {
-                { "getty.ttys.serial",    add_serial_getty     },
-                { "getty.ttys.container", add_container_getty  },
-        };
-        int r;
-
-        FOREACH_ARRAY(t, table, ELEMENTSOF(table)) {
-                _cleanup_free_ char *b = NULL;
-                size_t sz = 0;
-
-                r = read_credential_with_decryption(t->credential_name, (void*) &b, &sz);
-                if (r < 0)
-                        return r;
-                if (r == 0)
-                        continue;
-
-                _cleanup_fclose_ FILE *f = NULL;
-                f = fmemopen_unlocked(b, sz, "r");
-                if (!f)
-                        return log_oom();
-
-                for (;;) {
-                        _cleanup_free_ char *tty = NULL;
-                        char *s;
-
-                        r = read_line(f, PATH_MAX, &tty);
-                        if (r == 0)
-                                break;
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to parse credential %s: %m", t->credential_name);
-                                break;
-                        }
-
-                        s = strstrip(tty);
-                        if (startswith(s, "#"))
-                                continue;
-
-                        r = t->func(s);
-                        if (r < 0)
-                                return r;
-                }
-        }
-
-        return 0;
-}
-
-static int parse_proc_cmdline_item(const char *key, const char *value, void *data) {
-        int r;
-
-        assert(key);
-
-        if (proc_cmdline_key_streq(key, "systemd.getty_auto")) {
-                r = value ? parse_boolean(value) : 1;
-                if (r < 0)
-                        log_warning_errno(r, "Failed to parse getty_auto switch \"%s\", ignoring: %m", value);
-                else
-                        arg_enabled = r;
-        }
-
-        return 0;
-}
-
 static int run(const char *dest, const char *dest_early, const char *dest_late) {
-        _cleanup_free_ char *getty_auto = NULL;
         int r;
 
         assert_se(arg_dest = dest);
-
-        if (in_initrd()) {
-                log_debug("Skipping generator, running in the initrd.");
-                return EXIT_SUCCESS;
-        }
-
-        r = proc_cmdline_parse(parse_proc_cmdline_item, NULL, 0);
-        if (r < 0)
-                log_warning_errno(r, "Failed to parse kernel command line, ignoring: %m");
-
-        r = getenv_for_pid(1, "SYSTEMD_GETTY_AUTO", &getty_auto);
-        if (r < 0)
-                log_warning_errno(r, "Failed to parse $SYSTEMD_GETTY_AUTO environment variable, ignoring: %m");
-        else if (r > 0) {
-                r = parse_boolean(getty_auto);
-                if (r < 0)
-                        log_warning_errno(r, "Failed to parse $SYSTEMD_GETTY_AUTO value \"%s\", ignoring: %m", getty_auto);
-                else
-                        arg_enabled = r;
-        }
-
-        if (!arg_enabled) {
-                log_debug("Disabled, exiting.");
-                return 0;
-        }
-
-        r = add_credential_gettys();
-        if (r < 0)
-                return r;
 
         if (detect_container() > 0)
                 /* Add console shell and look at $container_ttys, but don't do add any
@@ -273,7 +175,9 @@ static int run(const char *dest, const char *dest_early, const char *dest_late) 
                         return r;
         }
 
-        /* Automatically add in a serial getty on the first virtualizer console */
+        /* Automatically add in a serial getty on the first
+         * virtualizer console */
+        const char *j;
         FOREACH_STRING(j,
                        "hvc0",
                        "xvc0",
@@ -285,7 +189,7 @@ static int run(const char *dest, const char *dest_early, const char *dest_late) 
 
                 p = path_join("/sys/class/tty", j);
                 if (!p)
-                        return log_oom();
+                        return -ENOMEM;
                 if (access(p, F_OK) < 0)
                         continue;
 

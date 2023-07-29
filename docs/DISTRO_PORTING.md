@@ -2,7 +2,6 @@
 title: Porting systemd To New Distributions
 category: Concepts
 layout: default
-SPDX-License-Identifier: LGPL-2.1-or-later
 ---
 
 # Porting systemd To New Distributions
@@ -85,7 +84,7 @@ instead install your own.
 
 ## Contributing Upstream
 
-We generally no longer accept distribution-specific patches to
+We generally do no longer accept distribution-specific patches to
 systemd upstream. If you have to make changes to systemd's source code
 to make it work on your distribution, unless your code is generic
 enough to be generally useful, we are unlikely to merge it. Please

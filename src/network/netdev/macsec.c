@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include <netinet/in.h>
-#include <linux/if_arp.h>
 #include <linux/if_ether.h>
 #include <linux/if_macsec.h>
 #include <linux/genetlink.h>
@@ -14,10 +13,11 @@
 #include "memory-util.h"
 #include "netlink-util.h"
 #include "networkd-manager.h"
-#include "parse-helpers.h"
+#include "path-util.h"
 #include "socket-util.h"
 #include "string-table.h"
 #include "string-util.h"
+#include "util.h"
 
 static void security_association_clear(SecurityAssociation *sa) {
         if (!sa)
@@ -42,16 +42,16 @@ static ReceiveAssociation* macsec_receive_association_free(ReceiveAssociation *c
         if (c->macsec && c->section)
                 ordered_hashmap_remove(c->macsec->receive_associations_by_section, c->section);
 
-        config_section_free(c->section);
+        network_config_section_free(c->section);
         security_association_clear(&c->sa);
 
         return mfree(c);
 }
 
-DEFINE_SECTION_CLEANUP_FUNCTIONS(ReceiveAssociation, macsec_receive_association_free);
+DEFINE_NETWORK_SECTION_FUNCTIONS(ReceiveAssociation, macsec_receive_association_free);
 
 static int macsec_receive_association_new_static(MACsec *s, const char *filename, unsigned section_line, ReceiveAssociation **ret) {
-        _cleanup_(config_section_freep) ConfigSection *n = NULL;
+        _cleanup_(network_config_section_freep) NetworkConfigSection *n = NULL;
         _cleanup_(macsec_receive_association_freep) ReceiveAssociation *c = NULL;
         int r;
 
@@ -60,7 +60,7 @@ static int macsec_receive_association_new_static(MACsec *s, const char *filename
         assert(filename);
         assert(section_line > 0);
 
-        r = config_section_new(filename, section_line, &n);
+        r = network_config_section_new(filename, section_line, &n);
         if (r < 0)
                 return r;
 
@@ -81,7 +81,7 @@ static int macsec_receive_association_new_static(MACsec *s, const char *filename
 
         security_association_init(&c->sa);
 
-        r = ordered_hashmap_ensure_put(&s->receive_associations_by_section, &config_section_hash_ops, c->section, c);
+        r = ordered_hashmap_ensure_put(&s->receive_associations_by_section, &network_config_hash_ops, c->section, c);
         if (r < 0)
                 return r;
 
@@ -102,12 +102,12 @@ static ReceiveChannel* macsec_receive_channel_free(ReceiveChannel *c) {
                         ordered_hashmap_remove(c->macsec->receive_channels_by_section, c->section);
         }
 
-        config_section_free(c->section);
+        network_config_section_free(c->section);
 
         return mfree(c);
 }
 
-DEFINE_SECTION_CLEANUP_FUNCTIONS(ReceiveChannel, macsec_receive_channel_free);
+DEFINE_NETWORK_SECTION_FUNCTIONS(ReceiveChannel, macsec_receive_channel_free);
 
 static int macsec_receive_channel_new(MACsec *s, uint64_t sci, ReceiveChannel **ret) {
         ReceiveChannel *c;
@@ -128,7 +128,7 @@ static int macsec_receive_channel_new(MACsec *s, uint64_t sci, ReceiveChannel **
 }
 
 static int macsec_receive_channel_new_static(MACsec *s, const char *filename, unsigned section_line, ReceiveChannel **ret) {
-        _cleanup_(config_section_freep) ConfigSection *n = NULL;
+        _cleanup_(network_config_section_freep) NetworkConfigSection *n = NULL;
         _cleanup_(macsec_receive_channel_freep) ReceiveChannel *c = NULL;
         int r;
 
@@ -137,7 +137,7 @@ static int macsec_receive_channel_new_static(MACsec *s, const char *filename, un
         assert(filename);
         assert(section_line > 0);
 
-        r = config_section_new(filename, section_line, &n);
+        r = network_config_section_new(filename, section_line, &n);
         if (r < 0)
                 return r;
 
@@ -153,7 +153,7 @@ static int macsec_receive_channel_new_static(MACsec *s, const char *filename, un
 
         c->section = TAKE_PTR(n);
 
-        r = ordered_hashmap_ensure_put(&s->receive_channels_by_section, &config_section_hash_ops, c->section, c);
+        r = ordered_hashmap_ensure_put(&s->receive_channels_by_section, &network_config_hash_ops, c->section, c);
         if (r < 0)
                 return r;
 
@@ -169,16 +169,16 @@ static TransmitAssociation* macsec_transmit_association_free(TransmitAssociation
         if (a->macsec && a->section)
                 ordered_hashmap_remove(a->macsec->transmit_associations_by_section, a->section);
 
-        config_section_free(a->section);
+        network_config_section_free(a->section);
         security_association_clear(&a->sa);
 
         return mfree(a);
 }
 
-DEFINE_SECTION_CLEANUP_FUNCTIONS(TransmitAssociation, macsec_transmit_association_free);
+DEFINE_NETWORK_SECTION_FUNCTIONS(TransmitAssociation, macsec_transmit_association_free);
 
 static int macsec_transmit_association_new_static(MACsec *s, const char *filename, unsigned section_line, TransmitAssociation **ret) {
-        _cleanup_(config_section_freep) ConfigSection *n = NULL;
+        _cleanup_(network_config_section_freep) NetworkConfigSection *n = NULL;
         _cleanup_(macsec_transmit_association_freep) TransmitAssociation *a = NULL;
         int r;
 
@@ -187,7 +187,7 @@ static int macsec_transmit_association_new_static(MACsec *s, const char *filenam
         assert(filename);
         assert(section_line > 0);
 
-        r = config_section_new(filename, section_line, &n);
+        r = network_config_section_new(filename, section_line, &n);
         if (r < 0)
                 return r;
 
@@ -208,7 +208,7 @@ static int macsec_transmit_association_new_static(MACsec *s, const char *filenam
 
         security_association_init(&a->sa);
 
-        r = ordered_hashmap_ensure_put(&s->transmit_associations_by_section, &config_section_hash_ops, a->section, a);
+        r = ordered_hashmap_ensure_put(&s->transmit_associations_by_section, &network_config_hash_ops, a->section, a);
         if (r < 0)
                 return r;
 
@@ -217,20 +217,20 @@ static int macsec_transmit_association_new_static(MACsec *s, const char *filenam
         return 0;
 }
 
-static int netdev_macsec_create_message(NetDev *netdev, int command, sd_netlink_message **ret) {
+static int netdev_macsec_fill_message(NetDev *netdev, int command, sd_netlink_message **ret) {
         _cleanup_(sd_netlink_message_unrefp) sd_netlink_message *m = NULL;
         int r;
 
         assert(netdev);
         assert(netdev->ifindex > 0);
 
-        r = sd_genl_message_new(netdev->manager->genl, MACSEC_GENL_NAME, command, &m);
+        r = sd_genl_message_new(netdev->manager->genl, SD_GENL_MACSEC, command, &m);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Failed to create generic netlink message: %m");
 
         r = sd_netlink_message_append_u32(m, MACSEC_ATTR_IFINDEX, netdev->ifindex);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_ATTR_IFINDEX attribute: %m");
 
         *ret = TAKE_PTR(m);
 
@@ -246,15 +246,15 @@ static int netdev_macsec_fill_message_sci(NetDev *netdev, MACsecSCI *sci, sd_net
 
         r = sd_netlink_message_open_container(m, MACSEC_ATTR_RXSC_CONFIG);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_ATTR_RXSC_CONFIG attribute: %m");
 
         r = sd_netlink_message_append_u64(m, MACSEC_RXSC_ATTR_SCI, sci->as_uint64);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_RXSC_ATTR_SCI attribute: %m");
 
         r = sd_netlink_message_close_container(m);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_ATTR_RXSC_CONFIG attribute: %m");
 
         return 0;
 }
@@ -268,37 +268,37 @@ static int netdev_macsec_fill_message_sa(NetDev *netdev, SecurityAssociation *a,
 
         r = sd_netlink_message_open_container(m, MACSEC_ATTR_SA_CONFIG);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_ATTR_SA_CONFIG attribute: %m");
 
         r = sd_netlink_message_append_u8(m, MACSEC_SA_ATTR_AN, a->association_number);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_SA_ATTR_AN attribute: %m");
 
         if (a->packet_number > 0) {
                 r = sd_netlink_message_append_u32(m, MACSEC_SA_ATTR_PN, a->packet_number);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append MACSEC_SA_ATTR_PN attribute: %m");
         }
 
         if (a->key_len > 0) {
                 r = sd_netlink_message_append_data(m, MACSEC_SA_ATTR_KEYID, a->key_id, MACSEC_KEYID_LEN);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append MACSEC_SA_ATTR_KEYID attribute: %m");
 
                 r = sd_netlink_message_append_data(m, MACSEC_SA_ATTR_KEY, a->key, a->key_len);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append MACSEC_SA_ATTR_KEY attribute: %m");
         }
 
         if (a->activate >= 0) {
                 r = sd_netlink_message_append_u8(m, MACSEC_SA_ATTR_ACTIVE, a->activate);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append MACSEC_SA_ATTR_ACTIVE attribute: %m");
         }
 
         r = sd_netlink_message_close_container(m);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append MACSEC_ATTR_SA_CONFIG attribute: %m");
 
         return 0;
 }
@@ -312,11 +312,12 @@ static int macsec_receive_association_handler(sd_netlink *rtnl, sd_netlink_messa
         r = sd_netlink_message_get_errno(m);
         if (r == -EEXIST)
                 log_netdev_info(netdev,
-                                "MACsec receive secure association exists, using it without changing parameters");
+                                "MACsec receive secure association exists, "
+                                "using existing without changing its parameters");
         else if (r < 0) {
                 log_netdev_warning_errno(netdev, r,
                                          "Failed to add receive secure association: %m");
-                netdev_enter_failed(netdev);
+                netdev_drop(netdev);
 
                 return 1;
         }
@@ -333,17 +334,17 @@ static int netdev_macsec_configure_receive_association(NetDev *netdev, ReceiveAs
         assert(netdev);
         assert(a);
 
-        r = netdev_macsec_create_message(netdev, MACSEC_CMD_ADD_RXSA, &m);
+        r = netdev_macsec_fill_message(netdev, MACSEC_CMD_ADD_RXSA, &m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to create netlink message: %m");
+                return r;
 
         r = netdev_macsec_fill_message_sa(netdev, &a->sa, m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to fill netlink message: %m");
+                return r;
 
         r = netdev_macsec_fill_message_sci(netdev, &a->sci, m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to fill netlink message: %m");
+                return r;
 
         r = netlink_call_async(netdev->manager->genl, NULL, m, macsec_receive_association_handler,
                                netdev_destroy_callback, netdev);
@@ -369,11 +370,12 @@ static int macsec_receive_channel_handler(sd_netlink *rtnl, sd_netlink_message *
         r = sd_netlink_message_get_errno(m);
         if (r == -EEXIST)
                 log_netdev_debug(netdev,
-                                 "MACsec receive channel exists, using it without changing parameters");
+                                 "MACsec receive channel exists, "
+                                 "using existing without changing its parameters");
         else if (r < 0) {
                 log_netdev_warning_errno(netdev, r,
                                          "Failed to add receive secure channel: %m");
-                netdev_enter_failed(netdev);
+                netdev_drop(netdev);
 
                 return 1;
         }
@@ -385,7 +387,7 @@ static int macsec_receive_channel_handler(sd_netlink *rtnl, sd_netlink_message *
                 if (r < 0) {
                         log_netdev_warning_errno(netdev, r,
                                                  "Failed to configure receive security association: %m");
-                        netdev_enter_failed(netdev);
+                        netdev_drop(netdev);
                         return 1;
                 }
         }
@@ -407,13 +409,13 @@ static int netdev_macsec_configure_receive_channel(NetDev *netdev, ReceiveChanne
         assert(netdev);
         assert(c);
 
-        r = netdev_macsec_create_message(netdev, MACSEC_CMD_ADD_RXSC, &m);
+        r = netdev_macsec_fill_message(netdev, MACSEC_CMD_ADD_RXSC, &m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to create netlink message: %m");
+                return r;
 
         r = netdev_macsec_fill_message_sci(netdev, &c->sci, m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to fill netlink message: %m");
+                return r;
 
         r = netlink_call_async(netdev->manager->genl, NULL, m, macsec_receive_channel_handler,
                                receive_channel_destroy_callback, c);
@@ -434,11 +436,12 @@ static int macsec_transmit_association_handler(sd_netlink *rtnl, sd_netlink_mess
         r = sd_netlink_message_get_errno(m);
         if (r == -EEXIST)
                 log_netdev_info(netdev,
-                                "MACsec transmit secure association exists, using it without changing parameters");
+                                "MACsec transmit secure association exists, "
+                                "using existing without changing its parameters");
         else if (r < 0) {
                 log_netdev_warning_errno(netdev, r,
                                          "Failed to add transmit secure association: %m");
-                netdev_enter_failed(netdev);
+                netdev_drop(netdev);
 
                 return 1;
         }
@@ -455,13 +458,13 @@ static int netdev_macsec_configure_transmit_association(NetDev *netdev, Transmit
         assert(netdev);
         assert(a);
 
-        r = netdev_macsec_create_message(netdev, MACSEC_CMD_ADD_TXSA, &m);
+        r = netdev_macsec_fill_message(netdev, MACSEC_CMD_ADD_TXSA, &m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to create netlink message: %m");
+                return r;
 
         r = netdev_macsec_fill_message_sa(netdev, &a->sa, m);
         if (r < 0)
-                return log_netdev_error_errno(netdev, r, "Failed to fill netlink message: %m");
+                return r;
 
         r = netlink_call_async(netdev->manager->genl, NULL, m, macsec_transmit_association_handler,
                                netdev_destroy_callback, netdev);
@@ -473,7 +476,7 @@ static int netdev_macsec_configure_transmit_association(NetDev *netdev, Transmit
         return 0;
 }
 
-static int netdev_macsec_configure(NetDev *netdev, Link *link) {
+static int netdev_macsec_configure(NetDev *netdev, Link *link, sd_netlink_message *m) {
         TransmitAssociation *a;
         ReceiveChannel *c;
         MACsec *s;
@@ -507,25 +510,23 @@ static int netdev_macsec_fill_message_create(NetDev *netdev, Link *link, sd_netl
 
         v = MACSEC(netdev);
 
-        assert(v);
-
         if (v->port > 0) {
                 r = sd_netlink_message_append_u16(m, IFLA_MACSEC_PORT, v->port);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACSEC_PORT attribute: %m");
         }
 
         if (v->encrypt >= 0) {
                 r = sd_netlink_message_append_u8(m, IFLA_MACSEC_ENCRYPT, v->encrypt);
                 if (r < 0)
-                        return r;
+                        return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACSEC_ENCRYPT attribute: %m");
         }
 
         r = sd_netlink_message_append_u8(m, IFLA_MACSEC_ENCODING_SA, v->encoding_an);
         if (r < 0)
-                return r;
+                return log_netdev_error_errno(netdev, r, "Could not append IFLA_MACSEC_ENCODING_SA attribute: %m");
 
-        return 0;
+        return r;
 }
 
 int config_parse_macsec_port(
@@ -619,7 +620,7 @@ int config_parse_macsec_hw_address(
         if (r < 0)
                 return log_oom();
 
-        r = parse_ether_addr(rvalue, b ? &b->sci.mac : &c->sci.mac);
+        r = ether_addr_from_string(rvalue, b ? &b->sci.mac : &c->sci.mac);
         if (r < 0) {
                 log_syntax(unit, LOG_WARNING, filename, line, r,
                            "Failed to parse MAC address for secure channel identifier. "
@@ -840,7 +841,7 @@ int config_parse_macsec_key_id(
         }
         if (l > MACSEC_KEYID_LEN) {
                 log_syntax(unit, LOG_WARNING, filename, line, 0,
-                           "Specified KeyId= is larger then the allowed maximum (%zu > %i), ignoring: %s",
+                           "Specified KeyId= is larger then the allowed maximum (%zu > %u), ignoring: %s",
                            l, MACSEC_KEYID_LEN, rvalue);
                 return 0;
         }
@@ -968,6 +969,8 @@ static int macsec_read_key_file(NetDev *netdev, SecurityAssociation *sa) {
 
         if (!sa->key_file)
                 return 0;
+
+        (void) warn_file_is_world_accessible(sa->key_file, NULL, NULL, 0);
 
         r = read_full_file_full(
                         AT_FDCWD, sa->key_file, UINT64_MAX, SIZE_MAX,
@@ -1227,6 +1230,5 @@ const NetDevVTable macsec_vtable = {
         .done = macsec_done,
         .create_type = NETDEV_CREATE_STACKED,
         .config_verify = netdev_macsec_verify,
-        .iftype = ARPHRD_ETHER,
         .generate_mac = true,
 };

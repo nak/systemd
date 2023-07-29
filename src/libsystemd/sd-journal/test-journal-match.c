@@ -9,6 +9,7 @@
 #include "log.h"
 #include "string-util.h"
 #include "tests.h"
+#include "util.h"
 
 int main(int argc, char *argv[]) {
         _cleanup_(sd_journal_closep) sd_journal *j = NULL;

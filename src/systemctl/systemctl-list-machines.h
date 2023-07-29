@@ -7,19 +7,16 @@
 #include "bus-map-properties.h"
 #include "time-util.h"
 
-int verb_list_machines(int argc, char *argv[], void *userdata);
+int list_machines(int argc, char *argv[], void *userdata);
 
 struct machine_info {
         bool is_host;
         char *name;
-        char *version;
-        char *tainted;
-        uint64_t timestamp;
-        uint32_t n_names;
+        char *state;
+        char *control_group;
         uint32_t n_failed_units;
         uint32_t n_jobs;
-        char *control_group;
-        char *state;
+        usec_t timestamp;
 };
 
 void machine_info_clear(struct machine_info *info);

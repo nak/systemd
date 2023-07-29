@@ -1,141 +1,63 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
-#include "device-private.h"
+#include <fnmatch.h>
+
 #include "device-util.h"
-#include "devnum-util.h"
-#include "fd-util.h"
-#include "string-util.h"
-#include "strv.h"
+#include "path-util.h"
 
-int devname_from_devnum(mode_t mode, dev_t devnum, char **ret) {
-        _cleanup_(sd_device_unrefp) sd_device *dev = NULL;
-        _cleanup_free_ char *s = NULL;
-        const char *devname;
-        int r;
-
-        assert(ret);
-
-        if (devnum_is_zero(devnum))
-                return device_path_make_inaccessible(mode, ret);
-
-        r = device_new_from_mode_and_devnum(&dev, mode, devnum);
-        if (r < 0)
-                return r;
-
-        r = sd_device_get_devname(dev, &devname);
-        if (r < 0)
-                return r;
-
-        s = strdup(devname);
-        if (!s)
-                return -ENOMEM;
-
-        *ret = TAKE_PTR(s);
-        return 0;
-}
-
-int device_open_from_devnum(mode_t mode, dev_t devnum, int flags, char **ret) {
-        _cleanup_(sd_device_unrefp) sd_device *dev = NULL;
-        _cleanup_close_ int fd = -EBADF;
-        int r;
-
-        r = device_new_from_mode_and_devnum(&dev, mode, devnum);
-        if (r < 0)
-                return r;
-
-        fd = sd_device_open(dev, flags);
-        if (fd < 0)
-                return fd;
-
-        if (ret) {
-                const char *devname;
-                char *s;
-
-                r = sd_device_get_devname(dev, &devname);
-                if (r < 0)
-                        return r;
-
-                s = strdup(devname);
-                if (!s)
-                        return -ENOMEM;
-
-                *ret = s;
-        }
-
-        return TAKE_FD(fd);
-}
-
-static int add_string_field(
-                sd_device *device,
-                const char *field,
-                int (*func)(sd_device *dev, const char **s),
-                char ***strv) {
-
-        const char *s;
-        int r;
+static bool device_match_sysattr_value(sd_device *device, const char *sysattr, const char *match_value) {
+        const char *value;
 
         assert(device);
-        assert(field);
-        assert(func);
-        assert(strv);
+        assert(sysattr);
 
-        r = func(device, &s);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"%s\" property, ignoring: %m", field);
-        if (r >= 0)
-                (void) strv_extend_assignment(strv, field, s);
+        if (sd_device_get_sysattr_value(device, sysattr, &value) < 0)
+                return false;
 
-        return 0;
+        if (!match_value)
+                return true;
+
+        if (fnmatch(match_value, value, 0) == 0)
+                return true;
+
+        return false;
 }
 
-char** device_make_log_fields(sd_device *device) {
-        _cleanup_strv_free_ char **strv = NULL;
-        dev_t devnum;
-        int ifindex;
-        sd_device_action_t action;
-        uint64_t seqnum, diskseq;
-        int r;
+bool device_match_sysattr(sd_device *device, Hashmap *match_sysattr, Hashmap *nomatch_sysattr) {
+        const char *sysattr;
+        const char *value;
 
         assert(device);
 
-        (void) add_string_field(device, "SYSPATH", sd_device_get_syspath, &strv);
-        (void) add_string_field(device, "SUBSYSTEM", sd_device_get_subsystem, &strv);
-        (void) add_string_field(device, "DEVTYPE", sd_device_get_devtype, &strv);
-        (void) add_string_field(device, "DRIVER", sd_device_get_driver, &strv);
-        (void) add_string_field(device, "DEVPATH", sd_device_get_devpath, &strv);
-        (void) add_string_field(device, "DEVNAME", sd_device_get_devname, &strv);
-        (void) add_string_field(device, "SYSNAME", sd_device_get_sysname, &strv);
-        (void) add_string_field(device, "SYSNUM", sd_device_get_sysnum, &strv);
+        HASHMAP_FOREACH_KEY(value, sysattr, match_sysattr)
+                if (!device_match_sysattr_value(device, sysattr, value))
+                        return false;
 
-        r = sd_device_get_devnum(device, &devnum);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"DEVNUM\" property, ignoring: %m");
-        if (r >= 0)
-                (void) strv_extendf(&strv, "DEVNUM="DEVNUM_FORMAT_STR, DEVNUM_FORMAT_VAL(devnum));
+        HASHMAP_FOREACH_KEY(value, sysattr, nomatch_sysattr)
+                if (device_match_sysattr_value(device, sysattr, value))
+                        return false;
 
-        r = sd_device_get_ifindex(device, &ifindex);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"IFINDEX\" property, ignoring: %m");
-        if (r >= 0)
-                (void) strv_extendf(&strv, "IFINDEX=%i", ifindex);
+        return true;
+}
 
-        r = sd_device_get_action(device, &action);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"ACTION\" property, ignoring: %m");
-        if (r >= 0)
-                (void) strv_extendf(&strv, "ACTION=%s", device_action_to_string(action));
+bool device_match_parent(sd_device *device, Set *match_parent, Set *nomatch_parent) {
+        const char *syspath_parent, *syspath;
 
-        r = sd_device_get_seqnum(device, &seqnum);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"SEQNUM\" property, ignoring: %m");
-        if (r >= 0)
-                (void) strv_extendf(&strv, "SEQNUM=%"PRIu64, seqnum);
+        assert(device);
 
-        r = sd_device_get_diskseq(device, &diskseq);
-        if (r < 0 && r != -ENOENT)
-                log_device_debug_errno(device, r, "Failed to get device \"DISKSEQ\" property, ignoring: %m");
-        if (r >= 0)
-                (void) strv_extendf(&strv, "DISKSEQ=%"PRIu64, diskseq);
+        if (sd_device_get_syspath(device, &syspath) < 0)
+                return false;
 
-        return TAKE_PTR(strv);
+        SET_FOREACH(syspath_parent, nomatch_parent)
+                if (path_startswith(syspath, syspath_parent))
+                        return false;
+
+        if (set_isempty(match_parent))
+                return true;
+
+        SET_FOREACH(syspath_parent, match_parent)
+                if (path_startswith(syspath, syspath_parent))
+                        return true;
+
+        return false;
 }

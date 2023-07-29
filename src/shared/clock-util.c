@@ -19,7 +19,7 @@
 #include "string-util.h"
 
 int clock_get_hwclock(struct tm *tm) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         assert(tm);
 
@@ -40,7 +40,7 @@ int clock_get_hwclock(struct tm *tm) {
 }
 
 int clock_set_hwclock(const struct tm *tm) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         assert(tm);
 
@@ -48,7 +48,10 @@ int clock_set_hwclock(const struct tm *tm) {
         if (fd < 0)
                 return -errno;
 
-        return RET_NERRNO(ioctl(fd, RTC_SET_TIME, tm));
+        if (ioctl(fd, RTC_SET_TIME, tm) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int clock_is_localtime(const char* adjtime_path) {
@@ -128,19 +131,18 @@ int clock_reset_timewarp(void) {
 
         /* The very first call to settimeofday() does time warp magic. Do a dummy call here, so the time
          * warping is sealed and all later calls behave as expected. */
-        return RET_NERRNO(settimeofday(NULL, &tz));
+        if (settimeofday(NULL, &tz) < 0)
+                return -errno;
+
+        return 0;
 }
 
 #define EPOCH_FILE "/usr/lib/clock-epoch"
 
-int clock_apply_epoch(ClockChangeDirection *ret_attempted_change) {
-        usec_t epoch_usec, now_usec;
+int clock_apply_epoch(void) {
         struct stat st;
-
-        /* NB: we update *ret_attempted_change in *all* cases, both
-         * on success and failure, to indicate what we intended to do! */
-
-        assert(ret_attempted_change);
+        struct timespec ts;
+        usec_t epoch_usec;
 
         if (stat(EPOCH_FILE, &st) < 0) {
                 if (errno != ENOENT)
@@ -150,17 +152,10 @@ int clock_apply_epoch(ClockChangeDirection *ret_attempted_change) {
         } else
                 epoch_usec = timespec_load(&st.st_mtim);
 
-        now_usec = now(CLOCK_REALTIME);
-        if (now_usec < epoch_usec)
-                *ret_attempted_change = CLOCK_CHANGE_FORWARD;
-        else if (CLOCK_VALID_RANGE_USEC_MAX > 0 && now_usec > usec_add(epoch_usec, CLOCK_VALID_RANGE_USEC_MAX))
-                *ret_attempted_change = CLOCK_CHANGE_BACKWARD;
-        else {
-                *ret_attempted_change = CLOCK_CHANGE_NOOP;
+        if (now(CLOCK_REALTIME) >= epoch_usec)
                 return 0;
-        }
 
-        if (clock_settime(CLOCK_REALTIME, TIMESPEC_STORE(epoch_usec)) < 0)
+        if (clock_settime(CLOCK_REALTIME, timespec_store(&ts, epoch_usec)) < 0)
                 return -errno;
 
         return 1;

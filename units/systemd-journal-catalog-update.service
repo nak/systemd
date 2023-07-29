@@ -10,14 +10,11 @@
 [Unit]
 Description=Rebuild Journal Catalog
 Documentation=man:systemd-journald.service(8) man:journald.conf(5)
-
-ConditionNeedsUpdate=/var
-
 DefaultDependencies=no
-After=local-fs.target systemd-tmpfiles-setup.service
-Before=sysinit.target systemd-update-done.service
 Conflicts=shutdown.target
-Before=shutdown.target
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=sysinit.target shutdown.target systemd-update-done.service
+ConditionNeedsUpdate=/var
 
 [Service]
 Type=oneshot

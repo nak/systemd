@@ -12,6 +12,7 @@
 #include "systemctl.h"
 
 static int normalize_filenames(char **names) {
+        char **u;
         int r;
 
         STRV_FOREACH(u, names)
@@ -23,10 +24,9 @@ static int normalize_filenames(char **names) {
                                                        "Non-absolute paths are not allowed when --root is used: %s",
                                                        *u);
 
-                        if (!strchr(*u, '/'))
+                        if (!strchr(*u,'/'))
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Link argument must contain at least one directory separator.\n"
-                                                       "If you intended to link a file in the current directory, try ./%s instead.",
+                                                       "Link argument does contain at least one directory separator: %s",
                                                        *u);
 
                         r = path_make_absolute_cwd(*u, &normalized_path);
@@ -39,7 +39,8 @@ static int normalize_filenames(char **names) {
         return 0;
 }
 
-static int normalize_names(char **names) {
+static int normalize_names(char **names, bool warn_if_path) {
+        char **u;
         bool was_path = false;
 
         STRV_FOREACH(u, names) {
@@ -55,17 +56,19 @@ static int normalize_names(char **names) {
                 was_path = true;
         }
 
-        if (was_path)
+        if (warn_if_path && was_path)
                 log_warning("Warning: Can't execute disable on the unit file path. Proceeding with the unit name.");
 
         return 0;
 }
 
-int verb_enable(int argc, char *argv[], void *userdata) {
+int enable_unit(int argc, char *argv[], void *userdata) {
         _cleanup_strv_free_ char **names = NULL;
         const char *verb = argv[0];
+        UnitFileChange *changes = NULL;
+        size_t n_changes = 0;
         int carries_install_info = -1;
-        bool ignore_carries_install_info = arg_quiet || arg_no_warn;
+        bool ignore_carries_install_info = arg_quiet;
         int r;
 
         if (!argv[1])
@@ -83,13 +86,11 @@ int verb_enable(int argc, char *argv[], void *userdata) {
         if (strv_isempty(names)) {
                 if (arg_no_reload || install_client_side())
                         return 0;
-
-                r = daemon_reload(ACTION_RELOAD, /* graceful= */ false);
-                return r > 0 ? 0 : r;
+                return daemon_reload(argc, argv, userdata);
         }
 
         if (streq(verb, "disable")) {
-                r = normalize_names(names);
+                r = normalize_names(names, true);
                 if (r < 0)
                         return r;
         }
@@ -102,37 +103,33 @@ int verb_enable(int argc, char *argv[], void *userdata) {
 
         if (install_client_side()) {
                 UnitFileFlags flags;
-                InstallChange *changes = NULL;
-                size_t n_changes = 0;
-
-                CLEANUP_ARRAY(changes, n_changes, install_changes_free);
 
                 flags = unit_file_flags_from_args();
                 if (streq(verb, "enable")) {
-                        r = unit_file_enable(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
+                        r = unit_file_enable(arg_scope, flags, arg_root, names, &changes, &n_changes);
                         carries_install_info = r;
-                } else if (streq(verb, "disable")) {
-                        r = unit_file_disable(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
-                        carries_install_info = r;
-                } else if (streq(verb, "reenable")) {
-                        r = unit_file_reenable(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
+                } else if (streq(verb, "disable"))
+                        r = unit_file_disable(arg_scope, flags, arg_root, names, &changes, &n_changes);
+                else if (streq(verb, "reenable")) {
+                        r = unit_file_reenable(arg_scope, flags, arg_root, names, &changes, &n_changes);
                         carries_install_info = r;
                 } else if (streq(verb, "link"))
-                        r = unit_file_link(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
-                else if (streq(verb, "preset"))
-                        r = unit_file_preset(arg_runtime_scope, flags, arg_root, names, arg_preset_mode, &changes, &n_changes);
-                else if (streq(verb, "mask"))
-                        r = unit_file_mask(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
+                        r = unit_file_link(arg_scope, flags, arg_root, names, &changes, &n_changes);
+                else if (streq(verb, "preset")) {
+                        r = unit_file_preset(arg_scope, flags, arg_root, names, arg_preset_mode, &changes, &n_changes);
+                } else if (streq(verb, "mask"))
+                        r = unit_file_mask(arg_scope, flags, arg_root, names, &changes, &n_changes);
                 else if (streq(verb, "unmask"))
-                        r = unit_file_unmask(arg_runtime_scope, flags, arg_root, names, &changes, &n_changes);
+                        r = unit_file_unmask(arg_scope, flags, arg_root, names, &changes, &n_changes);
                 else if (streq(verb, "revert"))
-                        r = unit_file_revert(arg_runtime_scope, arg_root, names, &changes, &n_changes);
+                        r = unit_file_revert(arg_scope, arg_root, names, &changes, &n_changes);
                 else
-                        assert_not_reached();
+                        assert_not_reached("Unknown verb");
 
-                install_changes_dump(r, verb, changes, n_changes, arg_quiet);
+                unit_file_dump_changes(r, verb, changes, n_changes, arg_quiet);
                 if (r < 0)
-                        return r;
+                        goto finish;
+                r = 0;
         } else {
                 _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL, *m = NULL;
                 _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -142,9 +139,10 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                 sd_bus *bus;
 
                 if (STR_IN_SET(verb, "mask", "unmask")) {
+                        char **name;
                         _cleanup_(lookup_paths_free) LookupPaths lp = {};
 
-                        r = lookup_paths_init_or_warn(&lp, arg_runtime_scope, 0, arg_root);
+                        r = lookup_paths_init(&lp, arg_scope, 0, arg_root);
                         if (r < 0)
                                 return r;
 
@@ -167,8 +165,7 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                         method = "EnableUnitFiles";
                         expect_carries_install_info = true;
                 } else if (streq(verb, "disable")) {
-                        method = "DisableUnitFilesWithFlagsAndInstallInfo";
-                        expect_carries_install_info = true;
+                        method = "DisableUnitFiles";
                         send_force = false;
                 } else if (streq(verb, "reenable")) {
                         method = "ReenableUnitFiles";
@@ -194,7 +191,7 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                         method = "RevertUnitFiles";
                         send_runtime = send_force = false;
                 } else
-                        assert_not_reached();
+                        assert_not_reached("Unknown verb");
 
                 r = bus_message_new_method_call(bus, &m, bus_systemd_mgr, method);
                 if (r < 0)
@@ -211,10 +208,7 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                 }
 
                 if (send_runtime) {
-                        if (streq(method, "DisableUnitFilesWithFlagsAndInstallInfo"))
-                                r = sd_bus_message_append(m, "t", arg_runtime ? (uint64_t) UNIT_FILE_RUNTIME : UINT64_C(0));
-                        else
-                                r = sd_bus_message_append(m, "b", arg_runtime);
+                        r = sd_bus_message_append(m, "b", arg_runtime);
                         if (r < 0)
                                 return bus_log_create_error(r);
                 }
@@ -235,22 +229,21 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                                 return bus_log_parse_error(r);
                 }
 
-                r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet);
+                r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet, &changes, &n_changes);
                 if (r < 0)
-                        return r;
+                        goto finish;
 
                 /* Try to reload if enabled */
-                if (!arg_no_reload) {
-                        r = daemon_reload(ACTION_RELOAD, /* graceful= */ false);
-                        if (r < 0)
-                                return r;
-                }
+                if (!arg_no_reload)
+                        r = daemon_reload(argc, argv, userdata);
+                else
+                        r = 0;
         }
 
         if (carries_install_info == 0 && !ignore_carries_install_info)
-                log_notice("The unit files have no installation config (WantedBy=, RequiredBy=, UpheldBy=,\n"
-                           "Also=, or Alias= settings in the [Install] section, and DefaultInstance= for\n"
-                           "template units). This means they are not meant to be enabled or disabled using systemctl.\n"
+                log_notice("The unit files have no installation config (WantedBy=, RequiredBy=, Also=,\n"
+                           "Alias= settings in the [Install] section, and DefaultInstance= for template\n"
+                           "units). This means they are not meant to be enabled using systemctl.\n"
                            " \n" /* trick: the space is needed so that the line does not get stripped from output */
                            "Possible reasons for having this kind of units are:\n"
                            "%1$s A unit may be statically enabled by being symlinked from another unit's\n"
@@ -263,50 +256,13 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                            "  instance name specified.",
                            special_glyph(SPECIAL_GLYPH_BULLET));
 
-        if (streq(verb, "disable") && arg_runtime_scope == RUNTIME_SCOPE_USER && !arg_quiet && !arg_no_warn) {
-                /* If some of the units are disabled in user scope but still enabled in global scope,
-                 * we emit a warning for that. */
-
-                _cleanup_strv_free_ char **enabled_in_global_scope = NULL;
-
-                STRV_FOREACH(name, names) {
-                        UnitFileState state;
-
-                        r = unit_file_get_state(RUNTIME_SCOPE_GLOBAL, arg_root, *name, &state);
-                        if (r == -ENOENT)
-                                continue;
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to get unit file state for %s: %m", *name);
-
-                        if (IN_SET(state, UNIT_FILE_ENABLED, UNIT_FILE_ENABLED_RUNTIME)) {
-                                r = strv_extend(&enabled_in_global_scope, *name);
-                                if (r < 0)
-                                        return log_oom();
-                        }
-                }
-
-                if (!strv_isempty(enabled_in_global_scope)) {
-                        _cleanup_free_ char *units = NULL;
-
-                        units = strv_join(enabled_in_global_scope, ", ");
-                        if (!units)
-                                return log_oom();
-
-                        log_notice("The following unit files have been enabled in global scope. This means\n"
-                                   "they will still be started automatically after a successful disablement\n"
-                                   "in user scope:\n"
-                                   "%s",
-                                   units);
-                }
-        }
-
         if (arg_now && STR_IN_SET(argv[0], "enable", "disable", "mask")) {
                 sd_bus *bus;
                 size_t len, i;
 
                 r = acquire_bus(BUS_MANAGER, &bus);
                 if (r < 0)
-                        return r;
+                        goto finish;
 
                 len = strv_length(names);
                 {
@@ -317,9 +273,12 @@ int verb_enable(int argc, char *argv[], void *userdata) {
                                 new_args[i + 1] = basename(names[i]);
                         new_args[i + 1] = NULL;
 
-                        r = verb_start(len + 1, new_args, userdata);
+                        r = start_unit(len + 1, new_args, userdata);
                 }
         }
 
-        return 0;
+finish:
+        unit_file_changes_free(changes, n_changes);
+
+        return r;
 }

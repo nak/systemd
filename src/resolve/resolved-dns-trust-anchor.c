@@ -4,7 +4,7 @@
 
 #include "alloc-util.h"
 #include "conf-files.h"
-#include "constants.h"
+#include "def.h"
 #include "dns-domain.h"
 #include "fd-util.h"
 #include "fileio.h"
@@ -165,6 +165,7 @@ static int dns_trust_anchor_add_builtin_negative(DnsTrustAnchor *d) {
                 /* Defined by RFC 8375. The most official choice. */
                 "home.arpa\0";
 
+        const char *name;
         int r;
 
         assert(d);
@@ -408,6 +409,7 @@ static int dns_trust_anchor_load_files(
                 int (*loader)(DnsTrustAnchor *d, const char *path, unsigned n, const char *line)) {
 
         _cleanup_strv_free_ char **files = NULL;
+        char **f;
         int r;
 
         assert(d);
@@ -422,7 +424,7 @@ static int dns_trust_anchor_load_files(
                 _cleanup_fclose_ FILE *g = NULL;
                 unsigned n = 0;
 
-                g = fopen(*f, "re");
+                g = fopen(*f, "r");
                 if (!g) {
                         if (errno == ENOENT)
                                 continue;
@@ -598,7 +600,6 @@ static int dns_trust_anchor_revoked_put(DnsTrustAnchor *d, DnsResourceRecord *rr
 static int dns_trust_anchor_remove_revoked(DnsTrustAnchor *d, DnsResourceRecord *rr) {
         _cleanup_(dns_answer_unrefp) DnsAnswer *new_answer = NULL;
         DnsAnswer *old_answer;
-        DnsAnswerItem *item;
         int r;
 
         /* Remember that this is a revoked trust anchor RR */
@@ -631,12 +632,11 @@ static int dns_trust_anchor_remove_revoked(DnsTrustAnchor *d, DnsResourceRecord 
                 return 1;
         }
 
-        item = ordered_set_first(new_answer->items);
-        r = hashmap_replace(d->positive_by_key, item->rr->key, new_answer);
+        r = hashmap_replace(d->positive_by_key, new_answer->items[0].rr->key, new_answer);
         if (r < 0)
                 return r;
 
-        TAKE_PTR(new_answer);
+        new_answer = NULL;
         dns_answer_unref(old_answer);
         return 1;
 }

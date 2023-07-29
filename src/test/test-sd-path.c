@@ -7,7 +7,9 @@
 #include "strv.h"
 #include "tests.h"
 
-TEST(sd_path_lookup) {
+static void test_sd_path_lookup(void) {
+        log_info("/* %s */", __func__);
+
         for (uint64_t i = 0; i < _SD_PATH_MAX; i++) {
                 _cleanup_free_ char *t = NULL, *s = NULL;
                 int r;
@@ -29,9 +31,12 @@ TEST(sd_path_lookup) {
         assert_se(sd_path_lookup(_SD_PATH_MAX, NULL, &tt) == -EOPNOTSUPP);
 }
 
-TEST(sd_path_lookup_strv) {
+static void test_sd_path_lookup_strv(void) {
+        log_info("/* %s */", __func__);
+
         for (uint64_t i = 0; i < _SD_PATH_MAX; i++) {
                 _cleanup_strv_free_ char **t = NULL, **s = NULL;
+                char **item;
                 int r;
 
                 r = sd_path_lookup_strv(i, NULL, &t);
@@ -56,4 +61,9 @@ TEST(sd_path_lookup_strv) {
         assert_se(sd_path_lookup(_SD_PATH_MAX, NULL, &tt) == -EOPNOTSUPP);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(void) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_sd_path_lookup();
+        test_sd_path_lookup_strv();
+}

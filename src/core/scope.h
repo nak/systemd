@@ -11,7 +11,6 @@ typedef enum ScopeResult {
         SCOPE_SUCCESS,
         SCOPE_FAILURE_RESOURCES,
         SCOPE_FAILURE_TIMEOUT,
-        SCOPE_FAILURE_OOM_KILL,
         _SCOPE_RESULT_MAX,
         _SCOPE_RESULT_INVALID = -EINVAL,
 } ScopeResult;
@@ -26,7 +25,6 @@ struct Scope {
         ScopeResult result;
 
         usec_t runtime_max_usec;
-        usec_t runtime_rand_extra_usec;
         usec_t timeout_stop_usec;
 
         char *controller;
@@ -35,11 +33,6 @@ struct Scope {
         bool was_abandoned;
 
         sd_event_source *timer_event_source;
-
-        char *user;
-        char *group;
-
-        OOMPolicy oom_policy;
 };
 
 extern const UnitVTable scope_vtable;

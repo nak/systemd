@@ -6,9 +6,9 @@
 #include "pretty-print.h"
 #include "string-util.h"
 #include "terminal-util.h"
-#include "tests.h"
+#include "util.h"
 
-TEST(strip_tab_ansi) {
+int main(int argc, char *argv[]) {
         _cleanup_free_ char *urlified = NULL, *q = NULL, *qq = NULL;
         char *p, *z;
 
@@ -67,6 +67,6 @@ TEST(strip_tab_ansi) {
                 assert_se(strip_tab_ansi(&q, NULL, NULL));
                 assert_se(streq(q, qq));
         }
-}
 
-DEFINE_TEST_MAIN(LOG_INFO);
+        return 0;
+}

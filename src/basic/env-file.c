@@ -12,22 +12,18 @@
 #include "tmpfile-util.h"
 #include "utf8.h"
 
-typedef int (*push_env_func_t)(
-                const char *filename,
-                unsigned line,
-                const char *key,
-                char *value,
-                void *userdata);
-
 static int parse_env_file_internal(
                 FILE *f,
                 const char *fname,
-                push_env_func_t push,
-                void *userdata) {
+                int (*push) (const char *filename, unsigned line,
+                             const char *key, char *value, void *userdata, int *n_pushed),
+                void *userdata,
+                int *n_pushed) {
 
         size_t n_key = 0, n_value = 0, last_value_whitespace = SIZE_MAX, last_key_whitespace = SIZE_MAX;
         _cleanup_free_ char *contents = NULL, *key = NULL, *value = NULL;
         unsigned line = 1;
+        char *p;
         int r;
 
         enum {
@@ -43,9 +39,6 @@ static int parse_env_file_internal(
                 COMMENT_ESCAPE
         } state = PRE_KEY;
 
-        assert(f || fname);
-        assert(push);
-
         if (f)
                 r = read_full_stream(f, &contents, NULL);
         else
@@ -53,7 +46,7 @@ static int parse_env_file_internal(
         if (r < 0)
                 return r;
 
-        for (char *p = contents; *p; p++) {
+        for (p = contents; *p; p++) {
                 char c = *p;
 
                 switch (state) {
@@ -107,7 +100,7 @@ static int parse_env_file_internal(
                                 if (last_key_whitespace != SIZE_MAX)
                                         key[last_key_whitespace] = 0;
 
-                                r = push(fname, line, key, value, userdata);
+                                r = push(fname, line, key, value, userdata, n_pushed);
                                 if (r < 0)
                                         return r;
 
@@ -150,7 +143,7 @@ static int parse_env_file_internal(
                                 if (last_key_whitespace != SIZE_MAX)
                                         key[last_key_whitespace] = 0;
 
-                                r = push(fname, line, key, value, userdata);
+                                r = push(fname, line, key, value, userdata, n_pushed);
                                 if (r < 0)
                                         return r;
 
@@ -243,13 +236,7 @@ static int parse_env_file_internal(
                         break;
 
                 case COMMENT_ESCAPE:
-                        log_debug("The line which doesn't begin with \";\" or \"#\", but follows a comment" \
-                                  " line trailing with escape is now treated as a non comment line since v254.");
-                        if (strchr(NEWLINE, c)) {
-                                state = PRE_KEY;
-                                line++;
-                        } else
-                                state = COMMENT;
+                        state = COMMENT;
                         break;
                 }
         }
@@ -275,7 +262,7 @@ static int parse_env_file_internal(
                 if (last_key_whitespace != SIZE_MAX)
                         key[last_key_whitespace] = 0;
 
-                r = push(fname, line, key, value, userdata);
+                r = push(fname, line, key, value, userdata, n_pushed);
                 if (r < 0)
                         return r;
 
@@ -288,8 +275,6 @@ static int parse_env_file_internal(
 static int check_utf8ness_and_warn(
                 const char *filename, unsigned line,
                 const char *key, char *value) {
-
-        assert(key);
 
         if (!utf8_is_valid(key)) {
                 _cleanup_free_ char *p = NULL;
@@ -315,13 +300,12 @@ static int check_utf8ness_and_warn(
 static int parse_env_file_push(
                 const char *filename, unsigned line,
                 const char *key, char *value,
-                void *userdata) {
+                void *userdata,
+                int *n_pushed) {
 
         const char *k;
         va_list aq, *ap = userdata;
         int r;
-
-        assert(key);
 
         r = check_utf8ness_and_warn(filename, line, key, value);
         if (r < 0)
@@ -336,7 +320,11 @@ static int parse_env_file_push(
 
                 if (streq(key, k)) {
                         va_end(aq);
-                        free_and_replace(*v, value);
+                        free(*v);
+                        *v = value;
+
+                        if (n_pushed)
+                                (*n_pushed)++;
 
                         return 1;
                 }
@@ -353,32 +341,16 @@ int parse_env_filev(
                 const char *fname,
                 va_list ap) {
 
-        int r;
+        int r, n_pushed = 0;
         va_list aq;
-
-        assert(f || fname);
 
         va_copy(aq, ap);
-        r = parse_env_file_internal(f, fname, parse_env_file_push, &aq);
+        r = parse_env_file_internal(f, fname, parse_env_file_push, &aq, &n_pushed);
         va_end(aq);
-        return r;
-}
-
-int parse_env_file_fdv(int fd, const char *fname, va_list ap) {
-        _cleanup_fclose_ FILE *f = NULL;
-        va_list aq;
-        int r;
-
-        assert(fd >= 0);
-
-        r = fdopen_independent(fd, "re", &f);
         if (r < 0)
                 return r;
 
-        va_copy(aq, ap);
-        r = parse_env_file_internal(f, fname, parse_env_file_push, &aq);
-        va_end(aq);
-        return r;
+        return n_pushed;
 }
 
 int parse_env_file_sentinel(
@@ -389,27 +361,8 @@ int parse_env_file_sentinel(
         va_list ap;
         int r;
 
-        assert(f || fname);
-
         va_start(ap, fname);
         r = parse_env_filev(f, fname, ap);
-        va_end(ap);
-
-        return r;
-}
-
-int parse_env_file_fd_sentinel(
-                int fd,
-                const char *fname, /* only used for logging */
-                ...) {
-
-        va_list ap;
-        int r;
-
-        assert(fd >= 0);
-
-        va_start(ap, fname);
-        r = parse_env_file_fdv(fd, fname, ap);
         va_end(ap);
 
         return r;
@@ -418,13 +371,11 @@ int parse_env_file_fd_sentinel(
 static int load_env_file_push(
                 const char *filename, unsigned line,
                 const char *key, char *value,
-                void *userdata) {
-
+                void *userdata,
+                int *n_pushed) {
         char ***m = userdata;
         char *p;
         int r;
-
-        assert(key);
 
         r = check_utf8ness_and_warn(filename, line, key, value);
         if (r < 0)
@@ -438,96 +389,83 @@ static int load_env_file_push(
         if (r < 0)
                 return r;
 
+        if (n_pushed)
+                (*n_pushed)++;
+
         free(value);
         return 0;
 }
 
-int load_env_file(FILE *f, const char *fname, char ***ret) {
-        _cleanup_strv_free_ char **m = NULL;
+int load_env_file(FILE *f, const char *fname, char ***rl) {
+        char **m = NULL;
         int r;
 
-        assert(f || fname);
-        assert(ret);
-
-        r = parse_env_file_internal(f, fname, load_env_file_push, &m);
-        if (r < 0)
+        r = parse_env_file_internal(f, fname, load_env_file_push, &m, NULL);
+        if (r < 0) {
+                strv_free(m);
                 return r;
+        }
 
-        *ret = TAKE_PTR(m);
+        *rl = m;
         return 0;
 }
 
 static int load_env_file_push_pairs(
                 const char *filename, unsigned line,
                 const char *key, char *value,
-                void *userdata) {
-
-        char ***m = ASSERT_PTR(userdata);
+                void *userdata,
+                int *n_pushed) {
+        char ***m = userdata;
         int r;
-
-        assert(key);
 
         r = check_utf8ness_and_warn(filename, line, key, value);
         if (r < 0)
                 return r;
 
-        /* Check if the key is present */
-        for (char **t = *m; t && *t; t += 2)
-                if (streq(t[0], key)) {
-                        if (value)
-                                return free_and_replace(t[1], value);
-                        else
-                                return free_and_strdup(t+1, "");
-                }
-
         r = strv_extend(m, key);
         if (r < 0)
-                return r;
+                return -ENOMEM;
 
-        if (value)
-                return strv_push(m, value);
-        else
-                return strv_extend(m, "");
-}
+        if (!value) {
+                r = strv_extend(m, "");
+                if (r < 0)
+                        return -ENOMEM;
+        } else {
+                r = strv_push(m, value);
+                if (r < 0)
+                        return r;
+        }
 
-int load_env_file_pairs(FILE *f, const char *fname, char ***ret) {
-        _cleanup_strv_free_ char **m = NULL;
-        int r;
+        if (n_pushed)
+                (*n_pushed)++;
 
-        assert(f || fname);
-        assert(ret);
-
-        r = parse_env_file_internal(f, fname, load_env_file_push_pairs, &m);
-        if (r < 0)
-                return r;
-
-        *ret = TAKE_PTR(m);
         return 0;
 }
 
-int load_env_file_pairs_fd(int fd, const char *fname, char ***ret) {
-        _cleanup_fclose_ FILE *f = NULL;
+int load_env_file_pairs(FILE *f, const char *fname, char ***rl) {
+        char **m = NULL;
         int r;
 
-        assert(fd >= 0);
-
-        r = fdopen_independent(fd, "re", &f);
-        if (r < 0)
+        r = parse_env_file_internal(f, fname, load_env_file_push_pairs, &m, NULL);
+        if (r < 0) {
+                strv_free(m);
                 return r;
+        }
 
-        return load_env_file_pairs(f, fname, ret);
+        *rl = m;
+        return 0;
 }
 
 static int merge_env_file_push(
                 const char *filename, unsigned line,
                 const char *key, char *value,
-                void *userdata) {
+                void *userdata,
+                int *n_pushed) {
 
-        char ***env = ASSERT_PTR(userdata);
+        char ***env = userdata;
         char *expanded_value;
-        int r;
 
-        assert(key);
+        assert(env);
 
         if (!value) {
                 log_error("%s:%u: invalid syntax (around \"%s\"), ignoring.", strna(filename), line, key);
@@ -540,18 +478,18 @@ static int merge_env_file_push(
                 return 0;
         }
 
-        r = replace_env(value,
-                        *env,
-                        REPLACE_ENV_USE_ENVIRONMENT|REPLACE_ENV_ALLOW_BRACELESS|REPLACE_ENV_ALLOW_EXTENDED,
-                        &expanded_value);
-        if (r < 0)
-                return log_error_errno(r, "%s:%u: Failed to expand variable '%s': %m", strna(filename), line, value);
+        expanded_value = replace_env(value, *env,
+                                     REPLACE_ENV_USE_ENVIRONMENT|
+                                     REPLACE_ENV_ALLOW_BRACELESS|
+                                     REPLACE_ENV_ALLOW_EXTENDED);
+        if (!expanded_value)
+                return -ENOMEM;
 
         free_and_replace(value, expanded_value);
 
         log_debug("%s:%u: setting %s=%s", filename, line, key, value);
 
-        return load_env_file_push(filename, line, key, value, env);
+        return load_env_file_push(filename, line, key, value, env, n_pushed);
 }
 
 int merge_env_file(
@@ -559,21 +497,15 @@ int merge_env_file(
                 FILE *f,
                 const char *fname) {
 
-        assert(env);
-        assert(f || fname);
-
         /* NOTE: this function supports braceful and braceless variable expansions,
          * plus "extended" substitutions, unlike other exported parsing functions.
          */
 
-        return parse_env_file_internal(f, fname, merge_env_file_push, env);
+        return parse_env_file_internal(f, fname, merge_env_file_push, env, NULL);
 }
 
 static void write_env_var(FILE *f, const char *v) {
         const char *p;
-
-        assert(f);
-        assert(v);
 
         p = strchr(v, '=');
         if (!p) {
@@ -603,15 +535,15 @@ static void write_env_var(FILE *f, const char *v) {
         fputc_unlocked('\n', f);
 }
 
-int write_env_file_at(int dir_fd, const char *fname, char **l) {
+int write_env_file(const char *fname, char **l) {
         _cleanup_fclose_ FILE *f = NULL;
         _cleanup_free_ char *p = NULL;
+        char **i;
         int r;
 
-        assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
         assert(fname);
 
-        r = fopen_temporary_at(dir_fd, fname, &f, &p);
+        r = fopen_temporary(fname, &f, &p);
         if (r < 0)
                 return r;
 
@@ -622,12 +554,12 @@ int write_env_file_at(int dir_fd, const char *fname, char **l) {
 
         r = fflush_and_check(f);
         if (r >= 0) {
-                if (renameat(dir_fd, p, dir_fd, fname) >= 0)
+                if (rename(p, fname) >= 0)
                         return 0;
 
                 r = -errno;
         }
 
-        (void) unlinkat(dir_fd, p, 0);
+        (void) unlink(p);
         return r;
 }

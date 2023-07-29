@@ -1,21 +1,35 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-libnspawn_core_sources = files(
-        'nspawn-bind-user.c',
-        'nspawn-cgroup.c',
-        'nspawn-creds.c',
-        'nspawn-expose-ports.c',
-        'nspawn-mount.c',
-        'nspawn-network.c',
-        'nspawn-oci.c',
-        'nspawn-patch-uid.c',
-        'nspawn-register.c',
-        'nspawn-seccomp.c',
-        'nspawn-settings.c',
-        'nspawn-setuid.c',
-        'nspawn-stub-pid1.c',
-        'nspawn-util.c',
-)
+libnspawn_core_sources = files('''
+        nspawn-bind-user.c
+        nspawn-bind-user.h
+        nspawn-cgroup.c
+        nspawn-cgroup.h
+        nspawn-creds.c
+        nspawn-creds.h
+        nspawn-def.h
+        nspawn-expose-ports.c
+        nspawn-expose-ports.h
+        nspawn-mount.c
+        nspawn-mount.h
+        nspawn-network.c
+        nspawn-network.h
+        nspawn-oci.c
+        nspawn-oci.h
+        nspawn-patch-uid.c
+        nspawn-patch-uid.h
+        nspawn-register.c
+        nspawn-register.h
+        nspawn-seccomp.c
+        nspawn-seccomp.h
+        nspawn-settings.c
+        nspawn-settings.h
+        nspawn-setuid.c
+        nspawn-setuid.h
+        nspawn-stub-pid1.c
+        nspawn-stub-pid1.h
+        nspawn.h
+'''.split())
 
 nspawn_gperf_c = custom_target(
         'nspawn-gperf.c',
@@ -31,54 +45,33 @@ libnspawn_core = static_library(
         include_directories : includes,
         dependencies : [libacl,
                         libseccomp,
-                        libselinux,
-                        userspace],
-        build_by_default : false)
+                        libselinux])
 
 systemd_nspawn_sources = files('nspawn.c')
 
 ############################################################
 
 tests += [
-        {
-                'sources' : files('test-nspawn-tables.c'),
-                'link_with' : [
-                        libnspawn_core,
-                        libshared,
-                ],
-                'dependencies' : libseccomp,
-        },
-        {
-                'sources' : files('test-nspawn-util.c'),
-                'link_with' : [
-                        libnspawn_core,
-                        libshared,
-                ],
-                'dependencies' : libseccomp,
-        },
-        {
-                'sources' : files('test-patch-uid.c'),
-                'link_with' : [
-                        libnspawn_core,
-                        libshared,
-                ],
-                'dependencies' : libacl,
-                'type' : 'manual',
-        },
+        [['src/nspawn/test-nspawn-tables.c'],
+         [libnspawn_core,
+          libshared],
+         [libseccomp]],
+
+        [['src/nspawn/test-patch-uid.c'],
+         [libnspawn_core,
+          libshared],
+         [libacl],
+         [], '', 'manual'],
 ]
 
-fuzzer_nspawn_base = {
-        'link_with' : [libshared, libnspawn_core],
-        'dependencies' : libseccomp
-}
-
 fuzzers += [
-        {
-                'sources' : files('fuzz-nspawn-settings.c'),
-                'base' : fuzzer_nspawn_base,
-        },
-        {
-                'sources' : files('fuzz-nspawn-oci.c'),
-                'base' : fuzzer_nspawn_base,
-        },
+        [['src/nspawn/fuzz-nspawn-settings.c'],
+         [libshared,
+          libnspawn_core],
+         [libseccomp]],
+
+        [['src/nspawn/fuzz-nspawn-oci.c'],
+         [libshared,
+          libnspawn_core],
+         [libseccomp]],
 ]

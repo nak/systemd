@@ -4,9 +4,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#if HAVE_LINUX_MEMFD_H
-#include <linux/memfd.h>
-#endif
 
 #include "alloc-util.h"
 #include "copy.h"
@@ -15,8 +12,6 @@
 #include "fs-util.h"
 #include "io-util.h"
 #include "memfd-util.h"
-#include "missing_mman.h"
-#include "missing_syscall.h"
 #include "tmpfile-util.h"
 
 /* When the data is smaller or equal to 64K, try to place the copy in a memfd/pipe */
@@ -26,10 +21,12 @@
 #define DATA_FD_TMP_LIMIT (1024U*1024U)
 
 int acquire_data_fd(const void *data, size_t size, unsigned flags) {
-        _cleanup_close_pair_ int pipefds[2] = PIPE_EBADF;
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_pair_ int pipefds[2] = { -1, -1 };
+        char pattern[] = "/dev/shm/data-fd-XXXXXX";
+        _cleanup_close_ int fd = -1;
         int isz = 0, r;
         ssize_t n;
+        off_t f;
 
         assert(data || size == 0);
 
@@ -52,18 +49,33 @@ int acquire_data_fd(const void *data, size_t size, unsigned flags) {
          * It sucks a bit that depending on the situation we return very different objects here, but that's Linux I
          * figure. */
 
-        if (size == 0 && ((flags & ACQUIRE_NO_DEV_NULL) == 0))
+        if (size == 0 && ((flags & ACQUIRE_NO_DEV_NULL) == 0)) {
                 /* As a special case, return /dev/null if we have been called for an empty data block */
-                return RET_NERRNO(open("/dev/null", O_RDONLY|O_CLOEXEC|O_NOCTTY));
+                r = open("/dev/null", O_RDONLY|O_CLOEXEC|O_NOCTTY);
+                if (r < 0)
+                        return -errno;
+
+                return r;
+        }
 
         if ((flags & ACQUIRE_NO_MEMFD) == 0) {
-                fd = memfd_new_and_seal("data-fd", data, size);
-                if (fd < 0) {
-                        if (ERRNO_IS_NOT_SUPPORTED(fd))
-                                goto try_pipe;
+                fd = memfd_new("data-fd");
+                if (fd < 0)
+                        goto try_pipe;
 
-                        return fd;
-                }
+                n = write(fd, data, size);
+                if (n < 0)
+                        return -errno;
+                if ((size_t) n != size)
+                        return -EIO;
+
+                f = lseek(fd, 0, SEEK_SET);
+                if (f != 0)
+                        return -errno;
+
+                r = memfd_set_sealed(fd);
+                if (r < 0)
+                        return r;
 
                 return TAKE_FD(fd);
         }
@@ -123,8 +135,6 @@ try_dev_shm:
 
 try_dev_shm_without_o_tmpfile:
         if ((flags & ACQUIRE_NO_REGULAR) == 0) {
-                char pattern[] = "/dev/shm/data-fd-XXXXXX";
-
                 fd = mkostemp_safe(pattern);
                 if (fd < 0)
                         return fd;
@@ -140,7 +150,9 @@ try_dev_shm_without_o_tmpfile:
                 }
 
                 /* Let's reopen the thing, in order to get an O_RDONLY fd for the original O_RDWR one */
-                r = fd_reopen(fd, O_RDONLY|O_CLOEXEC);
+                r = open(pattern, O_RDONLY|O_CLOEXEC);
+                if (r < 0)
+                        r = -errno;
 
         unlink_and_return:
                 (void) unlink(pattern);
@@ -151,7 +163,7 @@ try_dev_shm_without_o_tmpfile:
 }
 
 int copy_data_fd(int fd) {
-        _cleanup_close_ int copy_fd = -EBADF, tmp_fd = -EBADF;
+        _cleanup_close_ int copy_fd = -1, tmp_fd = -1;
         _cleanup_free_ void *remains = NULL;
         size_t remains_size = 0;
         const char *td;
@@ -206,7 +218,7 @@ int copy_data_fd(int fd) {
                         /* Hmm, pity, this didn't fit. Let's fall back to /tmp then, see below */
 
                 } else {
-                        _cleanup_close_pair_ int pipefds[2] = PIPE_EBADF;
+                        _cleanup_(close_pairp) int pipefds[2] = { -1, -1 };
                         int isz;
 
                         /* If memfds aren't available, use a pipe. Set O_NONBLOCK so that we will get EAGAIN rather
@@ -291,7 +303,7 @@ int copy_data_fd(int fd) {
                 if (f != 0)
                         return -errno;
 
-                close_and_replace(copy_fd, tmp_fd);
+                CLOSE_AND_REPLACE(copy_fd, tmp_fd);
 
                 remains = mfree(remains);
                 remains_size = 0;
@@ -335,57 +347,4 @@ finish:
          * file again */
 
         return fd_reopen(tmp_fd, O_RDONLY|O_CLOEXEC);
-}
-
-int memfd_clone_fd(int fd, const char *name, int mode) {
-        _cleanup_close_ int mfd = -EBADF;
-        struct stat st;
-        bool ro, exec;
-        int r;
-
-        /* Creates a clone of a regular file in a memfd. Unlike copy_data_fd() this returns strictly a memfd
-         * (and if it can't it will fail). Thus the resulting fd is seekable, and definitely reports as
-         * S_ISREG. */
-
-        assert(fd >= 0);
-        assert(name);
-        assert(IN_SET(mode & O_ACCMODE, O_RDONLY, O_RDWR));
-        assert((mode & ~(O_RDONLY|O_RDWR|O_CLOEXEC)) == 0);
-
-        if (fstat(fd, &st) < 0)
-                return -errno;
-
-        ro = (mode & O_ACCMODE) == O_RDONLY;
-        exec = st.st_mode & 0111;
-
-        mfd = memfd_create_wrapper(name,
-                                   ((FLAGS_SET(mode, O_CLOEXEC) || ro) ? MFD_CLOEXEC : 0) |
-                                   (ro ? MFD_ALLOW_SEALING : 0) |
-                                   (exec ? MFD_EXEC : MFD_NOEXEC_SEAL));
-        if (mfd < 0)
-                return mfd;
-
-        r = copy_bytes(fd, mfd, UINT64_MAX, COPY_REFLINK);
-        if (r < 0)
-                return r;
-
-        if (ro) {
-                _cleanup_close_ int rfd = -EBADF;
-
-                r = memfd_set_sealed(mfd);
-                if (r < 0)
-                        return r;
-
-                rfd = fd_reopen(mfd, mode);
-                if (rfd < 0)
-                        return rfd;
-
-                return TAKE_FD(rfd);
-        }
-
-        off_t f = lseek(mfd, 0, SEEK_SET);
-        if (f < 0)
-                return -errno;
-
-        return TAKE_FD(mfd);
 }

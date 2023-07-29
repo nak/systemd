@@ -7,7 +7,6 @@
 #include "bpf-firewall.h"
 #include "bpf-foreign.h"
 #include "bus-get-properties.h"
-#include "bus-util.h"
 #include "cgroup-util.h"
 #include "cgroup.h"
 #include "core-varlink.h"
@@ -16,17 +15,13 @@
 #include "errno-util.h"
 #include "fd-util.h"
 #include "fileio.h"
-#include "in-addr-prefix-util.h"
 #include "ip-protocol-list.h"
 #include "limits-util.h"
-#include "memstream-util.h"
 #include "parse-util.h"
 #include "path-util.h"
 #include "percent-util.h"
-#include "socket-util.h"
 
 BUS_DEFINE_PROPERTY_GET(bus_property_get_tasks_max, "t", TasksMax, tasks_max_resolve);
-BUS_DEFINE_PROPERTY_GET_ENUM(bus_property_get_cgroup_pressure_watch, cgroup_pressure_watch, CGroupPressureWatch);
 
 static BUS_DEFINE_PROPERTY_GET_ENUM(property_get_cgroup_device_policy, cgroup_device_policy, CGroupDevicePolicy);
 static BUS_DEFINE_PROPERTY_GET_ENUM(property_get_managed_oom_mode, managed_oom_mode, ManagedOOMMode);
@@ -72,10 +67,11 @@ static int property_get_delegate_controllers(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         if (!c->delegate)
                 return sd_bus_message_append(reply, "as", 0);
@@ -92,12 +88,13 @@ static int property_get_cpuset(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CPUSet *cpus = ASSERT_PTR(userdata);
+        CPUSet *cpus = userdata;
         _cleanup_free_ uint8_t *array = NULL;
         size_t allocated;
 
         assert(bus);
         assert(reply);
+        assert(cpus);
 
         (void) cpu_set_to_dbus(cpus, &array, &allocated);
         return sd_bus_message_append_array(reply, 'y', array, allocated);
@@ -112,11 +109,13 @@ static int property_get_io_device_weight(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupIODeviceWeight *w;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(st)");
         if (r < 0)
@@ -140,11 +139,13 @@ static int property_get_io_device_limits(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupIODeviceLimit *l;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(st)");
         if (r < 0)
@@ -174,11 +175,13 @@ static int property_get_io_device_latency(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupIODeviceLatency *l;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(st)");
         if (r < 0)
@@ -202,11 +205,13 @@ static int property_get_blockio_device_weight(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupBlockIODeviceWeight *w;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(st)");
         if (r < 0)
@@ -230,11 +235,13 @@ static int property_get_blockio_device_bandwidths(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupBlockIODeviceBandwidth *b;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(st)");
         if (r < 0)
@@ -268,11 +275,13 @@ static int property_get_device_allow(
                 void *userdata,
                 sd_bus_error *error) {
 
-        CGroupContext *c = ASSERT_PTR(userdata);
+        CGroupContext *c = userdata;
+        CGroupDeviceAllow *a;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(c);
 
         r = sd_bus_message_open_container(reply, 'a', "(ss)");
         if (r < 0)
@@ -308,15 +317,14 @@ static int property_get_ip_address_access(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Set **prefixes = ASSERT_PTR(userdata);
-        struct in_addr_prefix *i;
+        IPAddressAccessItem** items = userdata, *i;
         int r;
 
         r = sd_bus_message_open_container(reply, 'a', "(iayu)");
         if (r < 0)
                 return r;
 
-        SET_FOREACH(i, *prefixes) {
+        LIST_FOREACH(items, i, *items) {
 
                 r = sd_bus_message_open_container(reply, 'r', "iayu");
                 if (r < 0)
@@ -351,6 +359,7 @@ static int property_get_bpf_foreign_program(
                 void *userdata,
                 sd_bus_error *error) {
         CGroupContext *c = userdata;
+        CGroupBPFForeignProgram *p;
         int r;
 
         r = sd_bus_message_open_container(reply, 'a', "(ss)");
@@ -376,9 +385,10 @@ static int property_get_socket_bind(
                 sd_bus_message *reply,
                 void *userdata,
                 sd_bus_error *error) {
-
-        CGroupSocketBindItem **items = ASSERT_PTR(userdata);
+        CGroupSocketBindItem **items = userdata, *i;
         int r;
+
+        assert(items);
 
         r = sd_bus_message_open_container(reply, 'a', "(iiqq)");
         if (r < 0)
@@ -393,41 +403,10 @@ static int property_get_socket_bind(
         return sd_bus_message_close_container(reply);
 }
 
-static int property_get_restrict_network_interfaces(
-                sd_bus *bus,
-                const char *path,
-                const char *interface,
-                const char *property,
-                sd_bus_message *reply,
-                void *userdata,
-                sd_bus_error *error) {
-
-        CGroupContext *c = ASSERT_PTR(userdata);
-        int r;
-
-        assert(bus);
-        assert(reply);
-
-        r = sd_bus_message_open_container(reply, 'r', "bas");
-        if (r < 0)
-                return r;
-
-        r = sd_bus_message_append(reply, "b", c->restrict_network_interfaces_is_allow_list);
-        if (r < 0)
-                return r;
-
-        r = bus_message_append_string_set(reply, c->restrict_network_interfaces);
-        if (r < 0)
-                return r;
-
-        return sd_bus_message_close_container(reply);
-}
-
 const sd_bus_vtable bus_cgroup_vtable[] = {
         SD_BUS_VTABLE_START(0),
         SD_BUS_PROPERTY("Delegate", "b", bus_property_get_bool, offsetof(CGroupContext, delegate), 0),
         SD_BUS_PROPERTY("DelegateControllers", "as", property_get_delegate_controllers, 0, 0),
-        SD_BUS_PROPERTY("DelegateSubgroup", "s", NULL, offsetof(CGroupContext, delegate_subgroup), 0),
         SD_BUS_PROPERTY("CPUAccounting", "b", bus_property_get_bool, offsetof(CGroupContext, cpu_accounting), 0),
         SD_BUS_PROPERTY("CPUWeight", "t", NULL, offsetof(CGroupContext, cpu_weight), 0),
         SD_BUS_PROPERTY("StartupCPUWeight", "t", NULL, offsetof(CGroupContext, startup_cpu_weight), 0),
@@ -436,9 +415,7 @@ const sd_bus_vtable bus_cgroup_vtable[] = {
         SD_BUS_PROPERTY("CPUQuotaPerSecUSec", "t", bus_property_get_usec, offsetof(CGroupContext, cpu_quota_per_sec_usec), 0),
         SD_BUS_PROPERTY("CPUQuotaPeriodUSec", "t", bus_property_get_usec, offsetof(CGroupContext, cpu_quota_period_usec), 0),
         SD_BUS_PROPERTY("AllowedCPUs", "ay", property_get_cpuset, offsetof(CGroupContext, cpuset_cpus), 0),
-        SD_BUS_PROPERTY("StartupAllowedCPUs", "ay", property_get_cpuset, offsetof(CGroupContext, startup_cpuset_cpus), 0),
         SD_BUS_PROPERTY("AllowedMemoryNodes", "ay", property_get_cpuset, offsetof(CGroupContext, cpuset_mems), 0),
-        SD_BUS_PROPERTY("StartupAllowedMemoryNodes", "ay", property_get_cpuset, offsetof(CGroupContext, startup_cpuset_mems), 0),
         SD_BUS_PROPERTY("IOAccounting", "b", bus_property_get_bool, offsetof(CGroupContext, io_accounting), 0),
         SD_BUS_PROPERTY("IOWeight", "t", NULL, offsetof(CGroupContext, io_weight), 0),
         SD_BUS_PROPERTY("StartupIOWeight", "t", NULL, offsetof(CGroupContext, startup_io_weight), 0),
@@ -456,19 +433,12 @@ const sd_bus_vtable bus_cgroup_vtable[] = {
         SD_BUS_PROPERTY("BlockIOWriteBandwidth", "a(st)", property_get_blockio_device_bandwidths, 0, 0),
         SD_BUS_PROPERTY("MemoryAccounting", "b", bus_property_get_bool, offsetof(CGroupContext, memory_accounting), 0),
         SD_BUS_PROPERTY("DefaultMemoryLow", "t", NULL, offsetof(CGroupContext, default_memory_low), 0),
-        SD_BUS_PROPERTY("DefaultStartupMemoryLow", "t", NULL, offsetof(CGroupContext, default_startup_memory_low), 0),
         SD_BUS_PROPERTY("DefaultMemoryMin", "t", NULL, offsetof(CGroupContext, default_memory_min), 0),
         SD_BUS_PROPERTY("MemoryMin", "t", NULL, offsetof(CGroupContext, memory_min), 0),
         SD_BUS_PROPERTY("MemoryLow", "t", NULL, offsetof(CGroupContext, memory_low), 0),
-        SD_BUS_PROPERTY("StartupMemoryLow", "t", NULL, offsetof(CGroupContext, startup_memory_low), 0),
         SD_BUS_PROPERTY("MemoryHigh", "t", NULL, offsetof(CGroupContext, memory_high), 0),
-        SD_BUS_PROPERTY("StartupMemoryHigh", "t", NULL, offsetof(CGroupContext, startup_memory_high), 0),
         SD_BUS_PROPERTY("MemoryMax", "t", NULL, offsetof(CGroupContext, memory_max), 0),
-        SD_BUS_PROPERTY("StartupMemoryMax", "t", NULL, offsetof(CGroupContext, startup_memory_max), 0),
         SD_BUS_PROPERTY("MemorySwapMax", "t", NULL, offsetof(CGroupContext, memory_swap_max), 0),
-        SD_BUS_PROPERTY("StartupMemorySwapMax", "t", NULL, offsetof(CGroupContext, startup_memory_swap_max), 0),
-        SD_BUS_PROPERTY("MemoryZSwapMax", "t", NULL, offsetof(CGroupContext, memory_zswap_max), 0),
-        SD_BUS_PROPERTY("StartupMemoryZSwapMax", "t", NULL, offsetof(CGroupContext, startup_memory_zswap_max), 0),
         SD_BUS_PROPERTY("MemoryLimit", "t", NULL, offsetof(CGroupContext, memory_limit), 0),
         SD_BUS_PROPERTY("DevicePolicy", "s", property_get_cgroup_device_policy, offsetof(CGroupContext, device_policy), 0),
         SD_BUS_PROPERTY("DeviceAllow", "a(ss)", property_get_device_allow, 0, 0),
@@ -487,9 +457,6 @@ const sd_bus_vtable bus_cgroup_vtable[] = {
         SD_BUS_PROPERTY("BPFProgram", "a(ss)", property_get_bpf_foreign_program, 0, 0),
         SD_BUS_PROPERTY("SocketBindAllow", "a(iiqq)", property_get_socket_bind, offsetof(CGroupContext, socket_bind_allow), 0),
         SD_BUS_PROPERTY("SocketBindDeny", "a(iiqq)", property_get_socket_bind, offsetof(CGroupContext, socket_bind_deny), 0),
-        SD_BUS_PROPERTY("RestrictNetworkInterfaces", "(bas)", property_get_restrict_network_interfaces, 0, 0),
-        SD_BUS_PROPERTY("MemoryPressureWatch", "s", bus_property_get_cgroup_pressure_watch, offsetof(CGroupContext, memory_pressure_watch), 0),
-        SD_BUS_PROPERTY("MemoryPressureThresholdUSec", "t", bus_property_get_usec, offsetof(CGroupContext, memory_pressure_threshold_usec), 0),
         SD_BUS_VTABLE_END
 };
 
@@ -525,33 +492,6 @@ static int bus_cgroup_set_transient_property(
                         c->delegate_controllers = b ? _CGROUP_MASK_ALL : 0;
 
                         unit_write_settingf(u, flags, name, "Delegate=%s", yes_no(b));
-                }
-
-                return 1;
-
-        } else if (streq(name, "DelegateSubgroup")) {
-                const char *s;
-
-                if (!UNIT_VTABLE(u)->can_delegate)
-                        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "Delegation not available for unit type");
-
-                r = sd_bus_message_read(message, "s", &s);
-                if (r < 0)
-                        return r;
-
-                if (!isempty(s) && cg_needs_escape(s))
-                        return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Invalid control group name: %s", s);
-
-                if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        if (isempty(s))
-                                c->delegate_subgroup = mfree(c->delegate_subgroup);
-                        else {
-                                r = free_and_strdup_warn(&c->delegate_subgroup, s);
-                                if (r < 0)
-                                        return r;
-                        }
-
-                        unit_write_settingf(u, flags, name, "DelegateSubgroup=%s", s);
                 }
 
                 return 1;
@@ -649,16 +589,16 @@ static int bus_cgroup_set_transient_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        char **entry;
+                        size_t size = 0;
 
                         if (n == 0)
                                 *filters = strv_free(*filters);
 
                         unit_invalidate_cgroup_bpf(u);
-
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -668,7 +608,7 @@ static int bus_cgroup_set_transient_property(
                         STRV_FOREACH(entry, *filters)
                                 fprintf(f, "%s=%s\n", name, *entry);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
@@ -729,15 +669,16 @@ static int bus_cgroup_set_transient_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        CGroupBPFForeignProgram *fp;
+                        size_t size = 0;
 
                         if (n == 0)
                                 while (c->bpf_foreign_programs)
                                         cgroup_context_remove_bpf_foreign_program(c, c->bpf_foreign_programs);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -749,13 +690,13 @@ static int bus_cgroup_set_transient_property(
                                                 bpf_cgroup_attach_type_to_string(fp->attach_type),
                                                 fp->bpffs_path);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
                         unit_write_setting(u, flags, name, buf);
 
-                        if (c->bpf_foreign_programs) {
+                        if (!LIST_IS_EMPTY(c->bpf_foreign_programs)) {
                                 r = bpf_foreign_supported();
                                 if (r < 0)
                                         return r;
@@ -765,47 +706,6 @@ static int bus_cgroup_set_transient_property(
                                                  "filesystem, but the local system does not support that.\n"
                                                  "Starting this unit will fail!", u->id);
                         }
-                }
-
-                return 1;
-
-        } else if (streq(name, "MemoryPressureWatch")) {
-                CGroupPressureWatch p;
-                const char *t;
-
-                r = sd_bus_message_read(message, "s", &t);
-                if (r < 0)
-                        return r;
-
-                if (isempty(t))
-                        p = _CGROUP_PRESSURE_WATCH_INVALID;
-                else {
-                        p = cgroup_pressure_watch_from_string(t);
-                        if (p < 0)
-                                return p;
-                }
-
-                if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        c->memory_pressure_watch = p;
-                        unit_write_settingf(u, flags, name, "MemoryPressureWatch=%s", strempty(cgroup_pressure_watch_to_string(p)));
-                }
-
-                return 1;
-
-        } else if (streq(name, "MemoryPressureThresholdUSec")) {
-                uint64_t t;
-
-                r = sd_bus_message_read(message, "t", &t);
-                if (r < 0)
-                        return r;
-
-                if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        c->memory_pressure_threshold_usec = t;
-
-                        if (t == UINT64_MAX)
-                                unit_write_setting(u, flags, name, "MemoryPressureThresholdUSec=");
-                        else
-                                unit_write_settingf(u, flags, name, "MemoryPressureThresholdUSec=%" PRIu64, t);
                 }
 
                 return 1;
@@ -953,43 +853,14 @@ static int bus_cgroup_set_boolean(
         }
 
 DISABLE_WARNING_TYPE_LIMITS;
+BUS_DEFINE_SET_CGROUP_WEIGHT(cpu_weight, CGROUP_MASK_CPU, CGROUP_WEIGHT_IS_OK, CGROUP_WEIGHT_INVALID);
 BUS_DEFINE_SET_CGROUP_WEIGHT(cpu_shares, CGROUP_MASK_CPU, CGROUP_CPU_SHARES_IS_OK, CGROUP_CPU_SHARES_INVALID);
 BUS_DEFINE_SET_CGROUP_WEIGHT(io_weight, CGROUP_MASK_IO, CGROUP_WEIGHT_IS_OK, CGROUP_WEIGHT_INVALID);
 BUS_DEFINE_SET_CGROUP_WEIGHT(blockio_weight, CGROUP_MASK_BLKIO, CGROUP_BLKIO_WEIGHT_IS_OK, CGROUP_BLKIO_WEIGHT_INVALID);
 BUS_DEFINE_SET_CGROUP_LIMIT(memory, CGROUP_MASK_MEMORY, physical_memory_scale, 1);
 BUS_DEFINE_SET_CGROUP_LIMIT(memory_protection, CGROUP_MASK_MEMORY, physical_memory_scale, 0);
 BUS_DEFINE_SET_CGROUP_LIMIT(swap, CGROUP_MASK_MEMORY, physical_memory_scale, 0);
-BUS_DEFINE_SET_CGROUP_LIMIT(zswap, CGROUP_MASK_MEMORY, physical_memory_scale, 0);
 REENABLE_WARNING;
-
-static int bus_cgroup_set_cpu_weight(
-                Unit *u,
-                const char *name,
-                uint64_t *p,
-                sd_bus_message *message,
-                UnitWriteFlags flags,
-                sd_bus_error *error) {
-        uint64_t v;
-        int r;
-        assert(p);
-        r = sd_bus_message_read(message, "t", &v);
-        if (r < 0)
-                return r;
-        if (!CGROUP_WEIGHT_IS_OK(v) && v != CGROUP_WEIGHT_IDLE)
-                return sd_bus_error_setf(
-                                error, SD_BUS_ERROR_INVALID_ARGS, "Value specified in %s is out of range", name);
-        if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                *p = v;
-                unit_invalidate_cgroup(u, CGROUP_MASK_CPU);
-                if (v == CGROUP_WEIGHT_INVALID)
-                        unit_write_settingf(u, flags, name, "%s=", name);
-                else if (v == CGROUP_WEIGHT_IDLE)
-                        unit_write_settingf(u, flags, name, "%s=idle", name);
-                else
-                        unit_write_settingf(u, flags, name, "%s=%" PRIu64, name, v);
-        }
-        return 1;
-}
 
 static int bus_cgroup_set_tasks_max(
                 Unit *u,
@@ -1128,13 +999,6 @@ int bus_cgroup_set_property(
                 return r;
         }
 
-        if (streq(name, "StartupMemoryLow")) {
-                r = bus_cgroup_set_memory_protection(u, name, &c->startup_memory_low, message, flags, error);
-                if (r > 0)
-                        c->startup_memory_low_set = true;
-                return r;
-        }
-
         if (streq(name, "DefaultMemoryMin")) {
                 r = bus_cgroup_set_memory_protection(u, name, &c->default_memory_min, message, flags, error);
                 if (r > 0)
@@ -1149,52 +1013,14 @@ int bus_cgroup_set_property(
                 return r;
         }
 
-        if (streq(name, "DefaultStartupMemoryLow")) {
-                r = bus_cgroup_set_memory_protection(u, name, &c->default_startup_memory_low, message, flags, error);
-                if (r > 0)
-                        c->default_startup_memory_low_set = true;
-                return r;
-        }
-
         if (streq(name, "MemoryHigh"))
                 return bus_cgroup_set_memory(u, name, &c->memory_high, message, flags, error);
-
-        if (streq(name, "StartupMemoryHigh")) {
-                r = bus_cgroup_set_memory(u, name, &c->startup_memory_high, message, flags, error);
-                if (r > 0)
-                        c->startup_memory_high_set = true;
-                return r;
-        }
 
         if (streq(name, "MemorySwapMax"))
                 return bus_cgroup_set_swap(u, name, &c->memory_swap_max, message, flags, error);
 
-        if (streq(name, "StartupMemorySwapMax")) {
-                r = bus_cgroup_set_swap(u, name, &c->startup_memory_swap_max, message, flags, error);
-                if (r > 0)
-                        c->startup_memory_swap_max_set = true;
-                return r;
-        }
-
-        if (streq(name, "MemoryZSwapMax"))
-                return bus_cgroup_set_zswap(u, name, &c->memory_zswap_max, message, flags, error);
-
-        if (streq(name, "StartupMemoryZSwapMax")) {
-                r = bus_cgroup_set_zswap(u, name, &c->startup_memory_zswap_max, message, flags, error);
-                if (r > 0)
-                        c->startup_memory_zswap_max_set = true;
-                return r;
-        }
-
         if (streq(name, "MemoryMax"))
                 return bus_cgroup_set_memory(u, name, &c->memory_max, message, flags, error);
-
-        if (streq(name, "StartupMemoryMax")) {
-                r = bus_cgroup_set_memory(u, name, &c->startup_memory_max, message, flags, error);
-                if (r > 0)
-                        c->startup_memory_max_set = true;
-                return r;
-        }
 
         if (streq(name, "MemoryLimit"))
                 return bus_cgroup_set_memory(u, name, &c->memory_limit, message, flags, error);
@@ -1232,9 +1058,6 @@ int bus_cgroup_set_property(
 
         if (streq(name, "MemorySwapMaxScale"))
                 return bus_cgroup_set_swap_scale(u, name, &c->memory_swap_max, message, flags, error);
-
-        if (streq(name, "MemoryZSwapMaxScale"))
-                return bus_cgroup_set_zswap_scale(u, name, &c->memory_zswap_max, message, flags, error);
 
         if (streq(name, "MemoryMaxScale"))
                 return bus_cgroup_set_memory_scale(u, name, &c->memory_max, message, flags, error);
@@ -1291,15 +1114,17 @@ int bus_cgroup_set_property(
                         unit_invalidate_cgroup(u, CGROUP_MASK_CPU);
                         if (c->cpu_quota_period_usec == USEC_INFINITY)
                                 unit_write_setting(u, flags, "CPUQuotaPeriodSec", "CPUQuotaPeriodSec=");
-                        else
+                        else {
+                                char v[FORMAT_TIMESPAN_MAX];
                                 unit_write_settingf(u, flags, "CPUQuotaPeriodSec",
                                                     "CPUQuotaPeriodSec=%s",
-                                                    FORMAT_TIMESPAN(c->cpu_quota_period_usec, 1));
+                                                    format_timespan(v, sizeof(v), c->cpu_quota_period_usec, 1));
+                        }
                 }
 
                 return 1;
 
-        } else if (STR_IN_SET(name, "AllowedCPUs", "StartupAllowedCPUs", "AllowedMemoryNodes", "StartupAllowedMemoryNodes")) {
+        } else if (STR_IN_SET(name, "AllowedCPUs", "AllowedMemoryNodes")) {
                 const void *a;
                 size_t n;
                 _cleanup_(cpu_set_reset) CPUSet new_set = {};
@@ -1314,7 +1139,7 @@ int bus_cgroup_set_property(
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
                         _cleanup_free_ char *setstr = NULL;
-                        CPUSet *set = NULL;
+                        CPUSet *set;
 
                         setstr = cpu_set_to_range_string(&new_set);
                         if (!setstr)
@@ -1322,21 +1147,15 @@ int bus_cgroup_set_property(
 
                         if (streq(name, "AllowedCPUs"))
                                 set = &c->cpuset_cpus;
-                        else if (streq(name, "StartupAllowedCPUs"))
-                                set = &c->startup_cpuset_cpus;
-                        else if (streq(name, "AllowedMemoryNodes"))
+                        else
                                 set = &c->cpuset_mems;
-                        else if (streq(name, "StartupAllowedMemoryNodes"))
-                                set = &c->startup_cpuset_mems;
-
-                        assert(set);
 
                         cpu_set_reset(set);
                         *set = new_set;
                         new_set = (CPUSet) {};
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_CPUSET);
-                        unit_write_settingf(u, flags, name, "%s=\n%s=%s", name, name, setstr);
+                        unit_write_settingf(u, flags, name, "%s=%s", name, setstr);
                 }
 
                 return 1;
@@ -1356,13 +1175,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Path '%s' specified in %s= is not normalized.", name, path);
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupIODeviceLimit *a = NULL;
+                                CGroupIODeviceLimit *a = NULL, *b;
 
-                                LIST_FOREACH(device_limits, b, c->io_device_limits)
+                                LIST_FOREACH(device_limits, b, c->io_device_limits) {
                                         if (path_equal(path, b->path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         CGroupIOLimitType type;
@@ -1396,29 +1216,30 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
+                        CGroupIODeviceLimit *a;
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 LIST_FOREACH(device_limits, a, c->io_device_limits)
                                         a->limits[iol_type] = cgroup_io_limit_defaults[iol_type];
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_IO);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
                         fprintf(f, "%s=\n", name);
                         LIST_FOREACH(device_limits, a, c->io_device_limits)
-                                if (a->limits[iol_type] != cgroup_io_limit_defaults[iol_type])
-                                        fprintf(f, "%s=%s %" PRIu64 "\n", name, a->path, a->limits[iol_type]);
+                                        if (a->limits[iol_type] != cgroup_io_limit_defaults[iol_type])
+                                                fprintf(f, "%s=%s %" PRIu64 "\n", name, a->path, a->limits[iol_type]);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
-
                         unit_write_setting(u, flags, name, buf);
                 }
 
@@ -1442,13 +1263,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "IODeviceWeight= value out of range");
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupIODeviceWeight *a = NULL;
+                                CGroupIODeviceWeight *a = NULL, *b;
 
-                                LIST_FOREACH(device_weights, b, c->io_device_weights)
+                                LIST_FOREACH(device_weights, b, c->io_device_weights) {
                                         if (path_equal(b->path, path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         a = new0(CGroupIODeviceWeight, 1);
@@ -1474,17 +1296,19 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        CGroupIODeviceWeight *a;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 while (c->io_device_weights)
                                         cgroup_context_free_io_device_weight(c, c->io_device_weights);
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_IO);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -1492,10 +1316,9 @@ int bus_cgroup_set_property(
                         LIST_FOREACH(device_weights, a, c->io_device_weights)
                                 fprintf(f, "IODeviceWeight=%s %" PRIu64 "\n", a->path, a->weight);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
-
                         unit_write_setting(u, flags, name, buf);
                 }
 
@@ -1516,13 +1339,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Path '%s' specified in %s= is not normalized.", name, path);
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupIODeviceLatency *a = NULL;
+                                CGroupIODeviceLatency *a = NULL, *b;
 
-                                LIST_FOREACH(device_latencies, b, c->io_device_latencies)
+                                LIST_FOREACH(device_latencies, b, c->io_device_latencies) {
                                         if (path_equal(b->path, path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         a = new0(CGroupIODeviceLatency, 1);
@@ -1548,29 +1372,31 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        char ts[FORMAT_TIMESPAN_MAX];
+                        CGroupIODeviceLatency *a;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 while (c->io_device_latencies)
                                         cgroup_context_free_io_device_latency(c, c->io_device_latencies);
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_IO);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
                         fputs("IODeviceLatencyTargetSec=\n", f);
                         LIST_FOREACH(device_latencies, a, c->io_device_latencies)
                                 fprintf(f, "IODeviceLatencyTargetSec=%s %s\n",
-                                        a->path, FORMAT_TIMESPAN(a->target_usec, 1));
+                                        a->path, format_timespan(ts, sizeof(ts), a->target_usec, 1));
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
-
                         unit_write_setting(u, flags, name, buf);
                 }
 
@@ -1578,11 +1404,12 @@ int bus_cgroup_set_property(
 
         } else if (STR_IN_SET(name, "BlockIOReadBandwidth", "BlockIOWriteBandwidth")) {
                 const char *path;
+                bool read = true;
                 unsigned n = 0;
                 uint64_t u64;
-                bool read;
 
-                read = streq(name, "BlockIOReadBandwidth");
+                if (streq(name, "BlockIOWriteBandwidth"))
+                        read = false;
 
                 r = sd_bus_message_enter_container(message, 'a', "(st)");
                 if (r < 0)
@@ -1594,13 +1421,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Path '%s' specified in %s= is not normalized.", name, path);
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupBlockIODeviceBandwidth *a = NULL;
+                                CGroupBlockIODeviceBandwidth *a = NULL, *b;
 
-                                LIST_FOREACH(device_bandwidths, b, c->blockio_device_bandwidths)
+                                LIST_FOREACH(device_bandwidths, b, c->blockio_device_bandwidths) {
                                         if (path_equal(path, b->path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         a = new0(CGroupBlockIODeviceBandwidth, 1);
@@ -1634,21 +1462,23 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
+                        CGroupBlockIODeviceBandwidth *a;
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 LIST_FOREACH(device_bandwidths, a, c->blockio_device_bandwidths) {
                                         if (read)
                                                 a->rbps = CGROUP_LIMIT_MAX;
                                         else
                                                 a->wbps = CGROUP_LIMIT_MAX;
                                 }
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_BLKIO);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -1664,7 +1494,7 @@ int bus_cgroup_set_property(
                                                 fprintf(f, "BlockIOWriteBandwidth=%s %" PRIu64 "\n", a->path, a->wbps);
                         }
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
@@ -1691,13 +1521,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "BlockIODeviceWeight= out of range");
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupBlockIODeviceWeight *a = NULL;
+                                CGroupBlockIODeviceWeight *a = NULL, *b;
 
-                                LIST_FOREACH(device_weights, b, c->blockio_device_weights)
+                                LIST_FOREACH(device_weights, b, c->blockio_device_weights) {
                                         if (path_equal(b->path, path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         a = new0(CGroupBlockIODeviceWeight, 1);
@@ -1723,17 +1554,19 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        CGroupBlockIODeviceWeight *a;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 while (c->blockio_device_weights)
                                         cgroup_context_free_blockio_device_weight(c, c->blockio_device_weights);
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_BLKIO);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -1741,7 +1574,7 @@ int bus_cgroup_set_property(
                         LIST_FOREACH(device_weights, a, c->blockio_device_weights)
                                 fprintf(f, "BlockIODeviceWeight=%s %" PRIu64 "\n", a->path, a->weight);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
@@ -1789,13 +1622,14 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "DeviceAllow= requires combination of rwm flags");
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                CGroupDeviceAllow *a = NULL;
+                                CGroupDeviceAllow *a = NULL, *b;
 
-                                LIST_FOREACH(device_allow, b, c->device_allow)
+                                LIST_FOREACH(device_allow, b, c->device_allow) {
                                         if (path_equal(b->path, path)) {
                                                 a = b;
                                                 break;
                                         }
+                                }
 
                                 if (!a) {
                                         a = new0(CGroupDeviceAllow, 1);
@@ -1826,17 +1660,19 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        CGroupDeviceAllow *a;
+                        size_t size = 0;
 
-                        if (n == 0)
+                        if (n == 0) {
                                 while (c->device_allow)
                                         cgroup_context_free_device_allow(c, c->device_allow);
+                        }
 
                         unit_invalidate_cgroup(u, CGROUP_MASK_DEVICES);
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
@@ -1844,10 +1680,9 @@ int bus_cgroup_set_property(
                         LIST_FOREACH(device_allow, a, c->device_allow)
                                 fprintf(f, "DeviceAllow=%s %s%s%s\n", a->path, a->r ? "r" : "", a->w ? "w" : "", a->m ? "m" : "");
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
-
                         unit_write_setting(u, flags, name, buf);
                 }
 
@@ -1870,8 +1705,10 @@ int bus_cgroup_set_property(
                 return 1;
 
         } else if (STR_IN_SET(name, "IPAddressAllow", "IPAddressDeny")) {
-                _cleanup_set_free_ Set *new_prefixes = NULL;
+                IPAddressAccessItem **list;
                 size_t n = 0;
+
+                list = streq(name, "IPAddressAllow") ? &c->ip_address_allow : &c->ip_address_deny;
 
                 r = sd_bus_message_enter_container(message, 'a', "(iayu)");
                 if (r < 0)
@@ -1912,16 +1749,17 @@ int bus_cgroup_set_property(
                                 return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Prefix length %" PRIu32 " too large for address family %s.", prefixlen, af_to_name(family));
 
                         if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                                struct in_addr_prefix prefix = {
-                                        .family = family,
-                                        .prefixlen = prefixlen,
-                                };
+                                IPAddressAccessItem *item;
 
-                                memcpy(&prefix.address, ap, an);
+                                item = new0(IPAddressAccessItem, 1);
+                                if (!item)
+                                        return -ENOMEM;
 
-                                r = in_addr_prefix_add(&new_prefixes, &prefix);
-                                if (r < 0)
-                                        return r;
+                                item->family = family;
+                                item->prefixlen = prefixlen;
+                                memcpy(&item->address, ap, an);
+
+                                LIST_PREPEND(items, *list, item);
                         }
 
                         r = sd_bus_message_exit_container(message);
@@ -1935,41 +1773,36 @@ int bus_cgroup_set_property(
                 if (r < 0)
                         return r;
 
+                *list = ip_address_access_reduce(*list);
+
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        Set **prefixes;
-                        bool *reduced;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        IPAddressAccessItem *item;
+                        size_t size = 0;
+
+                        if (n == 0)
+                                *list = ip_address_access_free_all(*list);
 
                         unit_invalidate_cgroup_bpf(u);
-
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
-                        prefixes = streq(name, "IPAddressAllow") ? &c->ip_address_allow : &c->ip_address_deny;
-                        reduced = streq(name, "IPAddressAllow") ? &c->ip_address_allow_reduced : &c->ip_address_deny_reduced;
+                        fputs(name, f);
+                        fputs("=\n", f);
 
-                        if (n == 0) {
-                                *reduced = true;
-                                *prefixes = set_free(*prefixes);
-                                fputs(name, f);
-                                fputs("=\n", f);
-                        } else {
-                                *reduced = false;
+                        LIST_FOREACH(items, item, *list) {
+                                char buffer[CONST_MAX(INET_ADDRSTRLEN, INET6_ADDRSTRLEN)];
 
-                                r = in_addr_prefixes_merge(prefixes, new_prefixes);
-                                if (r < 0)
-                                        return r;
+                                errno = 0;
+                                if (!inet_ntop(item->family, &item->address, buffer, sizeof(buffer)))
+                                        return errno_or_else(EINVAL);
 
-                                const struct in_addr_prefix *p;
-                                SET_FOREACH(p, new_prefixes)
-                                        fprintf(f, "%s=%s\n", name,
-                                                IN_ADDR_PREFIX_TO_STRING(p->family, &p->address, p->prefixlen));
+                                fprintf(f, "%s=%s/%u\n", name, buffer, item->prefixlen);
                         }
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
@@ -2098,9 +1931,10 @@ int bus_cgroup_set_property(
                         return r;
 
                 if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_(memstream_done) MemStream m = {};
                         _cleanup_free_ char *buf = NULL;
-                        FILE *f;
+                        _cleanup_fclose_ FILE *f = NULL;
+                        CGroupSocketBindItem *item;
+                        size_t size = 0;
 
                         if (n == 0)
                                 cgroup_context_remove_socket_bind(list);
@@ -2112,81 +1946,22 @@ int bus_cgroup_set_property(
                                                  "Starting this unit will fail!", u->id);
                         }
 
-                        f = memstream_init(&m);
+                        f = open_memstream_unlocked(&buf, &size);
                         if (!f)
                                 return -ENOMEM;
 
-                        if (n == 0)
-                                fprintf(f, "%s=\n", name);
-                        else
-                                LIST_FOREACH(socket_bind_items, item, *list) {
-                                        fprintf(f, "%s=", name);
-                                        cgroup_context_dump_socket_bind_item(item, f);
-                                        fputc('\n', f);
-                                }
+                        fprintf(f, "%s:", name);
 
-                        r = memstream_finalize(&m, &buf, NULL);
+                        LIST_FOREACH(socket_bind_items, item, *list)
+                                cgroup_context_dump_socket_bind_item(item, f);
+
+                        fputc('\n', f);
+
+                        r = fflush_and_check(f);
                         if (r < 0)
                                 return r;
 
                         unit_write_setting(u, flags, name, buf);
-                }
-
-                return 1;
-        }
-        if (streq(name, "RestrictNetworkInterfaces")) {
-                int is_allow_list;
-                _cleanup_strv_free_ char **l = NULL;
-
-                r = sd_bus_message_enter_container(message, 'r', "bas");
-                if (r < 0)
-                        return r;
-
-                r = sd_bus_message_read(message, "b", &is_allow_list);
-                if (r < 0)
-                        return r;
-
-                r = sd_bus_message_read_strv(message, &l);
-                if (r < 0)
-                        return r;
-
-                r = sd_bus_message_exit_container(message);
-                if (r < 0)
-                        return r;
-
-                if (!UNIT_WRITE_FLAGS_NOOP(flags)) {
-                        _cleanup_free_ char *joined = NULL;
-
-                        if (strv_isempty(l)) {
-                                c->restrict_network_interfaces_is_allow_list = false;
-                                c->restrict_network_interfaces = set_free(c->restrict_network_interfaces);
-
-                                unit_write_settingf(u, flags, name, "%s=", name);
-                                return 1;
-                        }
-
-                        if (set_isempty(c->restrict_network_interfaces))
-                                c->restrict_network_interfaces_is_allow_list = is_allow_list;
-
-                        STRV_FOREACH(s, l) {
-                                if (!ifname_valid(*s)) {
-                                        log_full(LOG_WARNING, "Invalid interface name, ignoring: %s", *s);
-                                        continue;
-                                }
-                                if (c->restrict_network_interfaces_is_allow_list != (bool) is_allow_list)
-                                        free(set_remove(c->restrict_network_interfaces, *s));
-                                else {
-                                        r = set_put_strdup(&c->restrict_network_interfaces, *s);
-                                        if (r < 0)
-                                                return log_oom();
-                                }
-                        }
-
-                        joined = strv_join(l, " ");
-                        if (!joined)
-                                return -ENOMEM;
-
-                        unit_write_settingf(u, flags, name, "%s=%s%s", name, is_allow_list ? "" : "~", joined);
                 }
 
                 return 1;

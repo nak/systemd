@@ -21,13 +21,11 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
-#include "constants.h"
-#include "devnum-util.h"
+#include "def.h"
 #include "env-util.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "fs-util.h"
-#include "inotify-util.h"
 #include "io-util.h"
 #include "log.h"
 #include "macro.h"
@@ -44,17 +42,17 @@
 #include "terminal-util.h"
 #include "time-util.h"
 #include "user-util.h"
+#include "util.h"
 
 static volatile unsigned cached_columns = 0;
 static volatile unsigned cached_lines = 0;
 
 static volatile int cached_on_tty = -1;
-static volatile int cached_on_dev_null = -1;
 static volatile int cached_color_mode = _COLOR_INVALID;
 static volatile int cached_underline_enabled = -1;
 
 int chvt(int vt) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         /* Switch to the specified vt number. If the VT is specified <= 0 switch to the VT the kernel log messages go,
          * if that's configured. */
@@ -75,7 +73,10 @@ int chvt(int vt) {
                 vt = tiocl[0] <= 0 ? 1 : tiocl[0];
         }
 
-        return RET_NERRNO(ioctl(fd, VT_ACTIVATE, vt));
+        if (ioctl(fd, VT_ACTIVATE, vt) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int read_one_char(FILE *f, char *ret, usec_t t, bool *need_nl) {
@@ -269,7 +270,7 @@ int reset_terminal_fd(int fd, bool switch_to_text) {
 
         termios.c_iflag &= ~(IGNBRK | BRKINT | ISTRIP | INLCR | IGNCR | IUCLC);
         termios.c_iflag |= ICRNL | IMAXBEL | IUTF8;
-        termios.c_oflag |= ONLCR | OPOST;
+        termios.c_oflag |= ONLCR;
         termios.c_cflag |= CREAD;
         termios.c_lflag = ISIG | ICANON | IEXTEN | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOPRT | ECHOKE;
 
@@ -301,7 +302,7 @@ finish:
 }
 
 int reset_terminal(const char *name) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         /* We open the terminal with O_NONBLOCK here, to ensure we
          * don't block on carrier if this is a terminal with carrier
@@ -315,7 +316,7 @@ int reset_terminal(const char *name) {
 }
 
 int open_terminal(const char *name, int mode) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         unsigned c = 0;
 
         /*
@@ -341,7 +342,7 @@ int open_terminal(const char *name, int mode) {
                 if (c >= 20)
                         return -errno;
 
-                (void) usleep_safe(50 * USEC_PER_MSEC);
+                (void) usleep(50 * USEC_PER_MSEC);
                 c++;
         }
 
@@ -356,7 +357,7 @@ int acquire_terminal(
                 AcquireTerminalFlags flags,
                 usec_t timeout) {
 
-        _cleanup_close_ int notify = -EBADF, fd = -EBADF;
+        _cleanup_close_ int notify = -1, fd = -1;
         usec_t ts = USEC_INFINITY;
         int r, wd = -1;
 
@@ -407,7 +408,8 @@ int acquire_terminal(
                 assert_se(sigaction(SIGHUP, &sa_new, &sa_old) == 0);
 
                 /* First, try to get the tty */
-                r = RET_NERRNO(ioctl(fd, TIOCSCTTY, (flags & ~ACQUIRE_TERMINAL_PERMISSIVE) == ACQUIRE_TERMINAL_FORCE));
+                r = ioctl(fd, TIOCSCTTY,
+                          (flags & ~ACQUIRE_TERMINAL_PERMISSIVE) == ACQUIRE_TERMINAL_FORCE) < 0 ? -errno : 0;
 
                 /* Reset signal handler to old value */
                 assert_se(sigaction(SIGHUP, &sa_old, NULL) == 0);
@@ -433,6 +435,7 @@ int acquire_terminal(
 
                 for (;;) {
                         union inotify_event_buffer buffer;
+                        struct inotify_event *e;
                         ssize_t l;
 
                         if (timeout != USEC_INFINITY) {
@@ -453,7 +456,7 @@ int acquire_terminal(
 
                         l = read(notify, &buffer, sizeof(buffer));
                         if (l < 0) {
-                                if (ERRNO_IS_TRANSIENT(errno))
+                                if (IN_SET(errno, EINTR, EAGAIN))
                                         continue;
 
                                 return -errno;
@@ -484,7 +487,7 @@ int release_terminal(void) {
                 .sa_flags = SA_RESTART,
         };
 
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         struct sigaction sa_old;
         int r;
 
@@ -496,7 +499,7 @@ int release_terminal(void) {
          * by our own TIOCNOTTY */
         assert_se(sigaction(SIGHUP, &sa_new, &sa_old) == 0);
 
-        r = RET_NERRNO(ioctl(fd, TIOCNOTTY));
+        r = ioctl(fd, TIOCNOTTY) < 0 ? -errno : 0;
 
         assert_se(sigaction(SIGHUP, &sa_old, NULL) == 0);
 
@@ -505,11 +508,15 @@ int release_terminal(void) {
 
 int terminal_vhangup_fd(int fd) {
         assert(fd >= 0);
-        return RET_NERRNO(ioctl(fd, TIOCVHANGUP));
+
+        if (ioctl(fd, TIOCVHANGUP) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int terminal_vhangup(const char *name) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
 
         fd = open_terminal(name, O_RDWR|O_NOCTTY|O_CLOEXEC|O_NONBLOCK);
         if (fd < 0)
@@ -531,7 +538,7 @@ int vt_disallocate(const char *name) {
                 return -EINVAL;
 
         if (tty_is_vc(name)) {
-                _cleanup_close_ int fd = -EBADF;
+                _cleanup_close_ int fd = -1;
                 unsigned u;
                 const char *n;
 
@@ -589,20 +596,9 @@ int make_console_stdio(void) {
                         return log_error_errno(r, "Failed to make /dev/null stdin/stdout/stderr: %m");
 
         } else {
-                unsigned rows, cols;
-
-                r = reset_terminal_fd(fd, /* switch_to_text= */ true);
+                r = reset_terminal_fd(fd, true);
                 if (r < 0)
                         log_warning_errno(r, "Failed to reset terminal, ignoring: %m");
-
-                r = proc_cmdline_tty_size("/dev/console", &rows, &cols);
-                if (r < 0)
-                        log_warning_errno(r, "Failed to get terminal size, ignoring: %m");
-                else {
-                        r = terminal_set_size_fd(fd, NULL, rows, cols);
-                        if (r < 0)
-                                log_warning_errno(r, "Failed to set terminal size, ignoring: %m");
-                }
 
                 r = rearrange_stdio(fd, fd, fd); /* This invalidates 'fd' both on success and on failure. */
                 if (r < 0)
@@ -635,7 +631,7 @@ int vtnr_from_tty(const char *tty) {
         if (!startswith(tty, "tty") )
                 return -EINVAL;
 
-        if (!ascii_isdigit(tty[3]))
+        if (tty[3] < '0' || tty[3] > '9')
                 return -EINVAL;
 
         r = safe_atoi(tty+3, &i);
@@ -860,87 +856,6 @@ unsigned lines(void) {
         return cached_lines;
 }
 
-int terminal_set_size_fd(int fd, const char *ident, unsigned rows, unsigned cols) {
-        struct winsize ws;
-
-        if (rows == UINT_MAX && cols == UINT_MAX)
-                return 0;
-
-        if (ioctl(fd, TIOCGWINSZ, &ws) < 0)
-                return log_debug_errno(errno,
-                                       "TIOCGWINSZ ioctl for getting %s size failed, not setting terminal size: %m",
-                                       ident ?: "TTY");
-
-        if (rows == UINT_MAX)
-                rows = ws.ws_row;
-        else if (rows > USHRT_MAX)
-                rows = USHRT_MAX;
-
-        if (cols == UINT_MAX)
-                cols = ws.ws_col;
-        else if (cols > USHRT_MAX)
-                cols = USHRT_MAX;
-
-        if (rows == ws.ws_row && cols == ws.ws_col)
-                return 0;
-
-        ws.ws_row = rows;
-        ws.ws_col = cols;
-
-        if (ioctl(fd, TIOCSWINSZ, &ws) < 0)
-                return log_debug_errno(errno, "TIOCSWINSZ ioctl for setting %s size failed: %m", ident ?: "TTY");
-
-        return 0;
-}
-
-int proc_cmdline_tty_size(const char *tty, unsigned *ret_rows, unsigned *ret_cols) {
-        _cleanup_free_ char *rowskey = NULL, *rowsvalue = NULL, *colskey = NULL, *colsvalue = NULL;
-        unsigned rows = UINT_MAX, cols = UINT_MAX;
-        int r;
-
-        assert(tty);
-
-        if (!ret_rows && !ret_cols)
-                return 0;
-
-        tty = skip_dev_prefix(tty);
-        if (!in_charset(tty, ALPHANUMERICAL))
-                return log_debug_errno(SYNTHETIC_ERRNO(EINVAL), "%s contains non-alphanumeric characters", tty);
-
-        rowskey = strjoin("systemd.tty.rows.", tty);
-        if (!rowskey)
-                return -ENOMEM;
-
-        colskey = strjoin("systemd.tty.columns.", tty);
-        if (!colskey)
-                return -ENOMEM;
-
-        r = proc_cmdline_get_key_many(/* flags = */ 0,
-                                      rowskey, &rowsvalue,
-                                      colskey, &colsvalue);
-        if (r < 0)
-                return log_debug_errno(r, "Failed to read TTY size of %s from kernel cmdline: %m", tty);
-
-        if (rowsvalue) {
-                r = safe_atou(rowsvalue, &rows);
-                if (r < 0)
-                        return log_debug_errno(r, "Failed to parse %s=%s: %m", rowskey, rowsvalue);
-        }
-
-        if (colsvalue) {
-                r = safe_atou(colsvalue, &cols);
-                if (r < 0)
-                        return log_debug_errno(r, "Failed to parse %s=%s: %m", colskey, colsvalue);
-        }
-
-        if (ret_rows)
-                *ret_rows = rows;
-        if (ret_cols)
-                *ret_cols = cols;
-
-        return 0;
-}
-
 /* intended to be used as a SIGWINCH sighandler */
 void columns_lines_cache_reset(int signum) {
         cached_columns = 0;
@@ -954,7 +869,6 @@ void reset_terminal_feature_caches(void) {
         cached_color_mode = _COLOR_INVALID;
         cached_underline_enabled = -1;
         cached_on_tty = -1;
-        cached_on_dev_null = -1;
 }
 
 bool on_tty(void) {
@@ -1038,7 +952,7 @@ int get_ctty_devnr(pid_t pid, dev_t *d) {
                    &ttynr) != 1)
                 return -EIO;
 
-        if (devnum_is_zero(ttynr))
+        if (major(ttynr) == 0 && minor(ttynr) == 0)
                 return -ENXIO;
 
         if (d)
@@ -1144,7 +1058,7 @@ int ptsname_malloc(int fd, char **ret) {
 }
 
 int openpt_allocate(int flags, char **ret_slave) {
-        _cleanup_close_ int fd = -EBADF;
+        _cleanup_close_ int fd = -1;
         _cleanup_free_ char *p = NULL;
         int r;
 
@@ -1190,8 +1104,8 @@ static int ptsname_namespace(int pty, char **ret) {
 }
 
 int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
-        _cleanup_close_ int pidnsfd = -EBADF, mntnsfd = -EBADF, usernsfd = -EBADF, rootfd = -EBADF, fd = -EBADF;
-        _cleanup_close_pair_ int pair[2] = PIPE_EBADF;
+        _cleanup_close_ int pidnsfd = -1, mntnsfd = -1, usernsfd = -1, rootfd = -1, fd = -1;
+        _cleanup_close_pair_ int pair[2] = { -1, -1 };
         pid_t child;
         int r;
 
@@ -1243,8 +1157,8 @@ int openpt_allocate_in_namespace(pid_t pid, int flags, char **ret_slave) {
 }
 
 int open_terminal_in_namespace(pid_t pid, const char *name, int mode) {
-        _cleanup_close_ int pidnsfd = -EBADF, mntnsfd = -EBADF, usernsfd = -EBADF, rootfd = -EBADF;
-        _cleanup_close_pair_ int pair[2] = PIPE_EBADF;
+        _cleanup_close_ int pidnsfd = -1, mntnsfd = -1, usernsfd = -1, rootfd = -1;
+        _cleanup_close_pair_ int pair[2] = { -1, -1 };
         pid_t child;
         int r;
 
@@ -1285,20 +1199,6 @@ int open_terminal_in_namespace(pid_t pid, const char *name, int mode) {
         return receive_one_fd(pair[0], 0);
 }
 
-static bool on_dev_null(void) {
-        struct stat dst, ost, est;
-
-        if (cached_on_dev_null >= 0)
-                return cached_on_dev_null;
-
-        if (stat("/dev/null", &dst) < 0 || fstat(STDOUT_FILENO, &ost) < 0 || fstat(STDERR_FILENO, &est) < 0)
-                cached_on_dev_null = false;
-        else
-                cached_on_dev_null = stat_inode_same(&dst, &ost) && stat_inode_same(&dst, &est);
-
-        return cached_on_dev_null;
-}
-
 static bool getenv_terminal_is_dumb(void) {
         const char *e;
 
@@ -1310,7 +1210,7 @@ static bool getenv_terminal_is_dumb(void) {
 }
 
 bool terminal_is_dumb(void) {
-        if (!on_tty() && !on_dev_null())
+        if (!on_tty())
                 return true;
 
         return getenv_terminal_is_dumb();
@@ -1352,7 +1252,7 @@ ColorMode get_color_mode(void) {
                         /* We only check for the presence of the variable; value is ignored. */
                         cached_color_mode = COLOR_OFF;
 
-                else if (getpid_cached() == 1) {
+                else if (getpid_cached() == 1)
                         /* PID1 outputs to the console without holding it open all the time.
                          *
                          * Note that the Linux console can only display 16 colors. We still enable 256 color
@@ -1361,23 +1261,9 @@ ColorMode get_color_mode(void) {
                          * map them to the closest color in the 16 color palette (since kernel 3.16). Doing
                          * 256 colors is nice for people who invoke systemd in a container or via a serial
                          * link or such, and use a true 256 color terminal to do so. */
-                        if (getenv_terminal_is_dumb())
-                                cached_color_mode = COLOR_OFF;
-                } else {
-                        if (terminal_is_dumb())
-                                cached_color_mode = COLOR_OFF;
-                }
-
-                if (cached_color_mode < 0) {
-                        /* We failed to figure out any reason to *disable* colors.
-                         * Let's see how many colors we shall use. */
-                        if (STRPTR_IN_SET(getenv("COLORTERM"),
-                                          "truecolor",
-                                          "24bit"))
-                                cached_color_mode = COLOR_24BIT;
-                        else
-                                cached_color_mode = COLOR_256;
-                }
+                        cached_color_mode = getenv_terminal_is_dumb() ? COLOR_OFF : COLOR_256;
+                else
+                        cached_color_mode = terminal_is_dumb() ? COLOR_OFF : COLOR_256;
         }
 
         return cached_color_mode;
@@ -1441,7 +1327,10 @@ int vt_reset_keyboard(int fd) {
         /* If we can't read the default, then default to unicode. It's 2017 after all. */
         kb = vt_default_utf8() != 0 ? K_UNICODE : K_XLATE;
 
-        return RET_NERRNO(ioctl(fd, KDSKBMODE, kb));
+        if (ioctl(fd, KDSKBMODE, kb) < 0)
+                return -errno;
+
+        return 0;
 }
 
 int vt_restore(int fd) {

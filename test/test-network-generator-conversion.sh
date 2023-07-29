@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -ex
 
 if [[ -n "$1" ]]; then
@@ -19,13 +18,11 @@ for f in "$src"/test-*.input; do
 
     (
         out=$(mktemp --tmpdir --directory "test-network-generator-conversion.XXXXXXXXXX")
-        # shellcheck disable=SC2064
         trap "rm -rf '$out'" EXIT INT QUIT PIPE
 
-        # shellcheck disable=SC2046
-        $generator --root "$out" -- $(cat "$f")
+        $generator --root "$out" -- $(cat $f)
 
-        if ! diff -u "$out/run/systemd/network" "${f%.input}.expected"; then
+        if ! diff -u "$out"/run/systemd/network ${f%.input}.expected; then
             echo "**** Unexpected output for $f"
             exit 1
         fi

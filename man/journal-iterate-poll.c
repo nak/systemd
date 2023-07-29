@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: MIT-0 */
-
 #include <poll.h>
 #include <time.h>
 #include <systemd/sd-journal.h>

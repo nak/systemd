@@ -6,7 +6,6 @@
 #include "alloc-util.h"
 #include "device-nodes.h"
 #include "string-util.h"
-#include "tests.h"
 
 /* helpers for test_encode_devnode_name */
 static char *do_encode_string(const char *in) {
@@ -25,7 +24,7 @@ static bool expect_encoded_as(const char *in, const char *expected) {
         return streq(encoded, expected);
 }
 
-TEST(encode_devnode_name) {
+static void test_encode_devnode_name(void) {
         assert_se(expect_encoded_as("systemd sucks", "systemd\\x20sucks"));
         assert_se(expect_encoded_as("pinkiepie", "pinkiepie"));
         assert_se(expect_encoded_as("valíd\\ųtf8", "valíd\\x5cųtf8"));
@@ -35,4 +34,8 @@ TEST(encode_devnode_name) {
         assert_se(expect_encoded_as("QEMU    ", "QEMU\\x20\\x20\\x20\\x20"));
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char *argv[]) {
+        test_encode_devnode_name();
+
+        return 0;
+}

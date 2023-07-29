@@ -14,7 +14,6 @@
 #include "journal-util.h"
 #include "parse-util.h"
 #include "string-util.h"
-#include "strv.h"
 #include "unaligned.h"
 
 enum {
@@ -37,7 +36,7 @@ void journal_importer_cleanup(JournalImporter *imp) {
 }
 
 static char* realloc_buffer(JournalImporter *imp, size_t size) {
-        char *b, *old = ASSERT_PTR(imp)->buf;
+        char *b, *old = imp->buf;
 
         b = GREEDY_REALLOC(imp->buf, size);
         if (!b)
@@ -218,8 +217,9 @@ static int process_special_field(JournalImporter *imp, char *line) {
 
         assert(line);
 
-        if (STARTSWITH_SET(line, "__CURSOR=", "__SEQNUM=", "__SEQNUM_ID="))
-                /* ignore __CURSOR=, __SEQNUM=, __SEQNUM_ID= which we cannot replicate */
+        value = startswith(line, "__CURSOR=");
+        if (value)
+                /* ignore __CURSOR */
                 return 1;
 
         value = startswith(line, "__REALTIME_TIMESTAMP=");
@@ -281,7 +281,7 @@ static int process_special_field(JournalImporter *imp, char *line) {
 int journal_importer_process_data(JournalImporter *imp) {
         int r;
 
-        switch (imp->state) {
+        switch(imp->state) {
         case IMPORTER_STATE_LINE: {
                 char *line, *sep;
                 size_t n = 0;
@@ -316,7 +316,7 @@ int journal_importer_process_data(JournalImporter *imp) {
                         if (!journal_field_valid(line, sep - line, true)) {
                                 char buf[64], *t;
 
-                                t = strndupa_safe(line, sep - line);
+                                t = strndupa(line, sep - line);
                                 log_debug("Ignoring invalid field: \"%s\"",
                                           cellescape(buf, sizeof buf, t));
 
@@ -335,7 +335,7 @@ int journal_importer_process_data(JournalImporter *imp) {
                         if (!journal_field_valid(line, n - 1, true)) {
                                 char buf[64], *t;
 
-                                t = strndupa_safe(line, n - 1);
+                                t = strndupa(line, n - 1);
                                 log_debug("Ignoring invalid field: \"%s\"",
                                           cellescape(buf, sizeof buf, t));
 
@@ -417,7 +417,7 @@ int journal_importer_process_data(JournalImporter *imp) {
 
                 return 0; /* continue */
         default:
-                assert_not_reached();
+                assert_not_reached("wtf?");
         }
 }
 
@@ -426,10 +426,11 @@ int journal_importer_push_data(JournalImporter *imp, const char *data, size_t si
         assert(imp->state != IMPORTER_STATE_EOF);
 
         if (!realloc_buffer(imp, imp->filled + size))
-                return log_error_errno(ENOMEM,
+                return log_error_errno(SYNTHETIC_ERRNO(ENOMEM),
                                        "Failed to store received data of size %zu "
-                                       "(in addition to existing %zu bytes with %zu filled): %m",
-                                       size, MALLOC_SIZEOF_SAFE(imp->buf), imp->filled);
+                                       "(in addition to existing %zu bytes with %zu filled): %s",
+                                       size, MALLOC_SIZEOF_SAFE(imp->buf), imp->filled,
+                                       strerror_safe(ENOMEM));
 
         memcpy(imp->buf + imp->filled, data, size);
         imp->filled += size;

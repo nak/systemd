@@ -17,6 +17,7 @@
 #include "missing_capability.h"
 #include "strv.h"
 #include "user-util.h"
+#include "util.h"
 
 static BUS_DEFINE_PROPERTY_GET_GLOBAL(property_get_const_true, "b", true);
 static BUS_DEFINE_PROPERTY_GET(property_get_can_tty, "b", Seat, seat_can_tty);
@@ -32,10 +33,11 @@ static int property_get_active_session(
                 sd_bus_error *error) {
 
         _cleanup_free_ char *p = NULL;
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
 
         assert(bus);
         assert(reply);
+        assert(s);
 
         p = s->active ? session_bus_path(s->active) : strdup("/");
         if (!p)
@@ -53,11 +55,13 @@ static int property_get_sessions(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
+        Session *session;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(s);
 
         r = sd_bus_message_open_container(reply, 'a', "(so)");
         if (r < 0)
@@ -92,10 +96,11 @@ static int property_get_idle_hint(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
 
         assert(bus);
         assert(reply);
+        assert(s);
 
         return sd_bus_message_append(reply, "b", seat_get_idle_hint(s, NULL) > 0);
 }
@@ -109,13 +114,14 @@ static int property_get_idle_since_hint(
                 void *userdata,
                 sd_bus_error *error) {
 
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         dual_timestamp t;
         uint64_t u;
         int r;
 
         assert(bus);
         assert(reply);
+        assert(s);
 
         r = seat_get_idle_hint(s, &t);
         if (r < 0)
@@ -127,10 +133,11 @@ static int property_get_idle_since_hint(
 }
 
 int bus_seat_method_terminate(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         int r;
 
         assert(message);
+        assert(s);
 
         r = bus_verify_polkit_async(
                         message,
@@ -154,12 +161,13 @@ int bus_seat_method_terminate(sd_bus_message *message, void *userdata, sd_bus_er
 }
 
 static int method_activate_session(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         const char *name;
         Session *session;
         int r;
 
         assert(message);
+        assert(s);
 
         r = sd_bus_message_read(message, "s", &name);
         if (r < 0)
@@ -186,11 +194,12 @@ static int method_activate_session(sd_bus_message *message, void *userdata, sd_b
 }
 
 static int method_switch_to(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         unsigned to;
         int r;
 
         assert(message);
+        assert(s);
 
         r = sd_bus_message_read(message, "u", &to);
         if (r < 0)
@@ -213,10 +222,11 @@ static int method_switch_to(sd_bus_message *message, void *userdata, sd_bus_erro
 }
 
 static int method_switch_to_next(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         int r;
 
         assert(message);
+        assert(s);
 
         r = check_polkit_chvt(message, s->manager, error);
         if (r < 0)
@@ -232,10 +242,11 @@ static int method_switch_to_next(sd_bus_message *message, void *userdata, sd_bus
 }
 
 static int method_switch_to_previous(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Seat *s = ASSERT_PTR(userdata);
+        Seat *s = userdata;
         int r;
 
         assert(message);
+        assert(s);
 
         r = check_polkit_chvt(message, s->manager, error);
         if (r < 0)
@@ -253,7 +264,7 @@ static int method_switch_to_previous(sd_bus_message *message, void *userdata, sd
 static int seat_object_find(sd_bus *bus, const char *path, const char *interface, void *userdata, void **found, sd_bus_error *error) {
         _cleanup_free_ char *e = NULL;
         sd_bus_message *message;
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *m = userdata;
         const char *p;
         Seat *seat;
         int r;
@@ -262,6 +273,7 @@ static int seat_object_find(sd_bus *bus, const char *path, const char *interface
         assert(path);
         assert(interface);
         assert(found);
+        assert(m);
 
         p = startswith(path, "/org/freedesktop/login1/seat/");
         if (!p)
@@ -417,16 +429,18 @@ static const sd_bus_vtable seat_vtable[] = {
 
         SD_BUS_METHOD("Terminate", NULL, NULL, bus_seat_method_terminate, SD_BUS_VTABLE_UNPRIVILEGED),
 
-        SD_BUS_METHOD_WITH_ARGS("ActivateSession",
-                                SD_BUS_ARGS("s", session_id),
-                                SD_BUS_NO_RESULT,
-                                method_activate_session,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD_WITH_ARGS("SwitchTo",
-                                SD_BUS_ARGS("u", vtnr),
-                                SD_BUS_NO_RESULT,
-                                method_switch_to,
-                                SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("ActivateSession",
+                                 "s",
+                                 SD_BUS_PARAM(session_id),
+                                 NULL,,
+                                 method_activate_session,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD_WITH_NAMES("SwitchTo",
+                                 "u",
+                                 SD_BUS_PARAM(vtnr),
+                                 NULL,,
+                                 method_switch_to,
+                                 SD_BUS_VTABLE_UNPRIVILEGED),
 
         SD_BUS_METHOD("SwitchToNext", NULL, NULL, method_switch_to_next, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("SwitchToPrevious", NULL, NULL, method_switch_to_previous, SD_BUS_VTABLE_UNPRIVILEGED),

@@ -9,11 +9,13 @@
 #include "terminal-util.h"
 #include "tests.h"
 
-TEST(random_bytes) {
+static void test_genuine_random_bytes(RandomFlags flags) {
         uint8_t buf[16] = {};
 
+        log_info("/* %s */", __func__);
+
         for (size_t i = 1; i < sizeof buf; i++) {
-                random_bytes(buf, i);
+                assert_se(genuine_random_bytes(buf, i, flags) == 0);
                 if (i + 1 < sizeof buf)
                         assert_se(buf[i] == 0);
 
@@ -21,15 +23,35 @@ TEST(random_bytes) {
         }
 }
 
-TEST(crypto_random_bytes) {
+static void test_pseudo_random_bytes(void) {
         uint8_t buf[16] = {};
 
+        log_info("/* %s */", __func__);
+
         for (size_t i = 1; i < sizeof buf; i++) {
-                assert_se(crypto_random_bytes(buf, i) == 0);
+                pseudo_random_bytes(buf, i);
                 if (i + 1 < sizeof buf)
                         assert_se(buf[i] == 0);
 
                 hexdump(stdout, buf, i);
+        }
+}
+
+static void test_rdrand(void) {
+        int r;
+
+        log_info("/* %s */", __func__);
+
+        for (unsigned i = 0; i < 10; i++) {
+                unsigned long x = 0;
+
+                r = rdrand(&x);
+                if (r < 0) {
+                        log_error_errno(r, "RDRAND failed: %m");
+                        return;
+                }
+
+                printf("%lx\n", x);
         }
 }
 
@@ -63,7 +85,7 @@ static void test_random_u64_range_one(unsigned mod) {
                 double dev = (count[i] - exp) / sqrt(exp * (mod > 1 ? mod - 1 : 1) / mod);
                 log_debug("%02zu: %5u (%+.3f)%*s",
                           i, count[i], dev,
-                          (int) (count[i] / scale), "x");
+                          count[i] / scale, "x");
 
                 assert_se(fabs(dev) < 6); /* 6 sigma is excessive, but this check should be enough to
                                            * identify catastrophic failure while minimizing false
@@ -71,9 +93,23 @@ static void test_random_u64_range_one(unsigned mod) {
         }
 }
 
-TEST(random_u64_range) {
+static void test_random_u64_range(void) {
         for (unsigned mod = 1; mod < 29; mod++)
                 test_random_u64_range_one(mod);
 }
 
-DEFINE_TEST_MAIN(LOG_DEBUG);
+int main(int argc, char **argv) {
+        test_setup_logging(LOG_DEBUG);
+
+        test_genuine_random_bytes(RANDOM_EXTEND_WITH_PSEUDO);
+        test_genuine_random_bytes(0);
+        test_genuine_random_bytes(RANDOM_BLOCK);
+        test_genuine_random_bytes(RANDOM_ALLOW_RDRAND);
+        test_genuine_random_bytes(RANDOM_ALLOW_INSECURE);
+
+        test_pseudo_random_bytes();
+        test_rdrand();
+        test_random_u64_range();
+
+        return 0;
+}

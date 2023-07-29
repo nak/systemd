@@ -10,8 +10,6 @@
 [Unit]
 Description=Load/Save Screen Backlight Brightness of %i
 Documentation=man:systemd-backlight@.service(8)
-ConditionPathExists=!/etc/initrd-release
-
 DefaultDependencies=no
 Conflicts=shutdown.target
 Before=sysinit.target shutdown.target

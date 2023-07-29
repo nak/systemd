@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
+#include <search.h>
 
 #include "bus-locator.h"
 #include "macro.h"
@@ -33,17 +34,15 @@ const BusLocator* const bus_machine_mgr = &(BusLocator){
         .interface = "org.freedesktop.machine1.Manager"
 };
 
-const BusLocator* const bus_network_mgr = &(BusLocator){
-        .destination = "org.freedesktop.network1",
-        .path = "/org/freedesktop/network1",
-        .interface = "org.freedesktop.network1.Manager"
-};
+static char _network_destination[128] =  "org.freedesktop.network1";
+static char _network_interface[128 + 32] =  "org.freedesktop.network1.Manager";
 
-const BusLocator* const bus_oom_mgr = &(BusLocator){
-        .destination = "org.freedesktop.oom1",
-        .path = "/org/freedesktop/oom1",
-        .interface = "org.freedesktop.oom1.Manager"
+static BusLocator _bus_network_mgr = (BusLocator){
+        .destination = _network_destination,
+        .path = "/org/freedesktop/network1",
+        .interface = _network_interface
 };
+const BusLocator* const bus_network_mgr = &_bus_network_mgr;
 
 const BusLocator* const bus_portable_mgr = &(BusLocator){
         .destination = "org.freedesktop.portable1",
@@ -67,18 +66,6 @@ const BusLocator* const bus_timedate = &(BusLocator){
         .destination = "org.freedesktop.timedate1",
         .path = "/org/freedesktop/timedate1",
         .interface = "org.freedesktop.timedate1"
-};
-
-const BusLocator* const bus_timesync_mgr = &(BusLocator){
-        .destination = "org.freedesktop.timesync1",
-        .path = "/org/freedesktop/timesync1",
-        .interface = "org.freedesktop.timesync1.Manager"
-};
-
-const BusLocator* const bus_hostname = &(BusLocator){
-        .destination = "org.freedesktop.hostname1",
-        .path = "/org/freedesktop/hostname1",
-        .interface = "org.freedesktop.hostname1"
 };
 
 /* Shorthand flavors of the sd-bus convenience helpers with destination,path,interface strings encapsulated
@@ -229,3 +216,91 @@ int bus_message_new_method_call(
 
         return sd_bus_message_new_method_call(bus, m, locator->destination, locator->path, locator->interface, member);
 }
+
+static char _network_netns[32] = "";
+
+const NetNs network_netns = (NetNs){
+        .netns = _network_netns
+};
+
+static const char* _determine_netns(void){
+        static bool inited = false;
+        static char * netns = &_network_netns[0];
+        if (inited){
+                return strlen(netns) == 0?NULL:netns;
+        }
+        FILE* fp = popen("/usr/sbin/ip netns identify", "r");
+        while (fgets(netns, sizeof(netns), fp) != NULL) {
+                if (strlen(netns) != 0){
+                        netns[strlen(netns)-1] = 0;
+                        break;
+                }
+        }
+        inited = true;
+        if (pclose(fp) != 0){
+                printf("Call to /usr/bin/ip failed. Assuming not in namespace");
+                return NULL;
+        }
+        if (strlen(netns) == 0){
+                return NULL;
+        }
+        return netns;
+}
+
+__attribute__((constructor))
+static void _init_bus_network_mgr(void){
+        //if (getenv("SYSTEMD_DEBUG")){
+        log_set_max_level(LOG_DEBUG);
+        //}
+        const char * const netns = _determine_netns();
+        if (!netns){
+                return;
+        }
+        strcpy((char*) &_network_netns[0], netns);
+        const size_t base_len = strlen(_bus_network_mgr.destination);
+        const size_t netns_len = strlen(netns);
+        if (base_len + netns_len + 1 >= 128){
+                printf("Name too long %s.%s", _bus_network_mgr.destination, netns);
+        } else if (base_len + netns_len + 9 > 128 + 32){
+                printf("Name too long %s.%s.Manager", _bus_network_mgr.destination, netns);
+        }
+        _network_destination[base_len] = '.';
+        strcpy(_network_destination + base_len + 1, netns);
+        strcpy(_network_destination + base_len + 1, netns);
+        strcpy(_network_interface, _network_destination);
+        _network_interface[base_len] = '.';
+        _network_interface[base_len + netns_len + 1] = '.';
+        strcpy(_network_interface + base_len + 2 + netns_len, "Manager");
+}
+
+
+const char* bus_network_cmpnt(const char* const name){
+        static struct hsearch_data cmpnts = {0};
+        static bool inited = false;
+        if (!inited){
+                hcreate_r(100, &cmpnts);
+                inited = true;
+        }
+        ENTRY *item;
+        ENTRY key ={
+                .key = (char*) name,
+                .data = NULL
+        };
+        hsearch_r(key, FIND, &item, &cmpnts);
+        if (item){
+                return item->data;
+        }
+        if (!name || (strlen(name) == 0)){
+                return bus_network_mgr->destination;
+        }
+        const size_t len = strlen(bus_network_mgr->destination) + 1 + strlen(name);
+        char* result = malloc(len + 1);
+        memset(result, 0, len+1);
+        strcpy(result, bus_network_mgr->destination);
+        result[strlen(bus_network_mgr->destination)] = '.';
+        strcpy(result + strlen(result), name);
+        key.data = result;
+        hsearch_r(key, ENTER, &item, &cmpnts);
+        return (const char*) result;
+}
+

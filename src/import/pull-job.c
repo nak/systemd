@@ -17,36 +17,21 @@
 #include "pull-job.h"
 #include "string-util.h"
 #include "strv.h"
-#include "sync-util.h"
 #include "xattr-util.h"
-
-void pull_job_close_disk_fd(PullJob *j) {
-        if (!j)
-                return;
-
-        if (j->close_disk_fd)
-                safe_close(j->disk_fd);
-
-        j->disk_fd = -EBADF;
-}
 
 PullJob* pull_job_unref(PullJob *j) {
         if (!j)
                 return NULL;
 
-        pull_job_close_disk_fd(j);
-
         curl_glue_remove_and_free(j->glue, j->curl);
         curl_slist_free_all(j->request_header);
 
+        safe_close(j->disk_fd);
+
         import_compress_free(&j->compress);
 
-        if (j->checksum_ctx)
-#if PREFER_OPENSSL
-                EVP_MD_CTX_free(j->checksum_ctx);
-#else
-                gcry_md_close(j->checksum_ctx);
-#endif
+        if (j->checksum_context)
+                gcry_md_close(j->checksum_context);
 
         free(j->url);
         free(j->etag);
@@ -106,13 +91,9 @@ static int pull_job_restart(PullJob *j, const char *new_url) {
 
         import_compress_free(&j->compress);
 
-        if (j->checksum_ctx) {
-#if PREFER_OPENSSL
-                EVP_MD_CTX_free(j->checksum_ctx);
-#else
-                gcry_md_close(j->checksum_ctx);
-#endif
-                j->checksum_ctx = NULL;
+        if (j->checksum_context) {
+                gcry_md_close(j->checksum_context);
+                j->checksum_context = NULL;
         }
 
         r = pull_job_begin(j);
@@ -124,8 +105,8 @@ static int pull_job_restart(PullJob *j, const char *new_url) {
 
 void pull_job_curl_on_finished(CurlGlue *g, CURL *curl, CURLcode result) {
         PullJob *j = NULL;
-        char *scheme = NULL;
         CURLcode code;
+        long status;
         int r;
 
         if (curl_easy_getinfo(curl, CURLINFO_PRIVATE, (char **)&j) != CURLE_OK)
@@ -135,103 +116,83 @@ void pull_job_curl_on_finished(CurlGlue *g, CURL *curl, CURLcode result) {
                 return;
 
         if (result != CURLE_OK) {
-                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Transfer failed: %s", curl_easy_strerror(result));
+                log_error("Transfer failed: %s", curl_easy_strerror(result));
+                r = -EIO;
                 goto finish;
         }
 
-        code = curl_easy_getinfo(curl, CURLINFO_SCHEME, &scheme);
-        if (code != CURLE_OK || !scheme) {
-                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to retrieve URL scheme.");
+        code = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        if (code != CURLE_OK) {
+                log_error("Failed to retrieve response code: %s", curl_easy_strerror(code));
+                r = -EIO;
                 goto finish;
-        }
+        } else if (status == 304) {
+                log_info("Image already downloaded. Skipping download.");
+                j->etag_exists = true;
+                r = 0;
+                goto finish;
+        } else if (status >= 300) {
 
-        if (STRCASE_IN_SET(scheme, "HTTP", "HTTPS")) {
-                long status;
+                if (status == 404 && j->on_not_found) {
+                        _cleanup_free_ char *new_url = NULL;
 
-                code = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-                if (code != CURLE_OK) {
-                        r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to retrieve response code: %s", curl_easy_strerror(code));
-                        goto finish;
-                }
+                        /* This resource wasn't found, but the implementor wants to maybe let us know a new URL, query for it. */
+                        r = j->on_not_found(j, &new_url);
+                        if (r < 0)
+                                goto finish;
 
-                if (status == 304) {
-                        log_info("Image already downloaded. Skipping download.");
-                        j->etag_exists = true;
-                        r = 0;
-                        goto finish;
-                } else if (status >= 300) {
+                        if (r > 0) { /* A new url to use */
+                                assert(new_url);
 
-                        if (status == 404 && j->on_not_found) {
-                                _cleanup_free_ char *new_url = NULL;
-
-                                /* This resource wasn't found, but the implementor wants to maybe let us know a new URL, query for it. */
-                                r = j->on_not_found(j, &new_url);
+                                r = pull_job_restart(j, new_url);
                                 if (r < 0)
                                         goto finish;
 
-                                if (r > 0) { /* A new url to use */
-                                        assert(new_url);
-
-                                        r = pull_job_restart(j, new_url);
-                                        if (r < 0)
-                                                goto finish;
-
-                                        code = curl_easy_getinfo(j->curl, CURLINFO_RESPONSE_CODE, &status);
-                                        if (code != CURLE_OK) {
-                                                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to retrieve response code: %s", curl_easy_strerror(code));
-                                                goto finish;
-                                        }
-
-                                        if (status == 0)
-                                                return;
+                                code = curl_easy_getinfo(j->curl, CURLINFO_RESPONSE_CODE, &status);
+                                if (code != CURLE_OK) {
+                                        log_error("Failed to retrieve response code: %s", curl_easy_strerror(code));
+                                        r = -EIO;
+                                        goto finish;
                                 }
-                        }
 
-                        r = log_error_errno(
-                                        status == 404 ? SYNTHETIC_ERRNO(ENOMEDIUM) : SYNTHETIC_ERRNO(EIO), /* Make the most common error recognizable */
-                                        "HTTP request to %s failed with code %li.", j->url, status);
-                        goto finish;
-                } else if (status < 200) {
-                        r = log_error_errno(SYNTHETIC_ERRNO(EIO), "HTTP request to %s finished with unexpected code %li.", j->url, status);
-                        goto finish;
+                                if (status == 0)
+                                        return;
+                        }
                 }
+
+                log_error("HTTP request to %s failed with code %li.", j->url, status);
+                r = -EIO;
+                goto finish;
+        } else if (status < 200) {
+                log_error("HTTP request to %s finished with unexpected code %li.", j->url, status);
+                r = -EIO;
+                goto finish;
         }
 
         if (j->state != PULL_JOB_RUNNING) {
-                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Premature connection termination.");
+                log_error("Premature connection termination.");
+                r = -EIO;
                 goto finish;
         }
 
         if (j->content_length != UINT64_MAX &&
             j->content_length != j->written_compressed) {
-                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Download truncated.");
+                log_error("Download truncated.");
+                r = -EIO;
                 goto finish;
         }
 
-        if (j->checksum_ctx) {
-                unsigned checksum_len;
-#if PREFER_OPENSSL
-                uint8_t k[EVP_MAX_MD_SIZE];
+        if (j->checksum_context) {
+                uint8_t *k;
 
-                r = EVP_DigestFinal_ex(j->checksum_ctx, k, &checksum_len);
-                if (r == 0) {
-                        r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to get checksum.");
-                        goto finish;
-                }
-                assert(checksum_len <= sizeof k);
-#else
-                const uint8_t *k;
-
-                k = gcry_md_read(j->checksum_ctx, GCRY_MD_SHA256);
+                k = gcry_md_read(j->checksum_context, GCRY_MD_SHA256);
                 if (!k) {
-                        r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to get checksum.");
+                        log_error("Failed to get checksum.");
+                        r = -EIO;
                         goto finish;
                 }
 
-                checksum_len = gcry_md_get_algo_dlen(GCRY_MD_SHA256);
-#endif
-
-                j->checksum = hexmem(k, checksum_len);
+                j->checksum = hexmem(k, gcry_md_get_algo_dlen(GCRY_MD_SHA256));
                 if (!j->checksum) {
                         r = log_oom();
                         goto finish;
@@ -240,61 +201,30 @@ void pull_job_curl_on_finished(CurlGlue *g, CURL *curl, CURLcode result) {
                 log_debug("SHA256 of %s is %s.", j->url, j->checksum);
         }
 
-        /* Do a couple of finishing disk operations, but only if we are the sole owner of the file (i.e. no
-         * offset is specified, which indicates we only own the file partially) */
+        if (j->disk_fd >= 0 && j->allow_sparse) {
+                /* Make sure the file size is right, in case the file was
+                 * sparse and we just seeked for the last part */
 
-        if (j->disk_fd >= 0) {
+                if (ftruncate(j->disk_fd, j->written_uncompressed) < 0) {
+                        r = log_error_errno(errno, "Failed to truncate file: %m");
+                        goto finish;
+                }
 
-                if (S_ISREG(j->disk_stat.st_mode)) {
+                if (j->etag)
+                        (void) fsetxattr(j->disk_fd, "user.source_etag", j->etag, strlen(j->etag), 0);
+                if (j->url)
+                        (void) fsetxattr(j->disk_fd, "user.source_url", j->url, strlen(j->url), 0);
 
-                        if (j->offset == UINT64_MAX) {
+                if (j->mtime != 0) {
+                        struct timespec ut[2];
 
-                                if (j->written_compressed > 0) {
-                                        /* Make sure the file size is right, in case the file was sparse and
-                                         * we just moved to the last part. */
-                                        if (ftruncate(j->disk_fd, j->written_uncompressed) < 0) {
-                                                r = log_error_errno(errno, "Failed to truncate file: %m");
-                                                goto finish;
-                                        }
-                                }
+                        timespec_store(&ut[0], j->mtime);
+                        ut[1] = ut[0];
+                        (void) futimens(j->disk_fd, ut);
 
-                                if (j->etag)
-                                        (void) fsetxattr(j->disk_fd, "user.source_etag", j->etag, strlen(j->etag), 0);
-                                if (j->url)
-                                        (void) fsetxattr(j->disk_fd, "user.source_url", j->url, strlen(j->url), 0);
-
-                                if (j->mtime != 0) {
-                                        struct timespec ut;
-
-                                        timespec_store(&ut, j->mtime);
-
-                                        if (futimens(j->disk_fd, (struct timespec[]) { ut, ut }) < 0)
-                                                log_debug_errno(errno, "Failed to adjust atime/mtime of created image, ignoring: %m");
-
-                                        r = fd_setcrtime(j->disk_fd, j->mtime);
-                                        if (r < 0)
-                                                log_debug_errno(r, "Failed to adjust crtime of created image, ignoring: %m");
-                                }
-                        }
-
-                        if (j->sync) {
-                                r = fsync_full(j->disk_fd);
-                                if (r < 0) {
-                                        log_error_errno(r, "Failed to synchronize file to disk: %m");
-                                        goto finish;
-                                }
-                        }
-
-                } else if (S_ISBLK(j->disk_stat.st_mode) && j->sync) {
-
-                        if (fsync(j->disk_fd) < 0) {
-                                r = log_error_errno(errno, "Failed to synchronize block device: %m");
-                                goto finish;
-                        }
+                        (void) fd_setcrtime(j->disk_fd, j->mtime);
                 }
         }
-
-        log_info("Acquired %s.", FORMAT_BYTES(j->written_uncompressed));
 
         r = 0;
 
@@ -303,46 +233,38 @@ finish:
 }
 
 static int pull_job_write_uncompressed(const void *p, size_t sz, void *userdata) {
-        PullJob *j = ASSERT_PTR(userdata);
-        bool too_much = false;
-        int r;
+        PullJob *j = userdata;
+        ssize_t n;
 
+        assert(j);
         assert(p);
-        assert(sz > 0);
 
-        if (j->written_uncompressed > UINT64_MAX - sz)
-                return log_error_errno(SYNTHETIC_ERRNO(EOVERFLOW), "File too large, overflow");
+        if (sz <= 0)
+                return 0;
 
-        if (j->written_uncompressed >= j->uncompressed_max) {
-                too_much = true;
-                goto finish;
-        }
+        if (j->written_uncompressed + sz < j->written_uncompressed)
+                return log_error_errno(SYNTHETIC_ERRNO(EOVERFLOW),
+                                       "File too large, overflow");
 
-        if (j->written_uncompressed + sz > j->uncompressed_max) {
-                too_much = true;
-                sz = j->uncompressed_max - j->written_uncompressed; /* since we have the data in memory
-                                                                     * already, we might as well write it to
-                                                                     * disk to the max */
-        }
+        if (j->written_uncompressed + sz > j->uncompressed_max)
+                return log_error_errno(SYNTHETIC_ERRNO(EFBIG),
+                                       "File overly large, refusing");
 
         if (j->disk_fd >= 0) {
 
-                if (S_ISREG(j->disk_stat.st_mode) && j->offset == UINT64_MAX) {
-                        ssize_t n;
-
+                if (j->allow_sparse)
                         n = sparse_write(j->disk_fd, p, sz, 64);
+                else {
+                        n = write(j->disk_fd, p, sz);
                         if (n < 0)
-                                return log_error_errno((int) n, "Failed to write file: %m");
-                        if ((size_t) n < sz)
-                                return log_error_errno(SYNTHETIC_ERRNO(EIO), "Short write");
-                } else {
-                        r = loop_write(j->disk_fd, p, sz, false);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to write file: %m");
+                                n = -errno;
                 }
-        }
+                if (n < 0)
+                        return log_error_errno((int) n, "Failed to write file: %m");
+                if ((size_t) n < sz)
+                        return log_error_errno(SYNTHETIC_ERRNO(EIO), "Short write");
+        } else {
 
-        if (j->disk_fd < 0 || j->force_memory) {
                 if (!GREEDY_REALLOC(j->payload, j->payload_size + sz))
                         return log_oom();
 
@@ -351,10 +273,6 @@ static int pull_job_write_uncompressed(const void *p, size_t sz, void *userdata)
         }
 
         j->written_uncompressed += sz;
-
-finish:
-        if (too_much)
-                return log_error_errno(SYNTHETIC_ERRNO(EFBIG), "File overly large, refusing.");
 
         return 0;
 }
@@ -379,16 +297,8 @@ static int pull_job_write_compressed(PullJob *j, void *p, size_t sz) {
                 return log_error_errno(SYNTHETIC_ERRNO(EFBIG),
                                        "Content length incorrect.");
 
-        if (j->checksum_ctx) {
-#if PREFER_OPENSSL
-                r = EVP_DigestUpdate(j->checksum_ctx, p, sz);
-                if (r == 0)
-                        return log_error_errno(SYNTHETIC_ERRNO(EIO),
-                                               "Could not hash chunk.");
-#else
-                gcry_md_write(j->checksum_ctx, p, sz);
-#endif
-        }
+        if (j->checksum_context)
+                gcry_md_write(j->checksum_context, p, sz);
 
         r = import_uncompress(&j->compress, p, sz, pull_job_write_uncompressed, j);
         if (r < 0)
@@ -411,32 +321,24 @@ static int pull_job_open_disk(PullJob *j) {
         }
 
         if (j->disk_fd >= 0) {
-                if (fstat(j->disk_fd, &j->disk_stat) < 0)
-                        return log_error_errno(errno, "Failed to stat disk file: %m");
+                /* Check if we can do sparse files */
 
-                if (j->offset != UINT64_MAX) {
-                        if (lseek(j->disk_fd, j->offset, SEEK_SET) == (off_t) -1)
+                if (lseek(j->disk_fd, SEEK_SET, 0) == 0)
+                        j->allow_sparse = true;
+                else {
+                        if (errno != ESPIPE)
                                 return log_error_errno(errno, "Failed to seek on file descriptor: %m");
+
+                        j->allow_sparse = false;
                 }
         }
 
         if (j->calc_checksum) {
-#if PREFER_OPENSSL
-                j->checksum_ctx = EVP_MD_CTX_new();
-                if (!j->checksum_ctx)
-                        return log_oom();
-
-                r = EVP_DigestInit_ex(j->checksum_ctx, EVP_sha256(), NULL);
-                if (r == 0)
-                        return log_error_errno(SYNTHETIC_ERRNO(EIO),
-                                               "Failed to initialize hash context.");
-#else
                 initialize_libgcrypt(false);
 
-                if (gcry_md_open(&j->checksum_ctx, GCRY_MD_SHA256, 0) != 0)
+                if (gcry_md_open(&j->checksum_context, GCRY_MD_SHA256, 0) != 0)
                         return log_error_errno(SYNTHETIC_ERRNO(EIO),
                                                "Failed to initialize hash context.");
-#endif
         }
 
         return 0;
@@ -479,11 +381,12 @@ static int pull_job_detect_compression(PullJob *j) {
 }
 
 static size_t pull_job_write_callback(void *contents, size_t size, size_t nmemb, void *userdata) {
-        PullJob *j = ASSERT_PTR(userdata);
+        PullJob *j = userdata;
         size_t sz = size * nmemb;
         int r;
 
         assert(contents);
+        assert(j);
 
         switch (j->state) {
 
@@ -518,7 +421,7 @@ static size_t pull_job_write_callback(void *contents, size_t size, size_t nmemb,
                 goto fail;
 
         default:
-                assert_not_reached();
+                assert_not_reached("Impossible state.");
         }
 
         return sz;
@@ -541,12 +444,13 @@ static int http_status_etag_exists(CURLcode status) {
 static size_t pull_job_header_callback(void *contents, size_t size, size_t nmemb, void *userdata) {
         _cleanup_free_ char *length = NULL, *last_modified = NULL, *etag = NULL;
         size_t sz = size * nmemb;
-        PullJob *j = ASSERT_PTR(userdata);
+        PullJob *j = userdata;
         CURLcode code;
         long status;
         int r;
 
         assert(contents);
+        assert(j);
 
         if (IN_SET(j->state, PULL_JOB_DONE, PULL_JOB_FAILED)) {
                 r = -ESTALE;
@@ -557,7 +461,8 @@ static size_t pull_job_header_callback(void *contents, size_t size, size_t nmemb
 
         code = curl_easy_getinfo(j->curl, CURLINFO_RESPONSE_CODE, &status);
         if (code != CURLE_OK) {
-                r = log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to retrieve response code: %s", curl_easy_strerror(code));
+                log_error("Failed to retrieve response code: %s", curl_easy_strerror(code));
+                r = -EIO;
                 goto fail;
         }
 
@@ -596,12 +501,15 @@ static size_t pull_job_header_callback(void *contents, size_t size, size_t nmemb
                 (void) safe_atou64(length, &j->content_length);
 
                 if (j->content_length != UINT64_MAX) {
+                        char bytes[FORMAT_BYTES_MAX];
+
                         if (j->content_length > j->compressed_max) {
-                                r = log_error_errno(SYNTHETIC_ERRNO(EFBIG), "Content too large.");
+                                log_error("Content too large.");
+                                r = -EFBIG;
                                 goto fail;
                         }
 
-                        log_info("Downloading %s for %s.", FORMAT_BYTES(j->content_length), j->url);
+                        log_info("Downloading %s for %s.", format_bytes(bytes, sizeof(bytes), j->content_length), j->url);
                 }
 
                 return sz;
@@ -631,9 +539,11 @@ fail:
 }
 
 static int pull_job_progress_callback(void *userdata, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow) {
-        PullJob *j = ASSERT_PTR(userdata);
+        PullJob *j = userdata;
         unsigned percent;
         usec_t n;
+
+        assert(j);
 
         if (dltotal <= 0)
                 return 0;
@@ -644,8 +554,10 @@ static int pull_job_progress_callback(void *userdata, curl_off_t dltotal, curl_o
         if (n > j->last_status_usec + USEC_PER_SEC &&
             percent != j->progress_percent &&
             dlnow < dltotal) {
+                char buf[FORMAT_TIMESPAN_MAX];
 
                 if (n - j->start_usec > USEC_PER_SEC && dlnow > 0) {
+                        char y[FORMAT_BYTES_MAX];
                         usec_t left, done;
 
                         done = n - j->start_usec;
@@ -654,8 +566,8 @@ static int pull_job_progress_callback(void *userdata, curl_off_t dltotal, curl_o
                         log_info("Got %u%% of %s. %s left at %s/s.",
                                  percent,
                                  j->url,
-                                 FORMAT_TIMESPAN(left, USEC_PER_SEC),
-                                 FORMAT_BYTES((uint64_t) ((double) dlnow / ((double) done / (double) USEC_PER_SEC))));
+                                 format_timespan(buf, sizeof(buf), left, USEC_PER_SEC),
+                                 format_bytes(y, sizeof(y), (uint64_t) ((double) dlnow / ((double) done / (double) USEC_PER_SEC))));
                 } else
                         log_info("Got %u%% of %s.", percent, j->url);
 
@@ -669,12 +581,7 @@ static int pull_job_progress_callback(void *userdata, curl_off_t dltotal, curl_o
         return 0;
 }
 
-int pull_job_new(
-                PullJob **ret,
-                const char *url,
-                CurlGlue *glue,
-                void *userdata) {
-
+int pull_job_new(PullJob **ret, const char *url, CurlGlue *glue, void *userdata) {
         _cleanup_(pull_job_unrefp) PullJob *j = NULL;
         _cleanup_free_ char *u = NULL;
 
@@ -692,8 +599,7 @@ int pull_job_new(
 
         *j = (PullJob) {
                 .state = PULL_JOB_INIT,
-                .disk_fd = -EBADF,
-                .close_disk_fd = true,
+                .disk_fd = -1,
                 .userdata = userdata,
                 .glue = glue,
                 .content_length = UINT64_MAX,
@@ -701,8 +607,6 @@ int pull_job_new(
                 .compressed_max = 64LLU * 1024LLU * 1024LLU * 1024LLU, /* 64GB safety limit */
                 .uncompressed_max = 64LLU * 1024LLU * 1024LLU * 1024LLU, /* 64GB safety limit */
                 .url = TAKE_PTR(u),
-                .offset = UINT64_MAX,
-                .sync = true,
         };
 
         *ret = TAKE_PTR(j);

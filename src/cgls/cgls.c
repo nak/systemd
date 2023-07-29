@@ -8,7 +8,6 @@
 #include "sd-bus.h"
 
 #include "alloc-util.h"
-#include "build.h"
 #include "bus-util.h"
 #include "cgroup-show.h"
 #include "cgroup-util.h"
@@ -17,14 +16,15 @@
 #include "main-func.h"
 #include "output-mode.h"
 #include "pager.h"
-#include "parse-util.h"
 #include "path-util.h"
 #include "pretty-print.h"
 #include "strv.h"
 #include "unit-name.h"
+#include "util.h"
 
 static PagerFlags arg_pager_flags = 0;
-static OutputFlags arg_output_flags = 0;
+static bool arg_kernel_threads = false;
+static bool arg_all = false;
 
 static enum {
         SHOW_UNIT_NONE,
@@ -54,11 +54,9 @@ static int help(void) {
                "  -a --all            Show all groups, including empty\n"
                "  -u --unit           Show the subtrees of specified system units\n"
                "     --user-unit      Show the subtrees of specified user units\n"
-               "  -x --xattr=BOOL     Show cgroup extended attributes\n"
-               "  -c --cgroup-id=BOOL Show cgroup ID\n"
                "  -l --full           Do not ellipsize output\n"
                "  -k                  Include kernel threads in output\n"
-               "  -M --machine=NAME   Show container NAME\n"
+               "  -M --machine=       Show container\n"
                "\nSee the %s for details.\n",
                program_invocation_short_name,
                link);
@@ -83,20 +81,15 @@ static int parse_argv(int argc, char *argv[]) {
                 { "machine",   required_argument, NULL, 'M'           },
                 { "unit",      optional_argument, NULL, 'u'           },
                 { "user-unit", optional_argument, NULL, ARG_USER_UNIT },
-                { "xattr",     required_argument, NULL, 'x'           },
-                { "cgroup-id", required_argument, NULL, 'c'           },
                 {}
         };
 
-        int c, r;
+        int c;
 
         assert(argc >= 1);
         assert(argv);
 
-        /* Resetting to 0 forces the invocation of an internal initialization routine of getopt_long()
-         * that checks for GNU extensions in optstring ('-' or '+' at the beginning). */
-        optind = 0;
-        while ((c = getopt_long(argc, argv, "-hkalM:u::xc", options, NULL)) >= 0)
+        while ((c = getopt_long(argc, argv, "-hkalM:u::", options, NULL)) >= 0)
 
                 switch (c) {
 
@@ -111,7 +104,7 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'a':
-                        arg_output_flags |= OUTPUT_SHOW_ALL;
+                        arg_all = true;
                         break;
 
                 case 'u':
@@ -137,40 +130,18 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'k':
-                        arg_output_flags |= OUTPUT_KERNEL_THREADS;
+                        arg_kernel_threads = true;
                         break;
 
                 case 'M':
                         arg_machine = optarg;
                         break;
 
-                case 'x':
-                        if (optarg) {
-                                r = parse_boolean(optarg);
-                                if (r < 0)
-                                        return log_error_errno(r, "Failed to parse --xattr= value: %s", optarg);
-                        } else
-                                r = true;
-
-                        SET_FLAG(arg_output_flags, OUTPUT_CGROUP_XATTRS, r);
-                        break;
-
-                case 'c':
-                        if (optarg) {
-                                r = parse_boolean(optarg);
-                                if (r < 0)
-                                        return log_error_errno(r, "Failed to parse --cgroup-id= value: %s", optarg);
-                        } else
-                                r = true;
-
-                        SET_FLAG(arg_output_flags, OUTPUT_CGROUP_ID, r);
-                        break;
-
                 case '?':
                         return -EINVAL;
 
                 default:
-                        assert_not_reached();
+                        assert_not_reached("Unhandled option");
                 }
 
         if (arg_machine && arg_show_unit != SHOW_UNIT_NONE)
@@ -185,12 +156,12 @@ static void show_cg_info(const char *controller, const char *path) {
         if (cg_all_unified() == 0 && controller && !streq(controller, SYSTEMD_CGROUP_CONTROLLER))
                 printf("Controller %s; ", controller);
 
-        printf("CGroup %s:\n", empty_to_root(path));
+        printf("Control group %s:\n", empty_to_root(path));
         fflush(stdout);
 }
 
 static int run(int argc, char *argv[]) {
-        int r;
+        int r, output_flags;
 
         log_setup();
 
@@ -198,58 +169,57 @@ static int run(int argc, char *argv[]) {
         if (r <= 0)
                 return r;
 
-        pager_open(arg_pager_flags);
-        if (arg_full < 0 && pager_have())
+        r = pager_open(arg_pager_flags);
+        if (r > 0 && arg_full < 0)
                 arg_full = true;
 
-        if (arg_full > 0)
-                arg_output_flags |= OUTPUT_FULL_WIDTH;
+        output_flags =
+                arg_all * OUTPUT_SHOW_ALL |
+                (arg_full > 0) * OUTPUT_FULL_WIDTH |
+                arg_kernel_threads * OUTPUT_KERNEL_THREADS;
 
         if (arg_names) {
                 _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
                 _cleanup_free_ char *root = NULL;
+                char **name;
 
                 STRV_FOREACH(name, arg_names) {
                         int q;
 
                         if (arg_show_unit != SHOW_UNIT_NONE) {
                                 /* Command line arguments are unit names */
-                                _cleanup_free_ char *cgroup = NULL, *unit_name = NULL;
-
-                                r = unit_name_mangle(*name, UNIT_NAME_MANGLE_WARN, &unit_name);
-                                if (r < 0)
-                                        return log_error_errno(r, "Failed to mangle unit name: %m");
+                                _cleanup_free_ char *cgroup = NULL;
 
                                 if (!bus) {
                                         /* Connect to the bus only if necessary */
-                                        r = bus_connect_transport_systemd(
-                                                        BUS_TRANSPORT_LOCAL, NULL,
-                                                        arg_show_unit == SHOW_UNIT_USER ? RUNTIME_SCOPE_USER : RUNTIME_SCOPE_SYSTEM,
-                                                        &bus);
+                                        r = bus_connect_transport_systemd(BUS_TRANSPORT_LOCAL, NULL,
+                                                                          arg_show_unit == SHOW_UNIT_USER,
+                                                                          &bus);
                                         if (r < 0)
-                                                return bus_log_connect_error(r, BUS_TRANSPORT_LOCAL);
+                                                return bus_log_connect_error(r);
                                 }
 
-                                q = show_cgroup_get_unit_path_and_warn(bus, unit_name, &cgroup);
+                                q = show_cgroup_get_unit_path_and_warn(bus, *name, &cgroup);
                                 if (q < 0)
                                         goto failed;
 
                                 if (isempty(cgroup)) {
-                                        q = log_warning_errno(SYNTHETIC_ERRNO(ENOENT), "Unit %s not found.", unit_name);
+                                        log_warning("Unit %s not found.", *name);
+                                        q = -ENOENT;
                                         goto failed;
                                 }
 
-                                printf("Unit %s (%s):\n", unit_name, cgroup);
+                                printf("Unit %s (%s):\n", *name, cgroup);
                                 fflush(stdout);
 
-                                q = show_cgroup_by_path(cgroup, NULL, 0, arg_output_flags);
+                                q = show_cgroup_by_path(cgroup, NULL, 0, output_flags);
 
                         } else if (path_startswith(*name, "/sys/fs/cgroup")) {
 
                                 printf("Directory %s:\n", *name);
                                 fflush(stdout);
 
-                                q = show_cgroup_by_path(*name, NULL, 0, arg_output_flags);
+                                q = show_cgroup_by_path(*name, NULL, 0, output_flags);
                         } else {
                                 _cleanup_free_ char *c = NULL, *p = NULL, *j = NULL;
                                 const char *controller, *path;
@@ -280,7 +250,7 @@ static int run(int argc, char *argv[]) {
 
                                 show_cg_info(controller, path);
 
-                                q = show_cgroup(controller, path, NULL, 0, arg_output_flags);
+                                q = show_cgroup(controller, path, NULL, 0, output_flags);
                         }
 
                 failed:
@@ -302,7 +272,7 @@ static int run(int argc, char *argv[]) {
                                 printf("Working directory %s:\n", cwd);
                                 fflush(stdout);
 
-                                r = show_cgroup_by_path(cwd, NULL, 0, arg_output_flags);
+                                r = show_cgroup_by_path(cwd, NULL, 0, output_flags);
                                 done = true;
                         }
                 }
@@ -317,7 +287,7 @@ static int run(int argc, char *argv[]) {
                         show_cg_info(SYSTEMD_CGROUP_CONTROLLER, root);
 
                         printf("-.slice\n");
-                        r = show_cgroup(SYSTEMD_CGROUP_CONTROLLER, root, NULL, 0, arg_output_flags);
+                        r = show_cgroup(SYSTEMD_CGROUP_CONTROLLER, root, NULL, 0, output_flags);
                 }
         }
         if (r < 0)

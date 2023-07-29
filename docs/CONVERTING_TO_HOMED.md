@@ -2,7 +2,6 @@
 title: Converting Existing Users to systemd-homed
 category: Users, Groups and Home Directories
 layout: default
-SPDX-License-Identifier: LGPL-2.1-or-later
 ---
 
 # Converting Existing Users to systemd-homed managed Users
@@ -16,10 +15,10 @@ it might be desirable to convert an existing, traditional user account to a
 
 Before continuing, please read up on these basic concepts:
 
-* [Home Directories](HOME_DIRECTORY.md)
-* [JSON User Records](USER_RECORD.md)
-* [JSON Group Records](GROUP_RECORD.md)
-* [User/Group Record Lookup API via Varlink](USER_GROUP_API.md)
+* [Home Directories](https://systemd.io/HOME_DIRECTORY)
+* [JSON User Records](https://systemd.io/USER_RECORD)
+* [JSON Group Records](https://systemd.io/GROUP_RECORD)
+* [User/Group Record Lookup API via Varlink](https://systemd.io/USER_GROUP_API)
 
 ## Caveat
 
@@ -56,8 +55,8 @@ Here's the step-by-step guide:
 
    This will tell you the `/etc/passwd` and `/etc/shadow` entries for your
    user. For details about the fields, see the respective man pages
-   [passwd(5)](https://man7.org/linux/man-pages/man5/passwd.5.html) and
-   [shadow(5)](https://man7.org/linux/man-pages/man5/shadow.5.html).
+   [passwd(5)](http://man7.org/linux/man-pages/man5/passwd.5.html) and
+   [shadow(5)](http://man7.org/linux/man-pages/man5/shadow.5.html).
 
    The fourth field in the `getent passwd foobar` output tells you the GID of
    your user's main group. Depending on your distribution it's a group private
@@ -114,7 +113,7 @@ Here's the step-by-step guide:
    home directory temporarily and copy the data in.
 
     ```
-    homectl with foobar -- rsync -aHANUXv --remove-source-files /home/foobar.saved/ .
+    homectl with foobar -- rsync -aHAXv --remove-source-files /home/foobar.saved/ .
     ```
 
    This mounts the home directory of the user, and then runs the specified

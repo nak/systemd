@@ -10,10 +10,11 @@
 #include "namespace-util.h"
 #include "process-util.h"
 #include "string-util.h"
+#include "util.h"
 
 int bus_container_connect_socket(sd_bus *b) {
-        _cleanup_close_pair_ int pair[2] = PIPE_EBADF;
-        _cleanup_close_ int pidnsfd = -EBADF, mntnsfd = -EBADF, usernsfd = -EBADF, rootfd = -EBADF;
+        _cleanup_close_pair_ int pair[2] = { -1, -1 };
+        _cleanup_close_ int pidnsfd = -1, mntnsfd = -1, usernsfd = -1, rootfd = -1;
         int r, error_buf = 0;
         pid_t child;
         ssize_t n;
@@ -74,7 +75,8 @@ int bus_container_connect_socket(sd_bus *b) {
         r = wait_for_terminate_and_check("(sd-buscntrns)", child, 0);
         if (r < 0)
                 return r;
-        bool nonzero_exit_status = r != EXIT_SUCCESS;
+        if (r != EXIT_SUCCESS)
+                return -EPROTO;
 
         n = read(pair[0], &error_buf, sizeof(error_buf));
         if (n < 0)
@@ -93,11 +95,8 @@ int bus_container_connect_socket(sd_bus *b) {
                         return 1;
 
                 if (error_buf > 0)
-                        return log_debug_errno(error_buf, "(sd-buscntr) failed to connect to D-Bus socket: %m");
+                        return log_debug_errno(error_buf, "Got error from (sd-buscntr): %m");
         }
-
-        if (nonzero_exit_status)
-                return -EPROTO;
 
         return bus_socket_start_auth(b);
 }

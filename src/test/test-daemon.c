@@ -27,31 +27,31 @@ int main(int argc, char *argv[]) {
         }
 
         for (i = 0; i < n; i++)
-                log_info("fd=%i name=%s", SD_LISTEN_FDS_START + i, l[i]);
+                log_info("fd=%i name=%s\n", SD_LISTEN_FDS_START + i, l[i]);
 
         sd_notify(0,
                   "STATUS=Starting up");
-        usleep_safe(duration);
+        usleep(duration);
 
         sd_notify(0,
                   "STATUS=Running\n"
                   "READY=1");
-        usleep_safe(duration);
+        usleep(duration);
 
         sd_notify(0,
                   "STATUS=Reloading\n"
                   "RELOADING=1");
-        usleep_safe(duration);
+        usleep(duration);
 
         sd_notify(0,
                   "STATUS=Running\n"
                   "READY=1");
-        usleep_safe(duration);
+        usleep(duration);
 
         sd_notify(0,
                   "STATUS=Quitting\n"
                   "STOPPING=1");
-        usleep_safe(duration);
+        usleep(duration);
 
         return EXIT_SUCCESS;
 }

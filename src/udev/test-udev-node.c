@@ -13,7 +13,7 @@ static void test_udev_node_escape_path_one(const char *path, const char *expecte
         assert_se(streq(buf, expected));
 }
 
-TEST(udev_node_escape_path) {
+static void test_udev_node_escape_path(void) {
         char a[NAME_MAX+1], b[NAME_MAX+1];
 
         test_udev_node_escape_path_one("/disk/by-id/nvme-eui.1922908022470001001b448b44ccb9d6", "\\x2fdisk\\x2fby-id\\x2fnvme-eui.1922908022470001001b448b44ccb9d6");
@@ -47,4 +47,10 @@ TEST(udev_node_escape_path) {
         test_udev_node_escape_path_one(a, b);
 }
 
-DEFINE_TEST_MAIN(LOG_INFO);
+int main(int argc, char *argv[]) {
+        test_setup_logging(LOG_INFO);
+
+        test_udev_node_escape_path();
+
+        return 0;
+}

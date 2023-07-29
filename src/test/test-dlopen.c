@@ -6,14 +6,10 @@
 #include "macro.h"
 
 int main(int argc, char **argv) {
-        void *handles[argc - 1];
-        int i;
+        void *handle;
 
-        for (i = 0; i < argc - 1; i++)
-                assert_se(handles[i] = dlopen(argv[i + 1], RTLD_NOW));
-
-        for (i--; i >= 0; i--)
-                assert_se(dlclose(handles[i]) == 0);
+        assert_se(handle = dlopen(argv[1], RTLD_NOW));
+        assert_se(dlclose(handle) == 0);
 
         return EXIT_SUCCESS;
 }

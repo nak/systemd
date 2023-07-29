@@ -11,6 +11,7 @@
 #include "ratelimit.h"
 #include "string-util.h"
 #include "tmpfile-util.h"
+#include "util.h"
 
 #define COPY_BUFFER_SIZE (16*1024)
 
@@ -55,8 +56,10 @@ TarExport *tar_export_unref(TarExport *e) {
 
         sd_event_source_unref(e->output_event_source);
 
-        if (e->tar_pid > 1)
-                sigkill_wait(e->tar_pid);
+        if (e->tar_pid > 1) {
+                (void) kill_and_sigcont(e->tar_pid, SIGKILL);
+                (void) wait_for_terminate(e->tar_pid, NULL);
+        }
 
         if (e->temp_path) {
                 (void) btrfs_subvol_remove(e->temp_path, BTRFS_REMOVE_QUOTA);
@@ -90,8 +93,8 @@ int tar_export_new(
                 return -ENOMEM;
 
         *e = (TarExport) {
-                .output_fd = -EBADF,
-                .tar_fd = -EBADF,
+                .output_fd = -1,
+                .tar_fd = -1,
                 .on_finished = on_finished,
                 .userdata = userdata,
                 .quota_referenced = UINT64_MAX,
@@ -144,7 +147,8 @@ static int tar_export_finish(TarExport *e) {
         assert(e->tar_fd >= 0);
 
         if (e->tar_pid > 0) {
-                r = wait_for_terminate_and_check("tar", TAKE_PID(e->tar_pid), WAIT_LOG);
+                r = wait_for_terminate_and_check("tar", e->tar_pid, WAIT_LOG);
+                e->tar_pid = 0;
                 if (r < 0)
                         return r;
                 if (r != EXIT_SUCCESS)
@@ -250,7 +254,7 @@ static int tar_export_on_defer(sd_event_source *s, void *userdata) {
 }
 
 int tar_export_start(TarExport *e, const char *path, int fd, ImportCompressType compress) {
-        _cleanup_close_ int sfd = -EBADF;
+        _cleanup_close_ int sfd = -1;
         int r;
 
         assert(e);
@@ -293,7 +297,7 @@ int tar_export_start(TarExport *e, const char *path, int fd, ImportCompressType 
                         return r;
 
                 /* Let's try to make a snapshot, if we can, so that the export is atomic */
-                r = btrfs_subvol_snapshot_at(sfd, NULL, AT_FDCWD, e->temp_path, BTRFS_SNAPSHOT_READ_ONLY|BTRFS_SNAPSHOT_RECURSIVE);
+                r = btrfs_subvol_snapshot_fd(sfd, e->temp_path, BTRFS_SNAPSHOT_READ_ONLY|BTRFS_SNAPSHOT_RECURSIVE);
                 if (r < 0) {
                         log_debug_errno(r, "Couldn't create snapshot %s of %s, not exporting atomically: %m", e->temp_path, path);
                         e->temp_path = mfree(e->temp_path);

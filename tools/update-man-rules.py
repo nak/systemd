@@ -3,10 +3,9 @@
 
 from __future__ import print_function
 import collections
-import glob
 import sys
-from pathlib import Path
 import pprint
+from os.path import basename
 from xml_helper import xml_parse
 
 def man(page, number):
@@ -57,8 +56,7 @@ manpages = ['''
 
 MESON_FOOTER = '''\
 ]
-# Really, do not edit.
-'''
+# Really, do not edit.'''
 
 def make_mesonfile(rules, dist_files):
     # reformat rules as
@@ -78,20 +76,13 @@ def make_mesonfile(rules, dist_files):
     return '\n'.join((MESON_HEADER, pprint.pformat(lines)[1:-1], MESON_FOOTER))
 
 if __name__ == '__main__':
-    source_glob = sys.argv[1]
-    target = Path(sys.argv[2])
-
-    pages = glob.glob(source_glob)
+    pages = sys.argv[1:]
     pages = (p for p in pages
-             if Path(p).name not in {
+             if basename(p) not in {
                      'systemd.directives.xml',
                      'systemd.index.xml',
                      'directives-template.xml'})
 
     rules = create_rules(pages)
-    dist_files = (Path(p).name for p in pages)
-    text = make_mesonfile(rules, dist_files)
-
-    tmp = target.with_suffix('.tmp')
-    tmp.write_text(text)
-    tmp.rename(target)
+    dist_files = (basename(p) for p in pages)
+    print(make_mesonfile(rules, dist_files))
