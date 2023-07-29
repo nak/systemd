@@ -1,14 +1,3 @@
 apt install libapparmor-dev libzstd-dev libbz2-dev meson ninja-build libgcrypt20-dev libgnutls28-dev libacl1-dev libcurl4-nss-dev libcurl4-openssl-dev libcurl4-gnutls-dev elfutils libelf1 libfido2-dev libidn-dev libkmod-dev libiptc-dev libcryptsetup-dev
-idn idn2 libidn12 libidn2-0 python3-idna
-bpfcc-tools
-libpam0g-dev
-python3-pyelftools
-libseccomp-dev
-librpm-dev
-libtss2-dev
-libtpm2-pkcs11-1-dev
-libpwquality-dev
-libxkbcommon-dev
-libz4-dev
-libqrencode-dev libaudit-dev
-libfdisk-dev libidn-dev libidn2-dev libidn11-dev
+idn idn2 libidn12 libidn2-0 python3-idna bpfcc-tools libpam0g-dev python3-pyelftools libseccomp-dev librpm-dev libtss2-dev libtpm2-pkcs11-1-dev libpwquality-dev libxkbcommon-dev
+libz4-dev libqrencode-dev libaudit-dev libfdisk-dev libidn-dev libidn2-dev libidn11-dev libdw-dev
