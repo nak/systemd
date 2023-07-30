@@ -8,18 +8,16 @@
 #  (at your option) any later version.
 
 [Unit]
-BindsTo=systemd-networkd-netns@%i.service
-Description=Generate network units from Kernel command line
-Documentation=man:systemd-network-generator.service(8)
+Description=udev Control Socket
+Documentation=man:systemd-udevd-control.socket(8) man:udev(7)
 DefaultDependencies=no
-Before=network-pre.target systemd-udevd@%i.service
-Wants=network-pre.target
+Before=sockets.target
+ConditionPathIsReadWrite=/sys
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart={{ROOTLIBEXECDIR}}/systemd-network-generator
+[Socket]
+Service=systemd-udevd@%i.service
+ListenSequentialPacket=/run/udev/control
+SocketMode=0600
+PassCredentials=yes
+RemoveOnStop=yes
 NetworkNamespacePath=/var/run/netns/%i
-
-[Install]
-WantedBy=sysinit.target

@@ -21,6 +21,7 @@ Conflicts=shutdown.target
 ReceiveBuffer=128M
 ListenNetlink=route 1361
 PassPacketInfo=yes
+BusName=org.freedesktop.network1.%i
 NetworkNamespacePath=/var/run/netns/%i
 
 [Install]

@@ -592,7 +592,6 @@ static int manager_enumerate_internal(
                 int k;
 
                 m->enumerating = true;
-
                 k = process(m->rtnl, reply_one, m);
                 if (k < 0 && r >= 0)
                         r = k;

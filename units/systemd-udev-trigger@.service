@@ -9,17 +9,17 @@
 
 [Unit]
 BindsTo=systemd-networkd-netns@%i.service
-Description=Generate network units from Kernel command line
-Documentation=man:systemd-network-generator.service(8)
+Description=Coldplug All udev Devices
+Documentation=man:udev(7) man:systemd-udevd.service(8)
 DefaultDependencies=no
-Before=network-pre.target systemd-udevd@%i.service
-Wants=network-pre.target
+Wants=systemd-udevd@%i.service
+After=systemd-udevd-kernel@%i.socket systemd-udevd-control@%i.socket
+Before=sysinit.target
+ConditionPathIsReadWrite=/sys
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart={{ROOTLIBEXECDIR}}/systemd-network-generator
+ExecStart=-udevadm trigger --type=subsystems --action=add
+ExecStart=-udevadm trigger --type=devices --action=add
 NetworkNamespacePath=/var/run/netns/%i
-
-[Install]
-WantedBy=sysinit.target
