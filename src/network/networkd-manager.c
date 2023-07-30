@@ -122,7 +122,7 @@ int manager_connect_bus(Manager *m) {
         if (r < 0)
                 return log_error_errno(r, "Failed to connect to bus: %m");
 
-        r = sd_bus_add_object_vtable(m->bus, NULL, "/org/freedesktop/network1", bus_network_mgr->destination, manager_vtable, m);
+        r = sd_bus_add_object_vtable(m->bus, NULL, "/org/freedesktop/network1", bus_network_mgr->interface, manager_vtable, m);
         if (r < 0)
                 return log_error_errno(r, "Failed to add manager object vtable: %m");
 

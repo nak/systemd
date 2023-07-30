@@ -658,13 +658,13 @@ int bus_link_method_reconfigure(sd_bus_message *message, void *userdata, sd_bus_
 
         assert(message);
         assert(l);
-
         r = bus_verify_polkit_async(message, CAP_NET_ADMIN,
                                     bus_network_cmpnt("reconfigure"),
                                     NULL, true, UID_INVALID,
                                     &l->manager->polkit_registry, error);
-        if (r < 0)
+        if (r < 0) {
                 return r;
+        }
         if (r == 0)
                 return 1; /* Polkit will call us back */
 
