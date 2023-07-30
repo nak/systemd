@@ -11,9 +11,10 @@ typedef struct BusLocator {
 
 typedef struct NetNs{
         const char* const netns;
+        unsigned char in_netns;
 } NetNs;
 
-extern const NetNs network_netns;
+extern const NetNs * const network_netns;
 
 extern const BusLocator* const bus_home_mgr;
 extern const BusLocator* const bus_import_mgr;

@@ -219,9 +219,12 @@ int bus_message_new_method_call(
 
 static char _network_netns[32] = "";
 
-const NetNs network_netns = (NetNs){
-        .netns = _network_netns
+static NetNs * const __network_netns = &(NetNs){
+        .netns = _network_netns,
+        .in_netns = 0
 };
+
+const NetNs * const network_netns = __network_netns;
 
 static const char* _determine_netns(void){
         static bool inited = false;
@@ -244,6 +247,7 @@ static const char* _determine_netns(void){
         if (strlen(netns) == 0){
                 return NULL;
         }
+       __network_netns->in_netns = 1;
         return netns;
 }
 
