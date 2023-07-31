@@ -7,6 +7,7 @@
 #include "sd-event.h"
 
 #include "alloc-util.h"
+#include "bus-netns.h"
 #include "device-monitor-private.h"
 #include "device-private.h"
 #include "device-util.h"
@@ -39,6 +40,18 @@ static int device_monitor_handler(sd_device_monitor *monitor, sd_device *device,
         (void) sd_device_get_devpath(device, &devpath);
         (void) sd_device_get_subsystem(device, &subsystem);
 
+    if (network_netns->in_netns){
+        const char* devtype;
+        int r = sd_device_get_devtype(device, &devtype);
+        if (r < 0)
+            return r;
+        // if in network namespace, only process net events
+        if (!streq(devtype, "usb_interface")){
+            printf("[udev-monitor] In netns %s: ignoring device of type %s\n", network_netns->netns, devtype);
+            return 0;
+        }
+        printf("[udev-monitor] In netns %s: processing device of type %s\n", network_netns->netns, devtype);
+    }
         assert_se(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
 
         printf("%-6s[%"PRI_TIME".%06"PRI_NSEC"] %-8s %s (%s)\n",
@@ -63,7 +76,6 @@ static int setup_monitor(MonitorNetlinkGroup sender, sd_event *event, sd_device_
         _cleanup_(sd_device_monitor_unrefp) sd_device_monitor *monitor = NULL;
         const char *subsystem, *devtype, *tag;
         int r;
-
         r = device_monitor_new_full(&monitor, sender, -1);
         if (r < 0)
                 return log_error_errno(r, "Failed to create netlink socket: %m");
@@ -73,7 +85,6 @@ static int setup_monitor(MonitorNetlinkGroup sender, sd_event *event, sd_device_
         r = sd_device_monitor_attach_event(monitor, event);
         if (r < 0)
                 return log_error_errno(r, "Failed to attach event: %m");
-
         HASHMAP_FOREACH_KEY(devtype, subsystem, arg_subsystem_filter) {
                 r = sd_device_monitor_filter_add_match_subsystem_devtype(monitor, subsystem, devtype);
                 if (r < 0)

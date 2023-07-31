@@ -1,9 +1,9 @@
 #pragma once
-
+#include <stdbool.h>
 
 typedef struct NetNs{
     const char* const netns;
-    unsigned char in_netns;
+    bool in_netns;
 } NetNs;
 
 extern const NetNs * const network_netns;
