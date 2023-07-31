@@ -25,6 +25,7 @@
 #include "bus-common-errors.h"
 #include "bus-error.h"
 #include "bus-locator.h"
+#include "bus-netns.h"
 #include "device-util.h"
 #include "escape.h"
 #include "ether-addr-util.h"

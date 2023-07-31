@@ -7,6 +7,7 @@
 #include "sd-daemon.h"
 
 #include "bus-locator.h"
+#include "bus-netns.h"
 #include "daemon-util.h"
 #include "main-func.h"
 #include "manager.h"

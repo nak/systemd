@@ -3,6 +3,7 @@
 
 #include "bus-locator.h"
 #include "macro.h"
+#include "bus-netns.h"
 
 const BusLocator* const bus_home_mgr = &(BusLocator){
         .destination = "org.freedesktop.home1",
@@ -217,50 +218,15 @@ int bus_message_new_method_call(
         return sd_bus_message_new_method_call(bus, m, locator->destination, locator->path, locator->interface, member);
 }
 
-static char _network_netns[32] = "";
-
-static NetNs * const __network_netns = &(NetNs){
-        .netns = _network_netns,
-        .in_netns = 0
-};
-
-const NetNs * const network_netns = __network_netns;
-
-static const char* _determine_netns(void){
-        static bool inited = false;
-        static char * netns = &_network_netns[0];
-        if (inited){
-                return strlen(netns) == 0?NULL:netns;
-        }
-        FILE* fp = popen("/usr/sbin/ip netns identify", "r");
-        while (fgets(netns, sizeof(netns), fp) != NULL) {
-                if (strlen(netns) != 0){
-                        netns[strlen(netns)-1] = 0;
-                        break;
-                }
-        }
-        inited = true;
-        if (pclose(fp) != 0){
-                printf("Call to /usr/bin/ip failed. Assuming not in namespace");
-                return NULL;
-        }
-        if (strlen(netns) == 0){
-                return NULL;
-        }
-       __network_netns->in_netns = 1;
-        return netns;
-}
-
 __attribute__((constructor))
 static void _init_bus_network_mgr(void){
         //if (getenv("SYSTEMD_DEBUG")){
         log_set_max_level(LOG_DEBUG);
         //}
-        const char * const netns = _determine_netns();
+        const char * const netns = bus_determine_netns();
         if (!netns){
                 return;
         }
-        strcpy((char*) &_network_netns[0], netns);
         const size_t base_len = strlen(_bus_network_mgr.destination);
         const size_t netns_len = strlen(netns);
         if (base_len + netns_len + 1 >= 128){

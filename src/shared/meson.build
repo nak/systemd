@@ -37,6 +37,8 @@ shared_sources = files('''
         bus-get-properties.h
         bus-locator.c
         bus-locator.h
+        bus-netns.c
+        bus-netns.h
         bus-log-control-api.c
         bus-log-control-api.h
         bus-map-properties.c
