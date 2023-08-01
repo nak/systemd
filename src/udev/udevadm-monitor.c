@@ -46,11 +46,11 @@ static int device_monitor_handler(sd_device_monitor *monitor, sd_device *device,
         if (r < 0)
             return r;
         // if in network namespace, only process net events
-        if (!streq(devtype, "usb_interface")){
-            printf("[udev-monitor] In netns %s: ignoring device of type %s\n", network_netns->netns, devtype);
+        if (!streq(subsystem, "usb")){
+            log_info("[monitor] In netns %s: ignoring device of subsystem %s\n", network_netns->netns, subsystem);
             return 0;
         }
-        printf("[udev-monitor] In netns %s: processing device of type %s\n", network_netns->netns, devtype);
+        log_info("[monitor] In netns %s: processing device of type %s subsystem %s\n", network_netns->netns, devtype, subsystem);
     }
         assert_se(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
 

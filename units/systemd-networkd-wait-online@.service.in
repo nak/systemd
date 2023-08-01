@@ -22,7 +22,6 @@ Type=oneshot
 ExecStart={{ROOTLIBEXECDIR}}/systemd-networkd-wait-online
 RemainAfterExit=yes
 NetworkNamespacePath=/var/run/netns/%i
-BusName=org.freedesktop.network1.%i
 
 [Install]
 WantedBy=network-online.target
