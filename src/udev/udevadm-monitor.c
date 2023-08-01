@@ -46,7 +46,7 @@ static int device_monitor_handler(sd_device_monitor *monitor, sd_device *device,
         if (r < 0)
             return r;
         // if in network namespace, only process net events
-        if (!streq(subsystem, "usb")){
+        if (!streq(subsystem, "net")){
             log_info("[monitor] In netns %s: ignoring device of subsystem %s\n", network_netns->netns, subsystem);
             return 0;
         }
