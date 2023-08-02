@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+
 #include "bus-netns.h"
 
 
@@ -15,6 +17,9 @@ const NetNs * const network_netns = __network_netns;
 const char* bus_determine_netns(void){
     static bool inited = false;
     static char * netns = &_network_netns[0];
+    if (access("/usr/sbin/ip", F_OK) != 0){
+        return NULL;
+    }
     if (inited){
         return strlen(netns) == 0?NULL:netns;
     }
