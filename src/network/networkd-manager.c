@@ -1,11 +1,8 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
-#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <linux/if.h>
 #include <linux/fib_rules.h>
-#include <linux/nexthop.h>
 
 #include "sd-daemon.h"
 #include "sd-netlink.h"
@@ -20,10 +17,7 @@
 #include "def.h"
 #include "dns-domain.h"
 #include "fd-util.h"
-#include "fileio.h"
 #include "firewall-util.h"
-#include "fs-util.h"
-#include "local-addresses.h"
 #include "netlink-util.h"
 #include "network-internal.h"
 #include "networkd-address-pool.h"
@@ -39,16 +33,12 @@
 #include "networkd-routing-policy-rule.h"
 #include "networkd-speed-meter.h"
 #include "networkd-state-file.h"
-#include "ordered-set.h"
 #include "path-lookup.h"
 #include "path-util.h"
 #include "selinux-util.h"
-#include "set.h"
 #include "signal-util.h"
 #include "stat-util.h"
-#include "strv.h"
 #include "sysctl-util.h"
-#include "tmpfile-util.h"
 
 /* use 128 MB for receive socket kernel queue. */
 #define RCVBUF_SIZE    (128*1024*1024)

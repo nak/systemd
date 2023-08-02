@@ -220,9 +220,9 @@ int bus_message_new_method_call(
 
 __attribute__((constructor))
 static void _init_bus_network_mgr(void){
-        //if (getenv("SYSTEMD_DEBUG")){
-        log_set_max_level(LOG_DEBUG);
-        //}
+        if (getenv("SYSTEMD_DEBUG")){
+          log_set_max_level(LOG_DEBUG);
+        }
         const char * const netns = bus_determine_netns();
         if (!netns){
                 return;
