@@ -28,6 +28,7 @@
 #include "sd-event.h"
 
 #include "alloc-util.h"
+#include "bus-netns.h"
 #include "cgroup-util.h"
 #include "cpu-set-util.h"
 #include "dev-setup.h"
@@ -517,6 +518,19 @@ static int worker_device_monitor_handler(sd_device_monitor *monitor, sd_device *
         assert(dev);
         assert(manager);
 
+    if (network_netns->in_netns){
+        const char *devtype, *subsystem;
+        r = sd_device_get_devtype(dev, &devtype);
+        r = sd_device_get_subsystem(dev, &subsystem);
+        if (r < 0)
+            return r;
+        // if in network namespace, only process net events
+        if (!streq(subsystem, "net")){
+            log_info("In netns %s: ignoring device of subsystem %s\n", network_netns->netns, subsystem);
+            return 0;
+        }
+        log_info("In netns %s: processing device of type %s subsystem %s\n", network_netns->netns, devtype, subsystem);
+    }
         r = worker_process_device(manager, dev);
         if (r == -EAGAIN)
                 /* if we couldn't acquire the flock(), then proceed quietly */
@@ -596,7 +610,6 @@ static int worker_spawn(Manager *manager, struct event *event) {
         struct worker *worker;
         pid_t pid;
         int r;
-
         /* listen for new events */
         r = device_monitor_new_full(&worker_monitor, MONITOR_GROUP_NONE, -1);
         if (r < 0)
@@ -1695,7 +1708,6 @@ static int manager_new(Manager **ret, int fd_ctrl, int fd_uevent, const char *cg
         r = udev_ctrl_enable_receiving(manager->ctrl);
         if (r < 0)
                 return log_error_errno(r, "Failed to bind udev control socket: %m");
-
         r = device_monitor_new_full(&manager->monitor, MONITOR_GROUP_KERNEL, fd_uevent);
         if (r < 0)
                 return log_error_errno(r, "Failed to initialize device monitor: %m");
@@ -1836,7 +1848,6 @@ int run_udevd(int argc, char *argv[]) {
         _cleanup_(manager_freep) Manager *manager = NULL;
         int fd_ctrl = -1, fd_uevent = -1;
         int r;
-
         log_set_target(LOG_TARGET_AUTO);
         log_open();
         udev_parse_config_full(&arg_children_max, &arg_exec_delay_usec, &arg_event_timeout_usec, &arg_resolve_name_timing, &arg_timeout_signal);

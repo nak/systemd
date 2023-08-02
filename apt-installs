@@ -1,5 +1,5 @@
 #!/bin/env bash
-apt install libglib2.0-dev libmount-dev libcap-devel gperf python3-jinja2 libapparmor-dev libzstd-dev libbz2-dev meson ninja-build libgcrypt20-dev libgnutls28-dev libacl1-dev elfutils libelf1 libfido2-dev libidn-dev libkmod-dev libiptc-dev libcryptsetup-dev || exit 1
+apt install libglib2.0-dev libmount-dev libcap-dev gperf python3-jinja2 libapparmor-dev libzstd-dev libbz2-dev meson ninja-build libgcrypt20-dev libgnutls28-dev libacl1-dev elfutils libelf1 libfido2-dev libidn-dev libkmod-dev libiptc-dev libcryptsetup-dev || exit 1
 apt install idn idn2 libidn12 libidn2-0 python3-idna bpfcc-tools libpam0g-dev python3-pyelftools libseccomp-dev librpm-dev libtss2-dev libtpm2-pkcs11-1-dev libpwquality-dev libxkbcommon-dev || exit 1
 apt install liblz4-dev libqrencode-dev libaudit-dev libfdisk-dev libidn-dev libidn2-dev libidn11-dev libdw-dev || exit 1
 apt install libcurl4-nss-dev  || exit 1
