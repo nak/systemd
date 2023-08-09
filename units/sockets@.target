@@ -8,15 +8,6 @@
 #  (at your option) any later version.
 
 [Unit]
-Description=udev Kernel Socket
-Documentation=man:systemd-udevd-kernel.socket(8) man:udev(7)
-DefaultDependencies=no
-# Before=sockets@%i.target
-ConditionPathIsReadWrite=/sys
-
-[Socket]
-Service=systemd-udevd@%i.service
-ReceiveBuffer=128M
-ListenNetlink=kobject-uevent 1
-PassCredentials=yes
+Description=Socket Units
+Documentation=man:systemd.special(7)
 NetworkNamespacePath=/var/run/netns/%i

@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-
 #include "bus-netns.h"
 #include "log.h"
 

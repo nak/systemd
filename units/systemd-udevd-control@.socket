@@ -11,7 +11,7 @@
 Description=udev Control Socket
 Documentation=man:systemd-udevd-control.socket(8) man:udev(7)
 DefaultDependencies=no
-Before=sockets.target
+# Before=sockets@%i.target
 ConditionPathIsReadWrite=/sys
 
 [Socket]
