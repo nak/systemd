@@ -14,7 +14,7 @@ Documentation=man:udev(7) man:systemd-udevd.service(8)
 DefaultDependencies=no
 Wants=systemd-udevd@%i.service
 After=systemd-udevd-kernel@%i.socket systemd-udevd-control@%i.socket
-Before=sysinit.target
+# Before=sysinit.target
 ConditionPathIsReadWrite=/sys
 
 [Service]
